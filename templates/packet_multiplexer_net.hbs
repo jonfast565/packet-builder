@@ -1,0 +1,31 @@
+﻿using System;
+
+namespace Packet
+{
+    public class {{Name}}<T>
+    {
+        public {{HeaderPacketDefinition}} Header { get; set; }
+        public T Body { get; set; }
+    }
+
+    public static class {{Name}}ParserMultiplexer
+    {
+        public static object ParseMultiplexedPacket(byte[] data) 
+        {
+            var discriminator = data[{{DiscriminatorBegin}}..{{DiscriminatorEnd}}];
+            Array.Reverse({{DiscriminatorBegin}}, 0, {{DiscriminatorEnd}}.Length);
+            var discriminatorString = discriminator.Aggregate(string.Empty, (a, b) => a + string.Format("{0,2:X}", b & 0xFF).Trim());
+            switch (discriminatorString) 
+            {
+                {{#each Choices}}
+                case "{{Value}}":
+                    return new {{../Name}}<{{Packet}}> 
+                    { 
+                         Header = {{../HeaderPacketDefinition}}Parser.Parse(data),
+                         Body = {{Packet}}Parser.Parse(data)
+                    };
+                {{/each}}
+            }
+        }
+    }
+}

@@ -1,0 +1,140 @@
+﻿using System;
+
+namespace Packet
+{
+    public class {{PacketName}}
+    {
+        {{#each Sequence}}
+        public {{{#getDataType}}}{{{/getDataType}}} {{Name}} { get; set; }
+        {{/each}}
+        {{#each CalculatedFields}}
+        public {{{#getDataType}}}{{{/getDataType}}} {{Name}} => {{{Calculation}}};
+        {{/each}}
+
+        public static {{PacketName}} Deserialize(byte[] data)
+        {
+            {{#each Sequence}}
+            // get data
+            var {{VariableName}} = data[{{StartByte}}..{{EndByte}}];
+            Array.Reverse({{VariableName}}, 0, {{VariableName}}.Length);
+            var {{VariableName}}Typed = {{{#getConversionMethod}}}{{{/getConversionMethod}}};
+            {{/each}}
+
+            // build packet
+            var result = new {{PacketName}} 
+            {
+            {{#each Sequence}}
+                {{Name}} = {{VariableName}}Typed{{#unless @last}},{{/unless}}
+            {{/each}}
+            };
+
+            return result;
+        }
+
+        public byte[] Serialize()
+        {
+            var result = new byte[{{TotalLength}} / 8];
+            var packetCounter = 0;
+
+            {{#each Sequence}}
+
+            {{#equals Type "UnsignedInteger8"}}
+            var {{VariableName}}Bytes = BitConverter.GetBytes({{Name}});
+            Array.Reverse({{VariableName}}Bytes, 0, {{Length}});
+            Array.Copy({{VariableName}}Bytes, 0, result, packetCounter, {{Length}});
+            packetCounter += {{Length}};
+            {{/equals}}
+
+            {{#equals Type "UnsignedInteger16"}}
+            var {{VariableName}}Bytes = BitConverter.GetBytes({{Name}});
+            Array.Reverse({{VariableName}}Bytes, 0, {{Length}});
+            Array.Copy({{VariableName}}Bytes, 0, result, packetCounter, {{Length}});
+            packetCounter += {{Length}};
+            {{/equals}}
+
+
+            {{#equals Type "UnsignedInteger32"}}
+            var {{VariableName}}Bytes = BitConverter.GetBytes({{Name}});
+            Array.Reverse({{VariableName}}Bytes, 0, {{Length}});
+            Array.Copy({{VariableName}}Bytes, 0, result, packetCounter, {{Length}});
+            packetCounter += {{Length}};
+            {{/equals}}
+
+            {{#equals Type "UnsignedInteger64"}}
+            var {{VariableName}}Bytes = BitConverter.GetBytes({{Name}});
+            Array.Reverse({{VariableName}}Bytes, 0, {{Length}});
+            Array.Copy({{VariableName}}Bytes, 0, result, packetCounter, {{Length}});
+            packetCounter += {{Length}};
+            {{/equals}}
+
+            {{#equals Type "Integer8"}}
+            var {{VariableName}}Bytes = BitConverter.GetBytes({{Name}});
+            Array.Reverse({{VariableName}}Bytes, 0, {{Length}});
+            Array.Copy({{VariableName}}Bytes, 0, result, packetCounter, {{Length}});
+            packetCounter += {{Length}};
+            {{/equals}}
+
+            {{#equals Type "Integer16"}}
+            var {{VariableName}}Bytes = BitConverter.GetBytes({{Name}});
+            Array.Reverse({{VariableName}}Bytes, 0, {{Length}});
+            Array.Copy({{VariableName}}Bytes, 0, result, packetCounter, {{Length}});
+            packetCounter += {{Length}};
+            {{/equals}}
+
+
+            {{#equals Type "Integer32"}}
+            var {{VariableName}}Bytes = BitConverter.GetBytes({{Name}});
+            Array.Reverse({{VariableName}}Bytes, 0, {{Length}});
+            Array.Copy({{VariableName}}Bytes, 0, result, packetCounter, {{Length}});
+            packetCounter += {{Length}};
+            {{/equals}}
+
+            {{#equals Type "Integer64"}}
+            var {{VariableName}}Bytes = BitConverter.GetBytes({{Name}});
+            Array.Reverse({{VariableName}}Bytes, 0, {{Length}});
+            Array.Copy({{VariableName}}Bytes, 0, result, packetCounter, {{Length}});
+            packetCounter += {{Length}};
+            {{/equals}}
+
+            {{#equals Type "Float16"}}
+            var {{VariableName}}Bytes = BitConverter.GetBytes((float){{Name}});
+            Array.Reverse({{VariableName}}Bytes, 0, {{Length}});
+            Array.Copy({{VariableName}}Bytes, 0, result, packetCounter, {{Length}});
+            packetCounter += {{Length}};
+            {{/equals}}
+
+            {{#equals Type "Float32"}}
+            var {{VariableName}}Bytes = BitConverter.GetBytes({{Name}});
+            Array.Reverse({{VariableName}}Bytes, 0, {{Length}});
+            Array.Copy({{VariableName}}Bytes, 0, result, packetCounter, {{Length}});
+            packetCounter += {{Length}};
+            {{/equals}}
+
+            {{#equals Type "Float64"}}
+            var {{VariableName}}Bytes = BitConverter.GetBytes({{Name}});
+            Array.Reverse({{VariableName}}Bytes, 0, {{Length}});
+            Array.Copy({{VariableName}}Bytes, 0, result, packetCounter, {{Length}});            
+            packetCounter += {{Length}};
+            {{/equals}}
+
+            {{#equals Type "MacAddress"}}
+            byte[] {{VariableName}}Bytes = {{Name}}.Split(':').Select(x => Convert.ToByte(x, 16)).ToArray();
+            Array.Reverse({{VariableName}}Bytes, 0, {{Length}});
+            Array.Copy({{VariableName}}Bytes, 0, result, packetCounter, {{Length}});            
+            packetCounter += {{Length}};
+            {{/equals}}
+
+            {{#equals Type "DateTime"}}
+            var {{VariableName}}Epoch = new DateTime(1970, 1, 1, 0, 0, 0, 0);
+            var {{VariableName}}Span = {{Name}} - {{VariableName}}Epoch;
+            var {{VariableName}}Seconds = (int) {{VariableName}}Span.TotalSeconds;
+            var {{VariableName}}Bytes = BitConverter.GetBytes({{VariableName}}Seconds);
+            Array.Reverse({{VariableName}}Bytes, 0, {{Length}});
+            Array.Copy({{VariableName}}Bytes, 0, result, packetCounter, {{Length}});
+            {{/equals}}
+
+            {{/each}}
+            return result;
+        }
+    }
+}
