@@ -1,0 +1,7 @@
+packet test {
+    test1 float64,
+    test2 float64,
+    test3 float64,
+    test4 float64,
+    calc test3cal ((test1 + test2) * (test3 ^ test3) / test4)
+}

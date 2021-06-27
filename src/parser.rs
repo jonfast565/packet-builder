@@ -6,6 +6,7 @@ use pest::Parser;
 pub struct PacketParser2;
 
 pub fn parse_file(input: &String) -> Result<String, Error<Rule>> {
-    let packet = PacketParser2::parse(Rule::packet, input)?.next().unwrap();
+    let packet = PacketParser2::parse(Rule::packets, input)?.next().unwrap();
+    dbg!(packet);
     Ok(String::new())
 }

@@ -1,23 +1,26 @@
+// whitespace 
+WHITESPACE = _{ " " | "\n" | "\r\n" | "\t" }
+
 // tokens
-alpha = { 'a'..'z' | 'A'..'Z' }
-digit = { '0'..'9' }
-plus = { "+" }
-minus = { "-" }
-mult ={ "*" }
-div ={ "/" }
-pw = { "^" }
-lparen = { "(" }
-rparen = { ")" }
-underscore = { "_" }
-lbracket = { "{" }
-rbracket = { "}" }
-listsep = { "," }
-larray = { "[" }
-rarray = { "]" }
+alpha = @{ 'a'..'z' | 'A'..'Z' }
+digit = @{ '0'..'9' }
+plus = @{ "+" }
+minus = @{ "-" }
+mult = @{ "*" }
+div = @{ "/" }
+pw = @{ "^" }
+lparen = @{ "(" }
+rparen = @{ ")" }
+underscore = @{ "_" }
+lbracket = @{ "{" }
+rbracket = @{ "}" }
+listsep = @{ "," }
+larray = @{ "[" }
+rarray = @{ "]" }
 
 // identifiers and constants
-identifier = { underscore* ~ alpha+ ~ (alpha | digit)+ }
-numeric_constant = { digit+ }
+identifier = @{ (underscore | alpha){1} ~ (alpha | digit)* }
+numeric_constant = @{ digit+ }
 
 // strings (fucking complicated)
 string = ${ "\"" ~ inner ~ "\"" }
@@ -29,18 +32,18 @@ char = {
 }
 
 // types
-int8 = {"int8"}
-uint8 = {"uint8"}
-int16 = {"int16"}
-uint16 = {"uint16"}
-int32 = {"int32"}
-uint32 = {"uint32"}
-int64 = {"int64"}
-uint64 = {"uint64"}
-float32 = {"float32"}
-float64 = {"float64"}
-macaddress = {"macaddress"}
-type_name = { int8 | uint8 | int16 | uint16 | int32 | uint32 | int64 | uint64 | float32 | float64 | macaddress }
+int8 = @{"int8"}
+uint8 = @{"uint8"}
+int16 = @{"int16"}
+uint16 = @{"uint16"}
+int32 = @{"int32"}
+uint32 = @{"uint32"}
+int64 = @{"int64"}
+uint64 = @{"uint64"}
+float32 = @{"float32"}
+float64 = @{"float64"}
+macaddress = @{"macaddress"}
+type_name = @{ int8 | uint8 | int16 | uint16 | int32 | uint32 | int64 | uint64 | float32 | float64 | macaddress }
 
 // expressions
 expr = { sum }
@@ -51,9 +54,12 @@ value = { numeric_constant | identifier | lparen ~ expr ~ rparen }
 
 
 // packet body
-packet = { (packet_keyword ~ identifier ~ lbracket ~ rules ~ rbracket)* }
-packet_keyword = { "packet" }
-rules = { (rule ~ listsep*)* }
-rule = { 
-    identifier ~ type_name ~ (larray ~ numeric_constant ~ rarray)*
-}
+packets = { SOI ~ packet+ ~ EOI }
+packet = { packet_keyword ~ identifier ~ lbracket ~ rule_list ~ rbracket }
+rule_list = { rule ~ (listsep ~ rule)* }
+packet_keyword = @{ "packet" }
+calculated_keyword = @{ "calc" }
+rule = { declaration | calculated_field }
+calculated_field = { calculated_keyword ~ identifier ~ expr }
+declaration = { identifier ~ type_name ~ array_specifier? }
+array_specifier = { larray ~ numeric_constant ~ rarray }
