@@ -1,15 +1,15 @@
 #![macro_use]
 extern crate serde;
+extern crate pest;
+#[macro_use]
+extern crate pest_derive;
+
 use serde_json;
 use std::fs;
-use combine::{many1, Parser, sep_by};
-use combine::parser::sequence::{then};
-use combine::parser::char::{letter, space, string, spaces, digit, char};
-use combine::parser::choice::{or};
-use combine::stream::easy;
 
 mod models;
 mod utilities;
+mod parser;
 
 fn main() {
     println!("--- Packet Builder ---");
@@ -20,9 +20,5 @@ fn main() {
         p.post_process();
     }
     dbg!(&deserialized);
-    parser()
-}
-
-fn parser() {
-    repeat::many()
+    
 }
