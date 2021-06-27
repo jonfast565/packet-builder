@@ -1,8 +1,8 @@
 use pest::error::Error;
 use pest::Parser;
 
-#[derive(Parser)]
 #[grammar = "../grammar.pest"]
+#[derive(Parser)]
 pub struct PacketParser2;
 
 pub fn parse_file(input: &String) -> Result<String, Error<Rule>> {
