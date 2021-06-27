@@ -1,11 +1,11 @@
+use pest::error::Error;
 use pest::Parser;
 
 #[derive(Parser)]
 #[grammar = "../grammar.pest"]
-struct PacketParser;
+pub struct PacketParser2;
 
-impl PacketParser {
-    fn parse(input: &String) {
-
-    }
+pub fn parse_file(input: &String) -> Result<String, Error<Rule>> {
+    let packet = PacketParser2::parse(Rule::packet, input)?.next().unwrap();
+    Ok(String::new())
 }

@@ -51,8 +51,8 @@ value = { numeric_constant | identifier | lparen ~ expr ~ rparen }
 
 
 // packet body
-packet_keyword = { "packet" }
 packet = { (packet_keyword ~ identifier ~ lbracket ~ rules ~ rbracket)* }
+packet_keyword = { "packet" }
 rules = { (rule ~ listsep*)* }
 rule = { 
     identifier ~ type_name ~ (larray ~ numeric_constant ~ rarray)*

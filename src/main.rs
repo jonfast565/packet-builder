@@ -4,6 +4,7 @@ extern crate pest;
 #[macro_use]
 extern crate pest_derive;
 
+use crate::parser::PacketParser2;
 use serde_json;
 use std::fs;
 
@@ -20,5 +21,10 @@ fn main() {
         p.post_process();
     }
     dbg!(&deserialized);
+
+    let serialized = fs::read_to_string("./test_packet.packet")
+        .expect("Something went wrong reading the file");
+    let deserialized2 = PacketParser2::parse(&serialized);
+    dbg!(&deserialized2);
     
 }
