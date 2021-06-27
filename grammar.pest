@@ -17,6 +17,8 @@ rbracket = @{ "}" }
 listsep = @{ "," }
 larray = @{ "[" }
 rarray = @{ "]" }
+sumof = @ { "sumof" }
+productof = @ { "productof" }
 
 // identifiers and constants
 identifier = @{ (underscore | alpha){1} ~ (alpha | digit)* }
@@ -43,23 +45,28 @@ uint64 = @{"uint64"}
 float32 = @{"float32"}
 float64 = @{"float64"}
 macaddress = @{"macaddress"}
-type_name = @{ int8 | uint8 | int16 | uint16 | int32 | uint32 | int64 | uint64 | float32 | float64 | macaddress }
+datetime = @{"datetime"}
+type_name = @{ int8 | uint8 | int16 | uint16 | int32 | uint32 | int64 | uint64 | float32 | float64 | macaddress | datetime }
+
+// packet keywords
+packet_keyword = @{ "packet" }
+calculated_keyword = @{ "calc" }
 
 // expressions
 expr = { sum }
 sum = { product ~ ((plus | minus) ~ product)*}
 product = { power ~ ((mult | div) ~ power)*}
 power = { value ~ (pw ~ power)? }
-value = { numeric_constant | identifier | lparen ~ expr ~ rparen }
+value = { numeric_constant | accessor | lparen ~ expr ~ rparen }
 
+// declaring and accessing variables
+declaration = { identifier ~ type_name ~ array_specifier? }
+accessor = {  (sumof | productof) ~ identifier ~ !array_specifier | identifier ~ array_specifier? }
+array_specifier = { larray ~ numeric_constant ~ rarray }
 
 // packet body
 packets = { SOI ~ packet+ ~ EOI }
 packet = { packet_keyword ~ identifier ~ lbracket ~ rule_list ~ rbracket }
 rule_list = { rule ~ (listsep ~ rule)* }
-packet_keyword = @{ "packet" }
-calculated_keyword = @{ "calc" }
 rule = { declaration | calculated_field }
 calculated_field = { calculated_keyword ~ identifier ~ expr }
-declaration = { identifier ~ type_name ~ array_specifier? }
-array_specifier = { larray ~ numeric_constant ~ rarray }
