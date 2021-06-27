@@ -12,6 +12,8 @@ underscore = { "_" }
 lbracket = { "{" }
 rbracket = { "}" }
 listsep = { "," }
+larray = { "[" }
+rarray = { "]" }
 
 // identifiers and constants
 identifier = { underscore* ~ alpha+ ~ (alpha | digit)+ }
@@ -26,6 +28,20 @@ char = {
     | "\\" ~ ("u" ~ ASCII_HEX_DIGIT{4})
 }
 
+// types
+int8 = {"int8"}
+uint8 = {"uint8"}
+int16 = {"int16"}
+uint16 = {"uint16"}
+int32 = {"int32"}
+uint32 = {"uint32"}
+int64 = {"int64"}
+uint64 = {"uint64"}
+float32 = {"float32"}
+float64 = {"float64"}
+macaddress = {"macaddress"}
+type_name = { int8 | uint8 | int16 | uint16 | int32 | uint32 | int64 | uint64 | float32 | float64 | macaddress }
+
 // expressions
 expr = { sum }
 sum = { product ~ ((plus | minus) ~ product)*}
@@ -36,8 +52,8 @@ value = { numeric_constant | identifier | lparen ~ expr ~ rparen }
 
 // packet body
 packet_keyword = { "packet" }
-packet = { packet_keyword ~ ident ~ lbracket ~ rules ~ rbracket }
+packet = { (packet_keyword ~ identifier ~ lbracket ~ rules ~ rbracket)* }
 rules = { (rule ~ listsep*)* }
 rule = { 
-    
+    identifier ~ type_name ~ (larray ~ numeric_constant ~ rarray)*
 }
