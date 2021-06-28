@@ -18,6 +18,9 @@ fn parse_packets(packets: pest::iterators::Pair<Rule>) -> Vec<PacketExpr> {
         Rule::packets => {
             let packet_list = packets.into_inner();
             for packet in packet_list {
+                if packet.as_rule() == Rule::EOI {
+                    continue
+                }
                 results.push(parse_packet(packet));
             }
         }
