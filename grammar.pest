@@ -2,71 +2,71 @@
 WHITESPACE = _{ " " | "\n" | "\r\n" | "\t" }
 
 // tokens
-alpha = @{ 'a'..'z' | 'A'..'Z' }
-digit = @{ '0'..'9' }
-plus = @{ "+" }
-minus = @{ "-" }
-mult = @{ "*" }
-div = @{ "/" }
-pw = @{ "^" }
-lparen = @{ "(" }
-rparen = @{ ")" }
-underscore = @{ "_" }
-lbracket = @{ "{" }
-rbracket = @{ "}" }
-listsep = @{ "," }
-larray = @{ "[" }
-rarray = @{ "]" }
-sumof = @ { "sumof" }
-productof = @ { "productof" }
+Alpha = @{ 'a'..'z' | 'A'..'Z' }
+Digit = @{ '0'..'9' }
+Plus = @{ "+" }
+Minus = @{ "-" }
+Mult = @{ "*" }
+Div = @{ "/" }
+PowerSign = @{ "^" }
+LParen = @{ "(" }
+RParen = @{ ")" }
+Underscore = @{ "_" }
+LBracket = @{ "{" }
+RBracket = @{ "}" }
+ListSep = @{ "," }
+LArray = @{ "[" }
+RArray = @{ "]" }
+SumOf = @ { "sumof" }
+ProductOf = @ { "productof" }
 
 // identifiers and constants
-identifier = @{ (underscore | alpha){1} ~ (alpha | digit)* }
-numeric_constant = @{ digit+ }
+Identifier = @{ (Underscore | Alpha){1} ~ (Alpha | Digit)* }
+NumericConstant = @{ Digit+ }
 
 // strings (fucking complicated)
-string = ${ "\"" ~ inner ~ "\"" }
-inner = @{ char* }
-char = {
+String = ${ "\"" ~ Inner ~ "\"" }
+Inner = @{ Char* }
+Char = {
     !("\"" | "\\") ~ ANY
     | "\\" ~ ("\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t")
     | "\\" ~ ("u" ~ ASCII_HEX_DIGIT{4})
 }
 
 // types
-int8 = @{"int8"}
-uint8 = @{"uint8"}
-int16 = @{"int16"}
-uint16 = @{"uint16"}
-int32 = @{"int32"}
-uint32 = @{"uint32"}
-int64 = @{"int64"}
-uint64 = @{"uint64"}
-float32 = @{"float32"}
-float64 = @{"float64"}
-macaddress = @{"macaddress"}
-datetime = @{"datetime"}
-type_name = @{ int8 | uint8 | int16 | uint16 | int32 | uint32 | int64 | uint64 | float32 | float64 | macaddress | datetime }
+Int8 = @{"int8"}
+UInt8 = @{"uint8"}
+Int16 = @{"int16"}
+UInt16 = @{"uint16"}
+Int32 = @{"int32"}
+UInt32 = @{"uint32"}
+Int64 = @{"int64"}
+UInt64 = @{"uint64"}
+Float32 = @{"float32"}
+Float64 = @{"float64"}
+MacAddress = @{"macaddress"}
+DateTime = @{"datetime"}
+TypeName = @{ Int8 | UInt8 | Int16 | UInt16 | Int32 | UInt32 | Int64 | UInt64 | Float32 | Float64 | MacAddress | DateTime }
 
 // packet keywords
-packet_keyword = @{ "packet" }
-calculated_keyword = @{ "calc" }
+PacketKeyword = @{ "packet" }
+CalculatedKeyword = @{ "calc" }
 
 // expressions
-expr = { sum }
-sum = { product ~ ((plus | minus) ~ product)*}
-product = { power ~ ((mult | div) ~ power)*}
-power = { value ~ (pw ~ power)? }
-value = { numeric_constant | accessor | lparen ~ expr ~ rparen }
+Expr = { Sum }
+Sum = { Product ~ ((Plus | Minus) ~ Product)*}
+Product = { Power ~ ((Mult | Div) ~ Power)*}
+Power = { Value ~ (PowerSign ~ Power)? }
+Value = { NumericConstant | Accessor | LParen ~ Expr ~ RParen }
 
 // declaring and accessing variables
-declaration = { identifier ~ type_name ~ array_specifier? }
-accessor = {  (sumof | productof) ~ identifier ~ !array_specifier | identifier ~ array_specifier? }
-array_specifier = { larray ~ numeric_constant ~ rarray }
+Declaration = { Identifier ~ TypeName ~ ArraySpecifier? }
+Accessor = {  (SumOf | ProductOf) ~ Identifier ~ !ArraySpecifier | Identifier ~ ArraySpecifier? }
+ArraySpecifier = { LArray ~ NumericConstant ~ RArray }
 
 // packet body
-packets = { SOI ~ packet+ ~ EOI }
-packet = { packet_keyword ~ identifier ~ lbracket ~ rule_list ~ rbracket }
-rule_list = { rule ~ (listsep ~ rule)* }
-rule = { declaration | calculated_field }
-calculated_field = { calculated_keyword ~ identifier ~ expr }
+Packets = { SOI ~ Packet+ ~ EOI }
+Packet = { PacketKeyword ~ Identifier ~ LBracket ~ RuleList ~ RBracket }
+RuleList = { Rule ~ (ListSep ~ Rule)* }
+Rule = { Declaration | CalculatedField }
+CalculatedField = { CalculatedKeyword ~ Identifier ~ Expr }
