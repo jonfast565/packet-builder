@@ -4,7 +4,6 @@ extern crate pest;
 #[macro_use]
 extern crate pest_derive;
 
-use crate::parser::PacketParser2;
 use serde_json;
 use std::fs;
 
