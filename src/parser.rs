@@ -107,7 +107,7 @@ fn parse_packet_rule(packet_rule: pest::iterators::Pair<Rule>) -> TypeExpr {
 }
 
 fn parse_calculated_field(packet_rule: pest::iterators::Pair<Rule>) {
-    dbg!("Calculated field", packet_rule);
+    println!("Calculated fields not implemented.");
 }
 
 fn expr_from_type_name(type_name: String, array_length: Option<String>) -> ExprNode {
