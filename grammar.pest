@@ -46,7 +46,7 @@ float32 = @{"float32"}
 float64 = @{"float64"}
 macaddress = @{"macaddress"}
 datetime = @{"datetime"}
-type_name = @{ int8 | uint8 | int16 | uint16 | int32 | uint32 | int64 | uint64 | float32 | float64 | macaddress | datetime }
+type_name = _@{ int8 | uint8 | int16 | uint16 | int32 | uint32 | int64 | uint64 | float32 | float64 | macaddress | datetime }
 
 // packet keywords
 packet_keyword = @{ "packet" }
@@ -61,12 +61,12 @@ value = { numeric_constant | accessor | lparen ~ expr ~ rparen }
 
 // declaring and accessing variables
 declaration = { identifier ~ type_name ~ array_specifier? }
-accessor = {  (sumof | productof) ~ identifier ~ !array_specifier | identifier ~ array_specifier? }
-array_specifier = { larray ~ numeric_constant ~ rarray }
+accessor = _{  (sumof | productof) ~ identifier ~ !array_specifier | identifier ~ array_specifier? }
+array_specifier = _{ larray ~ numeric_constant ~ rarray }
 
 // packet body
-packets = { SOI ~ packet+ ~ EOI }
+packets = _{ SOI ~ packet+ ~ EOI }
 packet = { packet_keyword ~ identifier ~ lbracket ~ rule_list ~ rbracket }
-rule_list = { rule ~ (listsep ~ rule)* }
-rule = { declaration | calculated_field }
+rule_list = _{ rule ~ (listsep ~ rule)* }
+rule = _{ declaration | calculated_field }
 calculated_field = { calculated_keyword ~ identifier ~ expr }
