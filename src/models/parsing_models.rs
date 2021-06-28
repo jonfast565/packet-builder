@@ -29,5 +29,5 @@ pub struct TypeExpr {
 #[derive(Debug)]
 pub struct PacketExpr {
     pub name: String,
-    pub fields: Vec<TypeExpr>
+    pub fields: Vec<TypeExpr>,
 }
