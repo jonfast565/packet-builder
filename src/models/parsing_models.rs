@@ -1,14 +1,15 @@
+#[derive(Debug)]
 pub enum ExprNode {
-    UnsignedInteger8(u8),
-    UnsignedInteger16(u16),
-    UnsignedInteger32(u32),
-    UnsignedInteger64(u64),
-    Integer8(i8),
-    Integer16(i16),
-    Integer32(i32),
-    Integer64(i64),
-    Float32(f32),
-    Float64(f64),
+    UnsignedInteger8(Option<usize>),
+    UnsignedInteger16(Option<usize>),
+    UnsignedInteger32(Option<usize>),
+    UnsignedInteger64(Option<usize>),
+    Integer8(Option<usize>),
+    Integer16(Option<usize>),
+    Integer32(Option<usize>),
+    Integer64(Option<usize>),
+    Float32(Option<usize>),
+    Float64(Option<usize>),
     Identifier(String),
     Plus(Box<ExprNode>, Box<ExprNode>),
     Minus(Box<ExprNode>, Box<ExprNode>),
@@ -17,4 +18,16 @@ pub enum ExprNode {
     Pow(Box<ExprNode>, Box<ExprNode>),
     SumOf(String),
     ProductOf(String),
+}
+
+#[derive(Debug)]
+pub struct TypeExpr {
+    pub id: String,
+    pub expr: ExprNode,
+}
+
+#[derive(Debug)]
+pub struct PacketExpr {
+    pub name: String,
+    pub fields: Vec<TypeExpr>
 }
