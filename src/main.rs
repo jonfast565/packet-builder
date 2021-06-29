@@ -13,8 +13,8 @@ use std::fs;
 
 fn main() {
     println!("--- Packet Builder ---");
-    let serialized =
+    let file =
         fs::read_to_string("./test_packet.packet").expect("Something went wrong reading the file");
-    let deserialized2 = parser::parse_file(&serialized);
-    dbg!(&deserialized2);
+    let contents = parser::parse_file(&file);
+    dbg!(&contents);
 }
