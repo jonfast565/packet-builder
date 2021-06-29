@@ -1,11 +1,8 @@
 packet test {
-    test1 float64[4],
-    test2 float64,
-    test3 float64,
-    test4 float64,
-    calc test5 sumof test1,
-    calc test6 test3 + test4,
-    calc test7 test / test4 * test2
+    test1 uint8,
+    test2 int16,
+    test3 float32,
+    test4 float64
 }
 
 packet test2 {
