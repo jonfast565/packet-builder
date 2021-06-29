@@ -8,6 +8,7 @@ extern crate pest_derive;
 mod models;
 mod parser;
 mod utilities;
+mod generators;
 
 use std::fs;
 
