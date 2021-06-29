@@ -23,7 +23,8 @@ impl CGenerator {
         #include <memory.h>
         #include <time.h>
         #include <stdint.h>
-        ".to_string()
+        "
+        .to_string()
     }
 
     fn create_supporting_functions() -> String {
@@ -34,7 +35,8 @@ impl CGenerator {
                 arr[high] = temp;
             }
         }
-        ".to_string()
+        "
+        .to_string()
     }
 
     fn build_struct(expr: &PacketExpr) -> String {
@@ -42,61 +44,44 @@ impl CGenerator {
             .fields
             .iter()
             .map(|x| match x.expr {
-                ExprNode::UnsignedInteger8(y) => format!(
-                    "uint8_t {}{};",
-                    x.id,
-                    CGenerator::get_array_bounds(y)
-                ),
-                ExprNode::Integer8(y) => format!(
-                    "int8_t {}{};",
-                    x.id,
-                    CGenerator::get_array_bounds(y)
-                ),
-                ExprNode::UnsignedInteger16(y) => format!(
-                    "uint16_t {}{};",
-                    x.id,
-                    CGenerator::get_array_bounds(y)
-                ),
-                ExprNode::Integer16(y) => format!(
-                    "int16_t {}{};",
-                    x.id,
-                    CGenerator::get_array_bounds(y)
-                ),
-                ExprNode::UnsignedInteger32(y) => format!(
-                    "uint32_t {}{};",
-                    x.id,
-                    CGenerator::get_array_bounds(y)
-                ),
-                ExprNode::Integer32(y) => format!(
-                    "int32_t {}{};",
-                    x.id,
-                    CGenerator::get_array_bounds(y)
-                ),
-                ExprNode::UnsignedInteger64(y) => format!(
-                    "uint64_t {}{};",
-                    x.id,
-                    CGenerator::get_array_bounds(y)
-                ),
-                ExprNode::Integer64(y) => format!(
-                    "int64_t {}{};",
-                    x.id,
-                    CGenerator::get_array_bounds(y)
-                ),
-                ExprNode::Float32(y) => format!(
-                    "float {}{};",
-                    x.id,
-                    CGenerator::get_array_bounds(y)
-                ),
-                ExprNode::Float64(y) => format!(
-                    "double {}{};",
-                    x.id,
-                    CGenerator::get_array_bounds(y)
-                ),
+                ExprNode::UnsignedInteger8(y) => {
+                    format!("uint8_t {}{};", x.id, CGenerator::get_array_bounds(y))
+                }
+                ExprNode::Integer8(y) => {
+                    format!("int8_t {}{};", x.id, CGenerator::get_array_bounds(y))
+                }
+                ExprNode::UnsignedInteger16(y) => {
+                    format!("uint16_t {}{};", x.id, CGenerator::get_array_bounds(y))
+                }
+                ExprNode::Integer16(y) => {
+                    format!("int16_t {}{};", x.id, CGenerator::get_array_bounds(y))
+                }
+                ExprNode::UnsignedInteger32(y) => {
+                    format!("uint32_t {}{};", x.id, CGenerator::get_array_bounds(y))
+                }
+                ExprNode::Integer32(y) => {
+                    format!("int32_t {}{};", x.id, CGenerator::get_array_bounds(y))
+                }
+                ExprNode::UnsignedInteger64(y) => {
+                    format!("uint64_t {}{};", x.id, CGenerator::get_array_bounds(y))
+                }
+                ExprNode::Integer64(y) => {
+                    format!("int64_t {}{};", x.id, CGenerator::get_array_bounds(y))
+                }
+                ExprNode::Float32(y) => {
+                    format!("float {}{};", x.id, CGenerator::get_array_bounds(y))
+                }
+                ExprNode::Float64(y) => {
+                    format!("double {}{};", x.id, CGenerator::get_array_bounds(y))
+                }
                 _ => "".to_string(),
             })
             .fold(String::new(), |acc, v| format!("{}\t    {}\n", acc, v));
 
-        format!("\ttypedef struct {}\n\t{{\n {} \n\t}} {};\n", expr.name, field_aggregation, expr.name)
+        format!(
+            "\ttypedef struct {}\n\t{{\n {} \n\t}} {};\n",
+            expr.name, field_aggregation, expr.name
+        )
     }
 
     fn get_array_bounds(expr: Option<usize>) -> String {
