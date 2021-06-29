@@ -10,12 +10,16 @@ mod parser;
 mod utilities;
 mod generators;
 
+use crate::generators::c_generator::CGenerator;
 use std::fs;
 
 fn main() {
     println!("--- Packet Builder ---");
     let file =
         fs::read_to_string("./test_packet.packet").expect("Something went wrong reading the file");
-    let contents = parser::parse_file(&file);
-    dbg!(&contents);
+    let contents = parser::parse_file(&file).unwrap();
+    for packet in contents {
+        let result = CGenerator::generate(&packet);
+        println!("{}", result);
+    }
 }
