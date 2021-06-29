@@ -90,4 +90,49 @@ impl CGenerator {
             None => "".to_string(),
         }
     }
+
+    fn get_field_deserializer(expr: &ExprNode) {
+        match expr {
+            ExprNode::UnsignedInteger8(y) => {
+                match y {
+                    Some(y) => {
+                        for i in 0..*y {
+                            //format()
+                        }
+                    },
+                    None => {
+
+                    }
+                }
+            }
+            ExprNode::Integer8(y) => {
+                
+            }
+            ExprNode::UnsignedInteger16(y) => {
+                
+            }
+            ExprNode::Integer16(y) => {
+                
+            }
+            ExprNode::UnsignedInteger32(y) => {
+                
+            }
+            ExprNode::Integer32(y) => {
+                
+            }
+            ExprNode::UnsignedInteger64(y) => {
+                
+            }
+            ExprNode::Integer64(y) => {
+                
+            }
+            ExprNode::Float32(y) => {
+                
+            }
+            ExprNode::Float64(y) => {
+                
+            }
+            _ => (),
+        }
+    }
 }
