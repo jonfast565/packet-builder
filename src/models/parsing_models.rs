@@ -22,6 +22,22 @@ pub enum ExprNode {
 }
 
 impl ExprNode {
+    pub fn get_type_length_bytes(&self) -> usize {
+        match self {
+            ExprNode::UnsignedInteger8(_) => 1,
+            ExprNode::Integer8(_) => 1,
+            ExprNode::UnsignedInteger16(_) => 2,
+            ExprNode::Integer16(_) => 2,
+            ExprNode::UnsignedInteger32(_) => 4,
+            ExprNode::Integer32(_) => 4,
+            ExprNode::UnsignedInteger64(_) => 8,
+            ExprNode::Integer64(_) => 8,
+            ExprNode::Float32(_) => 4,
+            ExprNode::Float64(_) => 8,
+            ExprNode::MacAddress => 6,
+            _ => 0,
+        }
+    }
     pub fn get_length_bytes(&self) -> usize {
         match self {
             ExprNode::UnsignedInteger8(y) => {

@@ -143,7 +143,7 @@ impl CGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\t{}[{}] = {}\n",
+                            "\t{}[{}] = {};\n",
                             expr.id,
                             i,
                             CGenerator::get_8bit_conversion_deserialization(&expr.id, *position)
@@ -151,7 +151,7 @@ impl CGenerator {
                     }
                 }
                 None => result.push_str(&format!(
-                    "\t{} = {}\n",
+                    "\t{} = {};\n",
                     expr.id,
                     CGenerator::get_8bit_conversion_deserialization(&expr.id, *position)
                 )),
@@ -160,7 +160,7 @@ impl CGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\t{}[{}] = {}\n",
+                            "\t{}[{}] = {};\n",
                             expr.id,
                             i,
                             CGenerator::get_8bit_conversion_deserialization(&expr.id, *position)
@@ -168,7 +168,7 @@ impl CGenerator {
                     }
                 }
                 None => result.push_str(&format!(
-                    "\t{} = {}\n",
+                    "\t{} = {};\n",
                     expr.id,
                     CGenerator::get_8bit_conversion_deserialization(&expr.id, *position)
                 )),
@@ -177,7 +177,7 @@ impl CGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\t{}[{}] = {}\n",
+                            "\t{}[{}] = {};\n",
                             expr.id,
                             i,
                             CGenerator::get_16bit_conversion_deserialization(&expr.id, *position)
@@ -185,7 +185,7 @@ impl CGenerator {
                     }
                 }
                 None => result.push_str(&format!(
-                    "\t{} = {}\n",
+                    "\t{} = {};\n",
                     expr.id,
                     CGenerator::get_16bit_conversion_deserialization(&expr.id, *position)
                 )),
@@ -194,7 +194,7 @@ impl CGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\t{}[{}] = {}\n",
+                            "\t{}[{}] = {};\n",
                             expr.id,
                             i,
                             CGenerator::get_16bit_conversion_deserialization(&expr.id, *position)
@@ -202,7 +202,7 @@ impl CGenerator {
                     }
                 }
                 None => result.push_str(&format!(
-                    "\t{} = {}",
+                    "\t{} = {};",
                     expr.id,
                     CGenerator::get_16bit_conversion_deserialization(&expr.id, *position)
                 )),
@@ -211,7 +211,7 @@ impl CGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\t{}[{}] = {}\n",
+                            "\t{}[{}] = {};\n",
                             expr.id,
                             i,
                             CGenerator::get_32bit_conversion_deserialization(&expr.id, *position)
@@ -219,7 +219,7 @@ impl CGenerator {
                     }
                 }
                 None => result.push_str(&format!(
-                    "\t{} = {}\n",
+                    "\t{} = {};\n",
                     expr.id,
                     CGenerator::get_32bit_conversion_deserialization(&expr.id, *position)
                 )),
@@ -228,7 +228,7 @@ impl CGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\t{}[{}] = {}\n",
+                            "\t{}[{}] = {};\n",
                             expr.id,
                             i,
                             CGenerator::get_32bit_conversion_deserialization(&expr.id, *position)
@@ -236,7 +236,7 @@ impl CGenerator {
                     }
                 }
                 None => result.push_str(&format!(
-                    "\t{} = {}\n",
+                    "\t{} = {};\n",
                     expr.id,
                     CGenerator::get_32bit_conversion_deserialization(&expr.id, *position)
                 )),
@@ -245,7 +245,7 @@ impl CGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\t{}[{}] = {}\n",
+                            "\t{}[{}] = {};\n",
                             expr.id,
                             i,
                             CGenerator::get_64bit_conversion_deserialization(&expr.id, *position)
@@ -253,7 +253,7 @@ impl CGenerator {
                     }
                 }
                 None => result.push_str(&format!(
-                    "\t{} = {}\n",
+                    "\t{} = {};\n",
                     expr.id,
                     CGenerator::get_64bit_conversion_deserialization(&expr.id, *position)
                 )),
@@ -262,7 +262,7 @@ impl CGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\t{}[{}] = {}\n",
+                            "\t{}[{}] = {};\n",
                             expr.id,
                             i,
                             CGenerator::get_64bit_conversion_deserialization(&expr.id, *position)
@@ -270,7 +270,7 @@ impl CGenerator {
                     }
                 }
                 None => result.push_str(&format!(
-                    "\t{} = {}\n",
+                    "\t{} = {};\n",
                     expr.id,
                     CGenerator::get_64bit_conversion_deserialization(&expr.id, *position)
                 )),
@@ -279,7 +279,7 @@ impl CGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\t{}[{}] = {}\n",
+                            "\t{}[{}] = {};\n",
                             expr.id,
                             i,
                             CGenerator::get_32bit_conversion_deserialization(&expr.id, *position)
@@ -287,7 +287,7 @@ impl CGenerator {
                     }
                 }
                 None => result.push_str(&format!(
-                    "\t{} = {}\n",
+                    "\t{} = {};\n",
                     expr.id,
                     CGenerator::get_32bit_conversion_deserialization(&expr.id, *position)
                 )),
@@ -296,23 +296,29 @@ impl CGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\t{}[{}] = {}\n",
+                            "\t{}[{}] = {};\n",
                             expr.id,
                             i,
                             CGenerator::get_64bit_conversion_deserialization(&expr.id, *position)
-                        ))
+                        ));
+                        *position += expr.expr.get_length_bytes();
                     }
                 }
-                None => result.push_str(&format!(
-                    "\t{} = {}\n",
-                    expr.id,
-                    CGenerator::get_64bit_conversion_deserialization(&expr.id, *position)
-                )),
+                None => {
+                    result.push_str(&format!(
+                        "\t{} = {};\n",
+                        expr.id,
+                        CGenerator::get_64bit_conversion_deserialization(&expr.id, *position)
+                    ));
+                    *position += expr.expr.get_length_bytes();
+                }
             },
-            ExprNode::MacAddress => result.push_str(&format!("// Not implemented {}\n", expr.id)),
+            ExprNode::MacAddress => {
+                result.push_str(&format!("// Not implemented {};\n", expr.id));
+                *position += expr.expr.get_length_bytes();
+            }
             _ => (),
         }
-        *position += expr.expr.get_length_bytes();
         result
     }
 
