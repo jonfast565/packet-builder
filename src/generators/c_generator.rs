@@ -10,6 +10,7 @@ impl CGenerator {
         result.push_str(&CGenerator::create_supporting_functions());
         result.push_str(&CGenerator::create_spacer());
         result.push_str(&CGenerator::build_struct(expr));
+        result.push_str(&CGenerator::create_serialization_functions(expr));
         result
     }
 
@@ -39,15 +40,15 @@ impl CGenerator {
         .to_string()
     }
 
-    fn create_serialization_functions() -> String {
+    fn create_serialization_functions(expr: &PacketExpr) -> String {
         "\tvoid serialize() {
 
         }
-        \tvoid deserialize() {
-            
+
+        void deserialize() {
+
         }
         ".to_string()
-        
     }
 
     fn build_struct(expr: &PacketExpr) -> String {
@@ -90,7 +91,7 @@ impl CGenerator {
             .fold(String::new(), |acc, v| format!("{}\t    {}\n", acc, v));
 
         format!(
-            "\ttypedef struct {}\n\t{{\n {} \n\t}} {};\n",
+            "\ttypedef struct {} {{\n {} \n\t}} {};\n\n",
             expr.name, field_aggregation, expr.name
         )
     }
