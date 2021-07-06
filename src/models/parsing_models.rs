@@ -11,6 +11,7 @@ pub enum ExprNode {
     Float32(Option<usize>),
     Float64(Option<usize>),
     Identifier(String),
+    MacAddress,
     Plus(Box<ExprNode>, Box<ExprNode>),
     Minus(Box<ExprNode>, Box<ExprNode>),
     Mult(Box<ExprNode>, Box<ExprNode>),

@@ -91,17 +91,18 @@ impl CGenerator {
         }
     }
 
-    fn get_field_deserializer(expr: &ExprNode) {
-        match expr {
+    fn get_field_deserializer(expr: &TypeExpr) -> String {
+        let mut result = String::new();
+        match expr.expr {
             ExprNode::UnsignedInteger8(y) => {
                 match y {
                     Some(y) => {
-                        for i in 0..*y {
-                            //format()
+                        for i in 0..y {
+                            result += format!("{}[{}] = {}", expr.id, i, "NULL")
                         }
                     },
                     None => {
-
+                            result += format!("{} = {}", expr.id, "NULL")
                     }
                 }
             }
@@ -131,8 +132,12 @@ impl CGenerator {
             }
             ExprNode::Float64(y) => {
                 
+            },
+            ExprNode::MacAddress => {
+
             }
             _ => (),
         }
+        result
     }
 }
