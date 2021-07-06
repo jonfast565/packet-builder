@@ -22,66 +22,66 @@ pub enum ExprNode {
 }
 
 impl ExprNode {
-    pub fn get_length(&self) -> usize {
+    pub fn get_length_bytes(&self) -> usize {
         match self {
             ExprNode::UnsignedInteger8(y) => {
                 match y {
-                    Some(n) => 0,
-                    None => 0
+                    Some(n) => *n,
+                    None => 1
                 }
             }
             ExprNode::Integer8(y) => {
                 match y {
-                    Some(n) => 0,
-                    None => 0
+                    Some(n) => *n,
+                    None => 1
                 }
             }
             ExprNode::UnsignedInteger16(y) => {
                 match y {
-                    Some(n) => 0,
-                    None => 0
+                    Some(n) => n * 2,
+                    None => 2
                 }
             }
             ExprNode::Integer16(y) => {
                 match y {
-                    Some(n) => 0,
-                    None => 0
+                    Some(n) => n * 2,
+                    None => 2
                 }
             }
             ExprNode::UnsignedInteger32(y) => {
                 match y {
-                    Some(n) => 0,
-                    None => 0
+                    Some(n) => n * 4,
+                    None => 4
                 }
             }
             ExprNode::Integer32(y) => {
                 match y {
-                    Some(n) => 0,
-                    None => 0
+                    Some(n) => n * 4,
+                    None => 4
                 }
             }
             ExprNode::UnsignedInteger64(y) => {
                 match y {
-                    Some(n) => 0,
-                    None => 0
+                    Some(n) => n * 8,
+                    None => 8
                 }
             }
             ExprNode::Integer64(y) => {
                 match y {
-                    Some(n) => 0,
-                    None => 0
+                    Some(n) => n * 8,
+                    None => 8
                 }
             }
             ExprNode::Float32(y) => {
                 match y {
-                    Some(n) => 0,
-                    None => 0
+                    Some(n) => n * 4,
+                    None => 4
                 }
             }
             ExprNode::Float64(y) => {
                 match y {
-                    Some(n) => 0,
-                    None => 0
+                    Some(n) => n * 8,
+                    None => 8
                 }
             },
             ExprNode::MacAddress => 6,
