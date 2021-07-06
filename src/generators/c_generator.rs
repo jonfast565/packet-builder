@@ -41,14 +41,25 @@ impl CGenerator {
     }
 
     fn create_serialization_functions(expr: &PacketExpr) -> String {
-        "\tvoid serialize() {
+        format!(
+            "\tvoid serialize(uint8_t* data, {}** packet, int verbose) {{
+            uint8_t* result = (uint8_t*) calloc({{TotalLength}}, sizeof(uint8_t));
+            memset(result, 0, {{TotalLength}});
+            size_t packet_counter = 0;
+            {}
+        }}
 
-        }
-
-        void deserialize() {
-
-        }
-        ".to_string()
+        void deserialize({}* packet, uint8_t** data,  int verbose) {{
+            size_t packet_counter = 0;
+            {}
+        }}
+        ",
+            expr.name,
+            &CGenerator::create_serializers(expr),
+            expr.name,
+            &CGenerator::create_deserializers(expr)
+        )
+        .to_string()
     }
 
     fn build_struct(expr: &PacketExpr) -> String {
@@ -103,132 +114,98 @@ impl CGenerator {
         }
     }
 
+    fn create_deserializers(expr: &PacketExpr) -> String {
+        String::new()
+    }
+
+    fn create_serializers(expr: &PacketExpr) -> String {
+        String::new()
+    }
+
     fn get_field_deserializer(expr: &TypeExpr) -> String {
         let mut result = String::new();
         match expr.expr {
-            ExprNode::UnsignedInteger8(y) => {
-                match y {
-                    Some(y) => {
-                        for i in 0..y {
-                            result.push_str(&format!("{}[{}] = {}", expr.id, i, "NULL"))
-                        }
-                    },
-                    None => {
-                            result.push_str(&format!("{} = {}", expr.id, "NULL"))
+            ExprNode::UnsignedInteger8(y) => match y {
+                Some(y) => {
+                    for i in 0..y {
+                        result.push_str(&format!("{}[{}] = {}", expr.id, i, "NULL"))
                     }
                 }
-            }
-            ExprNode::Integer8(y) => {
-                match y {
-                    Some(y) => {
-                        for i in 0..y {
-                            result.push_str(&format!("{}[{}] = {}", expr.id, i, "NULL"))
-                        }
-                    },
-                    None => {
-                            result.push_str(&format!("{} = {}", expr.id, "NULL"))
-                    }
-                }
-            }
-            ExprNode::UnsignedInteger16(y) => {
-                match y {
-                    Some(y) => {
-                        for i in 0..y {
-                            result.push_str(&format!("{}[{}] = {}", expr.id, i, "NULL"))
-                        }
-                    },
-                    None => {
-                            result.push_str(&format!("{} = {}", expr.id, "NULL"))
-                    }
-                }
-            }
-            ExprNode::Integer16(y) => {
-                match y {
-                    Some(y) => {
-                        for i in 0..y {
-                            result.push_str(&format!("{}[{}] = {}", expr.id, i, "NULL"))
-                        }
-                    },
-                    None => {
-                            result.push_str(&format!("{} = {}", expr.id, "NULL"))
-                    }
-                }
-            }
-            ExprNode::UnsignedInteger32(y) => {
-                match y {
-                    Some(y) => {
-                        for i in 0..y {
-                            result.push_str(&format!("{}[{}] = {}", expr.id, i, "NULL"))
-                        }
-                    },
-                    None => {
-                            result.push_str(&format!("{} = {}", expr.id, "NULL"))
-                    }
-                }
-            }
-            ExprNode::Integer32(y) => {
-                match y {
-                    Some(y) => {
-                        for i in 0..y {
-                            result.push_str(&format!("{}[{}] = {}", expr.id, i, "NULL"))
-                        }
-                    },
-                    None => {
-                            result.push_str(&format!("{} = {}", expr.id, "NULL"))
-                    }
-                }
-            }
-            ExprNode::UnsignedInteger64(y) => {
-                match y {
-                    Some(y) => {
-                        for i in 0..y {
-                            result.push_str(&format!("{}[{}] = {}", expr.id, i, "NULL"))
-                        }
-                    },
-                    None => {
-                            result.push_str(&format!("{} = {}", expr.id, "NULL"))
-                    }
-                }
-            }
-            ExprNode::Integer64(y) => {
-                match y {
-                    Some(y) => {
-                        for i in 0..y {
-                            result.push_str(&format!("{}[{}] = {}", expr.id, i, "NULL"))
-                        }
-                    },
-                    None => {
-                            result.push_str(&format!("{} = {}", expr.id, "NULL"))
-                    }
-                }
-            }
-            ExprNode::Float32(y) => {
-                match y {
-                    Some(y) => {
-                        for i in 0..y {
-                            result.push_str(&format!("{}[{}] = {}", expr.id, i, "NULL"))
-                        }
-                    },
-                    None => {
-                            result.push_str(&format!("{} = {}", expr.id, "NULL"))
-                    }
-                }
-            }
-            ExprNode::Float64(y) => {
-                match y {
-                    Some(y) => {
-                        for i in 0..y {
-                            result.push_str(&format!("{}[{}] = {}", expr.id, i, "NULL"))
-                        }
-                    },
-                    None => {
-                            result.push_str(&format!("{} = {}", expr.id, "NULL"))
-                    }
-                }
+                None => result.push_str(&format!("{} = {}", expr.id, "NULL")),
             },
-            ExprNode::MacAddress => {
-                result.push_str(&format!("// Not implemented {}", expr.id))
-            }
+            ExprNode::Integer8(y) => match y {
+                Some(y) => {
+                    for i in 0..y {
+                        result.push_str(&format!("{}[{}] = {}", expr.id, i, "NULL"))
+                    }
+                }
+                None => result.push_str(&format!("{} = {}", expr.id, "NULL")),
+            },
+            ExprNode::UnsignedInteger16(y) => match y {
+                Some(y) => {
+                    for i in 0..y {
+                        result.push_str(&format!("{}[{}] = {}", expr.id, i, "NULL"))
+                    }
+                }
+                None => result.push_str(&format!("{} = {}", expr.id, "NULL")),
+            },
+            ExprNode::Integer16(y) => match y {
+                Some(y) => {
+                    for i in 0..y {
+                        result.push_str(&format!("{}[{}] = {}", expr.id, i, "NULL"))
+                    }
+                }
+                None => result.push_str(&format!("{} = {}", expr.id, "NULL")),
+            },
+            ExprNode::UnsignedInteger32(y) => match y {
+                Some(y) => {
+                    for i in 0..y {
+                        result.push_str(&format!("{}[{}] = {}", expr.id, i, "NULL"))
+                    }
+                }
+                None => result.push_str(&format!("{} = {}", expr.id, "NULL")),
+            },
+            ExprNode::Integer32(y) => match y {
+                Some(y) => {
+                    for i in 0..y {
+                        result.push_str(&format!("{}[{}] = {}", expr.id, i, "NULL"))
+                    }
+                }
+                None => result.push_str(&format!("{} = {}", expr.id, "NULL")),
+            },
+            ExprNode::UnsignedInteger64(y) => match y {
+                Some(y) => {
+                    for i in 0..y {
+                        result.push_str(&format!("{}[{}] = {}", expr.id, i, "NULL"))
+                    }
+                }
+                None => result.push_str(&format!("{} = {}", expr.id, "NULL")),
+            },
+            ExprNode::Integer64(y) => match y {
+                Some(y) => {
+                    for i in 0..y {
+                        result.push_str(&format!("{}[{}] = {}", expr.id, i, "NULL"))
+                    }
+                }
+                None => result.push_str(&format!("{} = {}", expr.id, "NULL")),
+            },
+            ExprNode::Float32(y) => match y {
+                Some(y) => {
+                    for i in 0..y {
+                        result.push_str(&format!("{}[{}] = {}", expr.id, i, "NULL"))
+                    }
+                }
+                None => result.push_str(&format!("{} = {}", expr.id, "NULL")),
+            },
+            ExprNode::Float64(y) => match y {
+                Some(y) => {
+                    for i in 0..y {
+                        result.push_str(&format!("{}[{}] = {}", expr.id, i, "NULL"))
+                    }
+                }
+                None => result.push_str(&format!("{} = {}", expr.id, "NULL")),
+            },
+            ExprNode::MacAddress => result.push_str(&format!("// Not implemented {}", expr.id)),
             _ => (),
         }
         result
