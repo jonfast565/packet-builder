@@ -146,15 +146,25 @@ impl CGenerator {
                             "\t{}[{}] = {};\n",
                             expr.id,
                             i,
-                            CGenerator::get_8bit_conversion_deserialization(&expr.id, *position)
-                        ))
+                            CGenerator::get_8bit_conversion_deserialization(
+                                &"data".to_string(),
+                                *position
+                            )
+                        ));
+                        *position += expr.expr.get_type_length_bytes();
                     }
                 }
-                None => result.push_str(&format!(
-                    "\t{} = {};\n",
-                    expr.id,
-                    CGenerator::get_8bit_conversion_deserialization(&expr.id, *position)
-                )),
+                None => {
+                    result.push_str(&format!(
+                        "\t{} = {};\n",
+                        expr.id,
+                        CGenerator::get_8bit_conversion_deserialization(
+                            &"data".to_string(),
+                            *position
+                        )
+                    ));
+                    *position += expr.expr.get_type_length_bytes();
+                }
             },
             ExprNode::Integer8(y) => match y {
                 Some(y) => {
@@ -163,15 +173,25 @@ impl CGenerator {
                             "\t{}[{}] = {};\n",
                             expr.id,
                             i,
-                            CGenerator::get_8bit_conversion_deserialization(&expr.id, *position)
-                        ))
+                            CGenerator::get_8bit_conversion_deserialization(
+                                &"data".to_string(),
+                                *position
+                            )
+                        ));
+                        *position += expr.expr.get_type_length_bytes();
                     }
                 }
-                None => result.push_str(&format!(
-                    "\t{} = {};\n",
-                    expr.id,
-                    CGenerator::get_8bit_conversion_deserialization(&expr.id, *position)
-                )),
+                None => {
+                    result.push_str(&format!(
+                        "\t{} = {};\n",
+                        expr.id,
+                        CGenerator::get_8bit_conversion_deserialization(
+                            &"data".to_string(),
+                            *position
+                        )
+                    ));
+                    *position += expr.expr.get_type_length_bytes();
+                }
             },
             ExprNode::UnsignedInteger16(y) => match y {
                 Some(y) => {
@@ -180,15 +200,25 @@ impl CGenerator {
                             "\t{}[{}] = {};\n",
                             expr.id,
                             i,
-                            CGenerator::get_16bit_conversion_deserialization(&expr.id, *position)
-                        ))
+                            CGenerator::get_16bit_conversion_deserialization(
+                                &"data".to_string(),
+                                *position
+                            )
+                        ));
+                        *position += expr.expr.get_type_length_bytes();
                     }
                 }
-                None => result.push_str(&format!(
-                    "\t{} = {};\n",
-                    expr.id,
-                    CGenerator::get_16bit_conversion_deserialization(&expr.id, *position)
-                )),
+                None => {
+                    result.push_str(&format!(
+                        "\t{} = {};\n",
+                        expr.id,
+                        CGenerator::get_16bit_conversion_deserialization(
+                            &"data".to_string(),
+                            *position
+                        )
+                    ));
+                    *position += expr.expr.get_type_length_bytes();
+                }
             },
             ExprNode::Integer16(y) => match y {
                 Some(y) => {
@@ -197,15 +227,25 @@ impl CGenerator {
                             "\t{}[{}] = {};\n",
                             expr.id,
                             i,
-                            CGenerator::get_16bit_conversion_deserialization(&expr.id, *position)
-                        ))
+                            CGenerator::get_16bit_conversion_deserialization(
+                                &"data".to_string(),
+                                *position
+                            )
+                        ));
+                        *position += expr.expr.get_type_length_bytes();
                     }
                 }
-                None => result.push_str(&format!(
-                    "\t{} = {};",
-                    expr.id,
-                    CGenerator::get_16bit_conversion_deserialization(&expr.id, *position)
-                )),
+                None => {
+                    result.push_str(&format!(
+                        "\t{} = {};",
+                        expr.id,
+                        CGenerator::get_16bit_conversion_deserialization(
+                            &"data".to_string(),
+                            *position
+                        )
+                    ));
+                    *position += expr.expr.get_type_length_bytes();
+                }
             },
             ExprNode::UnsignedInteger32(y) => match y {
                 Some(y) => {
@@ -214,15 +254,25 @@ impl CGenerator {
                             "\t{}[{}] = {};\n",
                             expr.id,
                             i,
-                            CGenerator::get_32bit_conversion_deserialization(&expr.id, *position)
-                        ))
+                            CGenerator::get_32bit_conversion_deserialization(
+                                &"data".to_string(),
+                                *position
+                            )
+                        ));
+                        *position += expr.expr.get_type_length_bytes();
                     }
                 }
-                None => result.push_str(&format!(
-                    "\t{} = {};\n",
-                    expr.id,
-                    CGenerator::get_32bit_conversion_deserialization(&expr.id, *position)
-                )),
+                None => {
+                    result.push_str(&format!(
+                        "\t{} = {};\n",
+                        expr.id,
+                        CGenerator::get_32bit_conversion_deserialization(
+                            &"data".to_string(),
+                            *position
+                        )
+                    ));
+                    *position += expr.expr.get_type_length_bytes();
+                }
             },
             ExprNode::Integer32(y) => match y {
                 Some(y) => {
@@ -231,15 +281,25 @@ impl CGenerator {
                             "\t{}[{}] = {};\n",
                             expr.id,
                             i,
-                            CGenerator::get_32bit_conversion_deserialization(&expr.id, *position)
-                        ))
+                            CGenerator::get_32bit_conversion_deserialization(
+                                &"data".to_string(),
+                                *position
+                            )
+                        ));
+                        *position += expr.expr.get_type_length_bytes();
                     }
                 }
-                None => result.push_str(&format!(
-                    "\t{} = {};\n",
-                    expr.id,
-                    CGenerator::get_32bit_conversion_deserialization(&expr.id, *position)
-                )),
+                None => {
+                    result.push_str(&format!(
+                        "\t{} = {};\n",
+                        expr.id,
+                        CGenerator::get_32bit_conversion_deserialization(
+                            &"data".to_string(),
+                            *position
+                        )
+                    ));
+                    *position += expr.expr.get_type_length_bytes();
+                }
             },
             ExprNode::UnsignedInteger64(y) => match y {
                 Some(y) => {
@@ -248,15 +308,25 @@ impl CGenerator {
                             "\t{}[{}] = {};\n",
                             expr.id,
                             i,
-                            CGenerator::get_64bit_conversion_deserialization(&expr.id, *position)
-                        ))
+                            CGenerator::get_64bit_conversion_deserialization(
+                                &"data".to_string(),
+                                *position
+                            )
+                        ));
+                        *position += expr.expr.get_type_length_bytes();
                     }
                 }
-                None => result.push_str(&format!(
-                    "\t{} = {};\n",
-                    expr.id,
-                    CGenerator::get_64bit_conversion_deserialization(&expr.id, *position)
-                )),
+                None => {
+                    result.push_str(&format!(
+                        "\t{} = {};\n",
+                        expr.id,
+                        CGenerator::get_64bit_conversion_deserialization(
+                            &"data".to_string(),
+                            *position
+                        )
+                    ));
+                    *position += expr.expr.get_type_length_bytes();
+                }
             },
             ExprNode::Integer64(y) => match y {
                 Some(y) => {
@@ -265,15 +335,25 @@ impl CGenerator {
                             "\t{}[{}] = {};\n",
                             expr.id,
                             i,
-                            CGenerator::get_64bit_conversion_deserialization(&expr.id, *position)
-                        ))
+                            CGenerator::get_64bit_conversion_deserialization(
+                                &"data".to_string(),
+                                *position
+                            )
+                        ));
+                        *position += expr.expr.get_type_length_bytes();
                     }
                 }
-                None => result.push_str(&format!(
-                    "\t{} = {};\n",
-                    expr.id,
-                    CGenerator::get_64bit_conversion_deserialization(&expr.id, *position)
-                )),
+                None => {
+                    result.push_str(&format!(
+                        "\t{} = {};\n",
+                        expr.id,
+                        CGenerator::get_64bit_conversion_deserialization(
+                            &"data".to_string(),
+                            *position
+                        )
+                    ));
+                    *position += expr.expr.get_type_length_bytes();
+                }
             },
             ExprNode::Float32(y) => match y {
                 Some(y) => {
@@ -282,15 +362,25 @@ impl CGenerator {
                             "\t{}[{}] = {};\n",
                             expr.id,
                             i,
-                            CGenerator::get_32bit_conversion_deserialization(&expr.id, *position)
-                        ))
+                            CGenerator::get_32bit_conversion_deserialization(
+                                &"data".to_string(),
+                                *position
+                            )
+                        ));
+                        *position += expr.expr.get_type_length_bytes();
                     }
                 }
-                None => result.push_str(&format!(
-                    "\t{} = {};\n",
-                    expr.id,
-                    CGenerator::get_32bit_conversion_deserialization(&expr.id, *position)
-                )),
+                None => {
+                    result.push_str(&format!(
+                        "\t{} = {};\n",
+                        expr.id,
+                        CGenerator::get_32bit_conversion_deserialization(
+                            &"data".to_string(),
+                            *position
+                        )
+                    ));
+                    *position += expr.expr.get_type_length_bytes();
+                }
             },
             ExprNode::Float64(y) => match y {
                 Some(y) => {
@@ -299,23 +389,29 @@ impl CGenerator {
                             "\t{}[{}] = {};\n",
                             expr.id,
                             i,
-                            CGenerator::get_64bit_conversion_deserialization(&expr.id, *position)
+                            CGenerator::get_64bit_conversion_deserialization(
+                                &"data".to_string(),
+                                *position
+                            )
                         ));
-                        *position += expr.expr.get_length_bytes();
+                        *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
                     result.push_str(&format!(
                         "\t{} = {};\n",
                         expr.id,
-                        CGenerator::get_64bit_conversion_deserialization(&expr.id, *position)
+                        CGenerator::get_64bit_conversion_deserialization(
+                            &"data".to_string(),
+                            *position
+                        )
                     ));
-                    *position += expr.expr.get_length_bytes();
+                    *position += expr.expr.get_type_length_bytes();
                 }
             },
             ExprNode::MacAddress => {
-                result.push_str(&format!("// Not implemented {};\n", expr.id));
-                *position += expr.expr.get_length_bytes();
+                result.push_str(&format!("// Not implemented {};\n", &"data".to_string()));
+                *position += expr.expr.get_type_length_bytes();
             }
             _ => (),
         }
@@ -323,12 +419,13 @@ impl CGenerator {
     }
 
     fn get_8bit_conversion_deserialization(variable: &String, position: usize) -> String {
-        format!("{}[{}]", variable, position)
+        format!("(uint8_t) {}[{}]", variable, position)
     }
 
     fn get_16bit_conversion_deserialization(variable: &String, position: usize) -> String {
         format!(
-            "{}[{}] << {}[{}]",
+            "(uint16_t) {}[{}] 
+                << (uint16_t) {}[{}]",
             variable,
             position + 1,
             variable,
@@ -338,7 +435,10 @@ impl CGenerator {
 
     fn get_32bit_conversion_deserialization(variable: &String, position: usize) -> String {
         format!(
-            "{}[{}] << {}[{}] << {}[{}] << {}[{}]",
+            "(uint32_t) {}[{}] 
+                << (uint32_t) {}[{}] 
+                << (uint32_t) {}[{}] 
+                << (uint32_t) {}[{}]",
             variable,
             position + 3,
             variable,
@@ -352,7 +452,14 @@ impl CGenerator {
 
     fn get_64bit_conversion_deserialization(variable: &String, position: usize) -> String {
         format!(
-            "{}[{}] << {}[{}] << {}[{}] << {}[{}] << {}[{}] << {}[{}] << {}[{}] << {}[{}]",
+            "(uint64_t) {}[{}] 
+                << (uint64_t) {}[{}] 
+                << (uint64_t) {}[{}] 
+                << (uint64_t) {}[{}] 
+                << (uint64_t) {}[{}] 
+                << (uint64_t) {}[{}] 
+                << (uint64_t) {}[{}]
+                << (uint64_t) {}[{}]",
             variable,
             position + 7,
             variable,
