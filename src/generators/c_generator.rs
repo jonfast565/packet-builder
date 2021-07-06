@@ -133,7 +133,6 @@ impl CGenerator {
 
     fn get_field_serializer(expr: &TypeExpr) -> String {
         let mut result = String::new();
-        
         result
     }
 
@@ -143,87 +142,227 @@ impl CGenerator {
             ExprNode::UnsignedInteger8(y) => match y {
                 Some(y) => {
                     for i in 0..y {
-                        result.push_str(&format!("\t{}[{}] = {}\n", expr.id, i, "NULL"))
+                        result.push_str(&format!(
+                            "\t{}[{}] = {}\n",
+                            expr.id,
+                            i,
+                            CGenerator::get_8bit_conversion_deserialization(&expr.id, *position)
+                        ))
                     }
                 }
-                None => result.push_str(&format!("\t{} = {}\n", expr.id, "NULL")),
+                None => result.push_str(&format!(
+                    "\t{} = {}\n",
+                    expr.id,
+                    CGenerator::get_8bit_conversion_deserialization(&expr.id, *position)
+                )),
             },
             ExprNode::Integer8(y) => match y {
                 Some(y) => {
                     for i in 0..y {
-                        result.push_str(&format!("\t{}[{}] = {}\n", expr.id, i, "NULL"))
+                        result.push_str(&format!(
+                            "\t{}[{}] = {}\n",
+                            expr.id,
+                            i,
+                            CGenerator::get_8bit_conversion_deserialization(&expr.id, *position)
+                        ))
                     }
                 }
-                None => result.push_str(&format!("\t{} = {}\n", expr.id, "NULL")),
+                None => result.push_str(&format!(
+                    "\t{} = {}\n",
+                    expr.id,
+                    CGenerator::get_8bit_conversion_deserialization(&expr.id, *position)
+                )),
             },
             ExprNode::UnsignedInteger16(y) => match y {
                 Some(y) => {
                     for i in 0..y {
-                        result.push_str(&format!("\t{}[{}] = {}\n", expr.id, i, "NULL"))
+                        result.push_str(&format!(
+                            "\t{}[{}] = {}\n",
+                            expr.id,
+                            i,
+                            CGenerator::get_16bit_conversion_deserialization(&expr.id, *position)
+                        ))
                     }
                 }
-                None => result.push_str(&format!("\t{} = {}\n", expr.id, "NULL")),
+                None => result.push_str(&format!(
+                    "\t{} = {}\n",
+                    expr.id,
+                    CGenerator::get_16bit_conversion_deserialization(&expr.id, *position)
+                )),
             },
             ExprNode::Integer16(y) => match y {
                 Some(y) => {
                     for i in 0..y {
-                        result.push_str(&format!("\t{}[{}] = {}\n", expr.id, i, "NULL"))
+                        result.push_str(&format!(
+                            "\t{}[{}] = {}\n",
+                            expr.id,
+                            i,
+                            CGenerator::get_16bit_conversion_deserialization(&expr.id, *position)
+                        ))
                     }
                 }
-                None => result.push_str(&format!("\t{} = {}", expr.id, "NULL")),
+                None => result.push_str(&format!(
+                    "\t{} = {}",
+                    expr.id,
+                    CGenerator::get_16bit_conversion_deserialization(&expr.id, *position)
+                )),
             },
             ExprNode::UnsignedInteger32(y) => match y {
                 Some(y) => {
                     for i in 0..y {
-                        result.push_str(&format!("\t{}[{}] = {}\n", expr.id, i, "NULL"))
+                        result.push_str(&format!(
+                            "\t{}[{}] = {}\n",
+                            expr.id,
+                            i,
+                            CGenerator::get_32bit_conversion_deserialization(&expr.id, *position)
+                        ))
                     }
                 }
-                None => result.push_str(&format!("\t{} = {}\n", expr.id, "NULL")),
+                None => result.push_str(&format!(
+                    "\t{} = {}\n",
+                    expr.id,
+                    CGenerator::get_32bit_conversion_deserialization(&expr.id, *position)
+                )),
             },
             ExprNode::Integer32(y) => match y {
                 Some(y) => {
                     for i in 0..y {
-                        result.push_str(&format!("\t{}[{}] = {}\n", expr.id, i, "NULL"))
+                        result.push_str(&format!(
+                            "\t{}[{}] = {}\n",
+                            expr.id,
+                            i,
+                            CGenerator::get_32bit_conversion_deserialization(&expr.id, *position)
+                        ))
                     }
                 }
-                None => result.push_str(&format!("\t{} = {}\n", expr.id, "NULL")),
+                None => result.push_str(&format!(
+                    "\t{} = {}\n",
+                    expr.id,
+                    CGenerator::get_32bit_conversion_deserialization(&expr.id, *position)
+                )),
             },
             ExprNode::UnsignedInteger64(y) => match y {
                 Some(y) => {
                     for i in 0..y {
-                        result.push_str(&format!("\t{}[{}] = {}\n", expr.id, i, "NULL"))
+                        result.push_str(&format!(
+                            "\t{}[{}] = {}\n",
+                            expr.id,
+                            i,
+                            CGenerator::get_64bit_conversion_deserialization(&expr.id, *position)
+                        ))
                     }
                 }
-                None => result.push_str(&format!("\t{} = {}\n", expr.id, "NULL")),
+                None => result.push_str(&format!(
+                    "\t{} = {}\n",
+                    expr.id,
+                    CGenerator::get_64bit_conversion_deserialization(&expr.id, *position)
+                )),
             },
             ExprNode::Integer64(y) => match y {
                 Some(y) => {
                     for i in 0..y {
-                        result.push_str(&format!("\t{}[{}] = {}\n", expr.id, i, "NULL"))
+                        result.push_str(&format!(
+                            "\t{}[{}] = {}\n",
+                            expr.id,
+                            i,
+                            CGenerator::get_64bit_conversion_deserialization(&expr.id, *position)
+                        ))
                     }
                 }
-                None => result.push_str(&format!("\t{} = {}\n", expr.id, "NULL")),
+                None => result.push_str(&format!(
+                    "\t{} = {}\n",
+                    expr.id,
+                    CGenerator::get_64bit_conversion_deserialization(&expr.id, *position)
+                )),
             },
             ExprNode::Float32(y) => match y {
                 Some(y) => {
                     for i in 0..y {
-                        result.push_str(&format!("\t{}[{}] = {}\n", expr.id, i, "NULL"))
+                        result.push_str(&format!(
+                            "\t{}[{}] = {}\n",
+                            expr.id,
+                            i,
+                            CGenerator::get_32bit_conversion_deserialization(&expr.id, *position)
+                        ))
                     }
                 }
-                None => result.push_str(&format!("\t{} = {}\n", expr.id, "NULL")),
+                None => result.push_str(&format!(
+                    "\t{} = {}\n",
+                    expr.id,
+                    CGenerator::get_32bit_conversion_deserialization(&expr.id, *position)
+                )),
             },
             ExprNode::Float64(y) => match y {
                 Some(y) => {
                     for i in 0..y {
-                        result.push_str(&format!("\t{}[{}] = {}\n", expr.id, i, "NULL"))
+                        result.push_str(&format!(
+                            "\t{}[{}] = {}\n",
+                            expr.id,
+                            i,
+                            CGenerator::get_64bit_conversion_deserialization(&expr.id, *position)
+                        ))
                     }
                 }
-                None => result.push_str(&format!("\t{} = {}\n", expr.id, "NULL")),
+                None => result.push_str(&format!(
+                    "\t{} = {}\n",
+                    expr.id,
+                    CGenerator::get_64bit_conversion_deserialization(&expr.id, *position)
+                )),
             },
             ExprNode::MacAddress => result.push_str(&format!("// Not implemented {}\n", expr.id)),
             _ => (),
         }
         *position += expr.expr.get_length_bytes();
         result
+    }
+
+    fn get_8bit_conversion_deserialization(variable: &String, position: usize) -> String {
+        format!("{}[{}]", variable, position)
+    }
+
+    fn get_16bit_conversion_deserialization(variable: &String, position: usize) -> String {
+        format!(
+            "{}[{}] << {}[{}]",
+            variable,
+            position + 1,
+            variable,
+            position,
+        )
+    }
+
+    fn get_32bit_conversion_deserialization(variable: &String, position: usize) -> String {
+        format!(
+            "{}[{}] << {}[{}] << {}[{}] << {}[{}]",
+            variable,
+            position + 3,
+            variable,
+            position + 2,
+            variable,
+            position + 1,
+            variable,
+            position
+        )
+    }
+
+    fn get_64bit_conversion_deserialization(variable: &String, position: usize) -> String {
+        format!(
+            "{}[{}] << {}[{}] << {}[{}] << {}[{}] << {}[{}] << {}[{}] << {}[{}] << {}[{}]",
+            variable,
+            position + 7,
+            variable,
+            position + 6,
+            variable,
+            position + 5,
+            variable,
+            position + 4,
+            variable,
+            position + 3,
+            variable,
+            position + 2,
+            variable,
+            position + 1,
+            variable,
+            position
+        )
     }
 }
