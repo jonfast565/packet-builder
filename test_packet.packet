@@ -6,5 +6,8 @@ packet test {
 }
 
 packet test2 {
-    test1 float64[4]
+    test1 float64[4],
+    test23 float32[2],
+    t3 int8,
+    t4 int64
 }

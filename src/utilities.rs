@@ -45,3 +45,11 @@ impl Casing for String {
         result
     }
 }
+
+pub fn is_little_endian() -> bool {
+    if cfg!(target_endian = "big") {
+        false
+    } else {
+        true
+    }
+}
