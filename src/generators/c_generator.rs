@@ -9,7 +9,7 @@ impl CGenerator {
         result.push_str(&CGenerator::create_spacer());
         result.push_str(&CGenerator::create_supporting_functions());
         result.push_str(&CGenerator::create_spacer());
-        result.push_str(&CGenerator::build_struct(expr));
+        result.push_str(&CGenerator::build_struct(expr, false));
         result.push_str(&CGenerator::create_serialization_functions(expr));
         result
     }
@@ -42,27 +42,32 @@ impl CGenerator {
 
     fn create_serialization_functions(expr: &PacketExpr) -> String {
         format!(
-            "\tvoid serialize(uint8_t* data, {}** packet, int verbose) {{
-            uint8_t* result = (uint8_t*) calloc({{TotalLength}}, sizeof(uint8_t));
-            memset(result, 0, {{TotalLength}});
+            "\tvoid serialize(uint8_t** data, {}* packet, int verbose) {{
+            uint8_t* result = (uint8_t*) calloc({}, sizeof(uint8_t));
+            memset(result, 0, {});
             size_t packet_counter = 0;
             {}
+            *data = result;
         }}
 
-        void deserialize({}* packet, uint8_t** data,  int verbose) {{
-            size_t packet_counter = 0;
+        void deserialize({}** packet, uint8_t* data, int verbose) {{
+            *packet = ({}*) malloc(sizeof({}));
             {}
         }}
         ",
             expr.name,
+            expr.get_total_length(),
+            expr.get_total_length(),
             &CGenerator::create_serializers(expr),
+            expr.name,
+            expr.name,
             expr.name,
             &CGenerator::create_deserializers(expr)
         )
         .to_string()
     }
 
-    fn build_struct(expr: &PacketExpr) -> String {
+    fn build_struct(expr: &PacketExpr, just_fields: bool) -> String {
         let field_aggregation = expr
             .fields
             .iter()
@@ -101,10 +106,14 @@ impl CGenerator {
             })
             .fold(String::new(), |acc, v| format!("{}\t    {}\n", acc, v));
 
-        format!(
-            "\ttypedef struct {} {{\n {} \n\t}} {};\n\n",
-            expr.name, field_aggregation, expr.name
-        )
+        if !just_fields {
+            format!(
+                "\ttypedef struct {} {{\n {} \n\t}} {};\n\n",
+                expr.name, field_aggregation, expr.name
+            )
+        } else {
+            format!("{}", field_aggregation)
+        }
     }
 
     fn get_array_bounds(expr: Option<usize>) -> String {
@@ -143,7 +152,7 @@ impl CGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\t{}[{}] = {};\n",
+                            "\t*packet->{}[{}] = {};\n\n",
                             expr.id,
                             i,
                             CGenerator::get_8bit_conversion_deserialization(
@@ -156,7 +165,7 @@ impl CGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\t{} = {};\n",
+                        "\t*packet->{} = (uint8_t)({});\n\n",
                         expr.id,
                         CGenerator::get_8bit_conversion_deserialization(
                             &"data".to_string(),
@@ -170,7 +179,7 @@ impl CGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\t{}[{}] = {};\n",
+                            "\t*packet->{}[{}] = (int8_t)({});\n\n",
                             expr.id,
                             i,
                             CGenerator::get_8bit_conversion_deserialization(
@@ -183,7 +192,7 @@ impl CGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\t{} = {};\n",
+                        "\t*packet->{} = (int8_t)({});\n\n",
                         expr.id,
                         CGenerator::get_8bit_conversion_deserialization(
                             &"data".to_string(),
@@ -197,7 +206,7 @@ impl CGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\t{}[{}] = {};\n",
+                            "\t*packet->{}[{}] = (uint16_t)({});\n\n",
                             expr.id,
                             i,
                             CGenerator::get_16bit_conversion_deserialization(
@@ -210,7 +219,7 @@ impl CGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\t{} = {};\n",
+                        "\t*packet->{} = (uint16_t)({});\n\n",
                         expr.id,
                         CGenerator::get_16bit_conversion_deserialization(
                             &"data".to_string(),
@@ -224,7 +233,7 @@ impl CGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\t{}[{}] = {};\n",
+                            "\t*packet->{}[{}] = (int16_t)({});\n\n",
                             expr.id,
                             i,
                             CGenerator::get_16bit_conversion_deserialization(
@@ -237,7 +246,7 @@ impl CGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\t{} = {};",
+                        "\t*packet->{} = (int16_t)({});\n\n",
                         expr.id,
                         CGenerator::get_16bit_conversion_deserialization(
                             &"data".to_string(),
@@ -251,7 +260,7 @@ impl CGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\t{}[{}] = {};\n",
+                            "\t*packet->{}[{}] = (uint32_t)({});\n\n",
                             expr.id,
                             i,
                             CGenerator::get_32bit_conversion_deserialization(
@@ -264,7 +273,7 @@ impl CGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\t{} = {};\n",
+                        "\t*packet->{} = (uint32_t)({});\n\n",
                         expr.id,
                         CGenerator::get_32bit_conversion_deserialization(
                             &"data".to_string(),
@@ -278,7 +287,7 @@ impl CGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\t{}[{}] = {};\n",
+                            "\t*packet->{}[{}] = (int32_t)({});\n\n",
                             expr.id,
                             i,
                             CGenerator::get_32bit_conversion_deserialization(
@@ -291,7 +300,7 @@ impl CGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\t{} = {};\n",
+                        "\t*packet->{} = (int32_t)({});\n\n",
                         expr.id,
                         CGenerator::get_32bit_conversion_deserialization(
                             &"data".to_string(),
@@ -305,7 +314,7 @@ impl CGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\t{}[{}] = {};\n",
+                            "\t*packet->{}[{}] = (uint64_t)({});\n\n",
                             expr.id,
                             i,
                             CGenerator::get_64bit_conversion_deserialization(
@@ -318,7 +327,7 @@ impl CGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\t{} = {};\n",
+                        "\t*packet->{} = (uint64_t)({});\n\n",
                         expr.id,
                         CGenerator::get_64bit_conversion_deserialization(
                             &"data".to_string(),
@@ -332,7 +341,7 @@ impl CGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\t{}[{}] = {};\n",
+                            "\t*packet->{}[{}] = (int64_t)({});\n\n",
                             expr.id,
                             i,
                             CGenerator::get_64bit_conversion_deserialization(
@@ -345,7 +354,7 @@ impl CGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\t{} = {};\n",
+                        "\t*packet->{} = (int64_t)({});\n\n",
                         expr.id,
                         CGenerator::get_64bit_conversion_deserialization(
                             &"data".to_string(),
@@ -359,7 +368,7 @@ impl CGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\t{}[{}] = {};\n",
+                            "\t*packet->{}[{}] = (float)({});\n\n",
                             expr.id,
                             i,
                             CGenerator::get_32bit_conversion_deserialization(
@@ -372,7 +381,7 @@ impl CGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\t{} = {};\n",
+                        "\t*packet->{} = (float)({});\n\n",
                         expr.id,
                         CGenerator::get_32bit_conversion_deserialization(
                             &"data".to_string(),
@@ -386,7 +395,7 @@ impl CGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\t{}[{}] = {};\n",
+                            "\t*packet->{}[{}] = (double)({});\n\n",
                             expr.id,
                             i,
                             CGenerator::get_64bit_conversion_deserialization(
@@ -399,7 +408,7 @@ impl CGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\t{} = {};\n",
+                        "\t*packet->{} = (double)({});\n\n",
                         expr.id,
                         CGenerator::get_64bit_conversion_deserialization(
                             &"data".to_string(),
@@ -410,7 +419,7 @@ impl CGenerator {
                 }
             },
             ExprNode::MacAddress => {
-                result.push_str(&format!("// Not implemented {};\n", &"data".to_string()));
+                result.push_str(&format!("// Not implemented {};\n\n", &"data".to_string()));
                 *position += expr.expr.get_type_length_bytes();
             }
             _ => (),

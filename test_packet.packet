@@ -1,13 +1,6 @@
 packet test {
-    test1 uint8,
+    test1 uint8[10],
     test2 int16,
     test3 float32,
     test4 float64
-}
-
-packet test2 {
-    test1 float64[4],
-    test23 float32[2],
-    t3 int8,
-    t4 int64
 }

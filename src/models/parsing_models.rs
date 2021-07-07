@@ -117,3 +117,13 @@ pub struct PacketExpr {
     pub name: String,
     pub fields: Vec<TypeExpr>,
 }
+
+impl PacketExpr {
+    pub fn get_total_length(&self) -> usize {
+        let mut result = 0;
+        for field in &self.fields {
+            result += field.expr.get_length_bytes();
+        }
+        result
+    }
+}
