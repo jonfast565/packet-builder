@@ -43,11 +43,9 @@ impl CGenerator {
     fn create_serialization_functions(expr: &PacketExpr) -> String {
         format!(
             "\tvoid serialize(uint8_t** data, {}* packet, int verbose) {{
-            uint8_t* result = (uint8_t*) calloc({}, sizeof(uint8_t));
-            memset(result, 0, {});
-            size_t packet_counter = 0;
+            *data = (uint8_t*) calloc({}, sizeof(uint8_t));
+            memset(data, 0, {});
             {}
-            *data = result;
         }}
 
         void deserialize({}** packet, uint8_t* data, int verbose) {{
@@ -134,14 +132,252 @@ impl CGenerator {
 
     fn create_serializers(expr: &PacketExpr) -> String {
         let mut result = String::new();
+        let mut counter = 0;
         for field in &expr.fields {
-            result.push_str(&CGenerator::get_field_serializer(field));
+            result.push_str(&CGenerator::get_field_serializer(field, &mut counter));
         }
         result
     }
 
-    fn get_field_serializer(expr: &TypeExpr) -> String {
+    fn get_field_serializer(expr: &TypeExpr, position: &mut usize) -> String {
         let mut result = String::new();
+        match expr.expr {
+            ExprNode::UnsignedInteger8(y) => match y {
+                Some(y) => {
+                    for i in 0..y {
+                        result.push_str(&format!(
+                            "\tmemcpy(&packet->{}[{}], &data[{}], {});\n",
+                            expr.id,
+                            i,
+                            *position,
+                            expr.expr.get_type_length_bytes()
+                        ));
+                        *position += expr.expr.get_type_length_bytes();
+                    }
+                }
+                None => {
+                    result.push_str(&format!(
+                        "\tmemcpy(&packet->{}, &data[{}], {});\n",
+                            expr.id,
+                            *position,
+                            expr.expr.get_type_length_bytes()
+                    ));
+                    *position += expr.expr.get_type_length_bytes();
+                }
+            },
+            ExprNode::Integer8(y) => match y {
+                Some(y) => {
+                    for i in 0..y {
+                        result.push_str(&format!(
+                            "\tmemcpy(&packet->{}[{}], &data[{}], {});\n",
+                            expr.id,
+                            i,
+                            *position,
+                            expr.expr.get_type_length_bytes()
+                        ));
+                        *position += expr.expr.get_type_length_bytes();
+                    }
+                }
+                None => {
+                    result.push_str(&format!(
+                        "\tmemcpy(&packet->{}, &data[{}], {});\n",
+                            expr.id,
+                            *position,
+                            expr.expr.get_type_length_bytes()
+                    ));
+                    *position += expr.expr.get_type_length_bytes();
+                }
+            },
+            ExprNode::UnsignedInteger16(y) => match y {
+                Some(y) => {
+                    for i in 0..y {
+                        result.push_str(&format!(
+                            "\tmemcpy(&packet->{}[{}], &data[{}], {});\n",
+                            expr.id,
+                            i,
+                            *position,
+                            expr.expr.get_type_length_bytes()
+                        ));
+                        *position += expr.expr.get_type_length_bytes();
+                    }
+                }
+                None => {
+                    result.push_str(&format!(
+                        "\tmemcpy(&packet->{}, &data[{}], {});\n",
+                            expr.id,
+                            *position,
+                            expr.expr.get_type_length_bytes()
+                    ));
+                    *position += expr.expr.get_type_length_bytes();
+                }
+            },
+            ExprNode::Integer16(y) => match y {
+                Some(y) => {
+                    for i in 0..y {
+                        result.push_str(&format!(
+                            "\tmemcpy(&packet->{}[{}], &data[{}], {});\n",
+                            expr.id,
+                            i,
+                            *position,
+                            expr.expr.get_type_length_bytes()
+                        ));
+                        *position += expr.expr.get_type_length_bytes();
+                    }
+                }
+                None => {
+                    result.push_str(&format!(
+                        "\tmemcpy(&packet->{}, &data[{}], {});\n",
+                            expr.id,
+                            *position,
+                            expr.expr.get_type_length_bytes()
+                    ));
+                    *position += expr.expr.get_type_length_bytes();
+                }
+            },
+            ExprNode::UnsignedInteger32(y) => match y {
+                Some(y) => {
+                    for i in 0..y {
+                        result.push_str(&format!(
+                            "\tmemcpy(&packet->{}[{}], &data[{}], {});\n",
+                            expr.id,
+                            i,
+                            *position,
+                            expr.expr.get_type_length_bytes()
+                        ));
+                        *position += expr.expr.get_type_length_bytes();
+                    }
+                }
+                None => {
+                    result.push_str(&format!(
+                        "\tmemcpy(&packet->{}, &data[{}], {});\n",
+                            expr.id,
+                            *position,
+                            expr.expr.get_type_length_bytes()
+                    ));
+                    *position += expr.expr.get_type_length_bytes();
+                }
+            },
+            ExprNode::Integer32(y) => match y {
+                Some(y) => {
+                    for i in 0..y {
+                        result.push_str(&format!(
+                            "\tmemcpy(&packet->{}[{}], &data[{}], {});\n",
+                            expr.id,
+                            i,
+                            *position,
+                            expr.expr.get_type_length_bytes()
+                        ));
+                        *position += expr.expr.get_type_length_bytes();
+                    }
+                }
+                None => {
+                    result.push_str(&format!(
+                        "\tmemcpy(&packet->{}, &data[{}], {});\n",
+                            expr.id,
+                            *position,
+                            expr.expr.get_type_length_bytes()
+                    ));
+                    *position += expr.expr.get_type_length_bytes();
+                }
+            },
+            ExprNode::UnsignedInteger64(y) => match y {
+                Some(y) => {
+                    for i in 0..y {
+                        result.push_str(&format!(
+                            "\tmemcpy(&packet->{}[{}], &data[{}], {});\n",
+                            expr.id,
+                            i,
+                            *position,
+                            expr.expr.get_type_length_bytes()
+                        ));
+                        *position += expr.expr.get_type_length_bytes();
+                    }
+                }
+                None => {
+                    result.push_str(&format!(
+                        "\tmemcpy(&packet->{}, &data[{}], {});\n",
+                            expr.id,
+                            *position,
+                            expr.expr.get_type_length_bytes()
+                    ));
+                    *position += expr.expr.get_type_length_bytes();
+                }
+            },
+            ExprNode::Integer64(y) => match y {
+                Some(y) => {
+                    for i in 0..y {
+                        result.push_str(&format!(
+                            "\tmemcpy(&packet->{}[{}], &data[{}], {});\n",
+                            expr.id,
+                            i,
+                            *position,
+                            expr.expr.get_type_length_bytes()
+                        ));
+                        *position += expr.expr.get_type_length_bytes();
+                    }
+                }
+                None => {
+                    result.push_str(&format!(
+                        "\tmemcpy(&packet->{}, &data[{}], {});\n",
+                            expr.id,
+                            *position,
+                            expr.expr.get_type_length_bytes()
+                    ));
+                    *position += expr.expr.get_type_length_bytes();
+                }
+            },
+            ExprNode::Float32(y) => match y {
+                Some(y) => {
+                    for i in 0..y {
+                        result.push_str(&format!(
+                            "\tmemcpy(&packet->{}[{}], &data[{}], {});\n",
+                            expr.id,
+                            i,
+                            *position,
+                            expr.expr.get_type_length_bytes()
+                        ));
+                        *position += expr.expr.get_type_length_bytes();
+                    }
+                }
+                None => {
+                    result.push_str(&format!(
+                        "\tmemcpy(&packet->{}, &data[{}], {});\n",
+                            expr.id,
+                            *position,
+                            expr.expr.get_type_length_bytes()
+                    ));
+                    *position += expr.expr.get_type_length_bytes();
+                }
+            },
+            ExprNode::Float64(y) => match y {
+                Some(y) => {
+                    for i in 0..y {
+                        result.push_str(&format!(
+                            "\tmemcpy(&packet->{}[{}], &data[{}], {});\n",
+                            expr.id,
+                            i,
+                            *position,
+                            expr.expr.get_type_length_bytes()
+                        ));
+                        *position += expr.expr.get_type_length_bytes();
+                    }
+                }
+                None => {
+                    result.push_str(&format!(
+                        "\tmemcpy(&packet->{}, &data[{}], {});\n",
+                            expr.id,
+                            *position,
+                            expr.expr.get_type_length_bytes()
+                    ));
+                    *position += expr.expr.get_type_length_bytes();
+                }
+            },
+            ExprNode::MacAddress => {
+                result.push_str(&format!("// Not implemented {};\n", &"data".to_string()));
+                *position += expr.expr.get_type_length_bytes();
+            }
+            _ => ()
+        }
         result
     }
 
@@ -152,7 +388,7 @@ impl CGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\t*packet->{}[{}] = {};\n\n",
+                            "\t(*packet)->{}[{}] = {};\n",
                             expr.id,
                             i,
                             CGenerator::get_8bit_conversion_deserialization(
@@ -165,7 +401,7 @@ impl CGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\t*packet->{} = (uint8_t)({});\n\n",
+                        "\t(*packet)->{} = (uint8_t)({});\n",
                         expr.id,
                         CGenerator::get_8bit_conversion_deserialization(
                             &"data".to_string(),
@@ -179,7 +415,7 @@ impl CGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\t*packet->{}[{}] = (int8_t)({});\n\n",
+                            "\t(*packet)->{}[{}] = (int8_t)({});\n",
                             expr.id,
                             i,
                             CGenerator::get_8bit_conversion_deserialization(
@@ -192,7 +428,7 @@ impl CGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\t*packet->{} = (int8_t)({});\n\n",
+                        "\t(*packet)->{} = (int8_t)({});\n",
                         expr.id,
                         CGenerator::get_8bit_conversion_deserialization(
                             &"data".to_string(),
@@ -206,7 +442,7 @@ impl CGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\t*packet->{}[{}] = (uint16_t)({});\n\n",
+                            "\t(*packet)->{}[{}] = (uint16_t)({});\n",
                             expr.id,
                             i,
                             CGenerator::get_16bit_conversion_deserialization(
@@ -219,7 +455,7 @@ impl CGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\t*packet->{} = (uint16_t)({});\n\n",
+                        "\t(*packet)->{} = (uint16_t)({});\n",
                         expr.id,
                         CGenerator::get_16bit_conversion_deserialization(
                             &"data".to_string(),
@@ -233,7 +469,7 @@ impl CGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\t*packet->{}[{}] = (int16_t)({});\n\n",
+                            "\t(*packet)->{}[{}] = (int16_t)({});\n",
                             expr.id,
                             i,
                             CGenerator::get_16bit_conversion_deserialization(
@@ -246,7 +482,7 @@ impl CGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\t*packet->{} = (int16_t)({});\n\n",
+                        "\t(*packet)->{} = (int16_t)({});\n",
                         expr.id,
                         CGenerator::get_16bit_conversion_deserialization(
                             &"data".to_string(),
@@ -260,7 +496,7 @@ impl CGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\t*packet->{}[{}] = (uint32_t)({});\n\n",
+                            "\t(*packet)->{}[{}] = (uint32_t)({});\n",
                             expr.id,
                             i,
                             CGenerator::get_32bit_conversion_deserialization(
@@ -273,7 +509,7 @@ impl CGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\t*packet->{} = (uint32_t)({});\n\n",
+                        "\t(*packet)->{} = (uint32_t)({});\n",
                         expr.id,
                         CGenerator::get_32bit_conversion_deserialization(
                             &"data".to_string(),
@@ -287,7 +523,7 @@ impl CGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\t*packet->{}[{}] = (int32_t)({});\n\n",
+                            "\t(*packet)->{}[{}] = (int32_t)({});\n",
                             expr.id,
                             i,
                             CGenerator::get_32bit_conversion_deserialization(
@@ -300,7 +536,7 @@ impl CGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\t*packet->{} = (int32_t)({});\n\n",
+                        "\t(*packet)->{} = (int32_t)({});\n",
                         expr.id,
                         CGenerator::get_32bit_conversion_deserialization(
                             &"data".to_string(),
@@ -314,7 +550,7 @@ impl CGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\t*packet->{}[{}] = (uint64_t)({});\n\n",
+                            "\t(*packet)->{}[{}] = (uint64_t)({});\n",
                             expr.id,
                             i,
                             CGenerator::get_64bit_conversion_deserialization(
@@ -327,7 +563,7 @@ impl CGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\t*packet->{} = (uint64_t)({});\n\n",
+                        "\t(*packet)->{} = (uint64_t)({});\n",
                         expr.id,
                         CGenerator::get_64bit_conversion_deserialization(
                             &"data".to_string(),
@@ -341,7 +577,7 @@ impl CGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\t*packet->{}[{}] = (int64_t)({});\n\n",
+                            "\t(*packet)->{}[{}] = (int64_t)({});\n",
                             expr.id,
                             i,
                             CGenerator::get_64bit_conversion_deserialization(
@@ -354,7 +590,7 @@ impl CGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\t*packet->{} = (int64_t)({});\n\n",
+                        "\t(*packet)->{} = (int64_t)({});\n",
                         expr.id,
                         CGenerator::get_64bit_conversion_deserialization(
                             &"data".to_string(),
@@ -368,7 +604,7 @@ impl CGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\t*packet->{}[{}] = (float)({});\n\n",
+                            "\t(*packet)->{}[{}] = (float)({});\n",
                             expr.id,
                             i,
                             CGenerator::get_32bit_conversion_deserialization(
@@ -381,7 +617,7 @@ impl CGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\t*packet->{} = (float)({});\n\n",
+                        "\t(*packet)->{} = (float)({});\n",
                         expr.id,
                         CGenerator::get_32bit_conversion_deserialization(
                             &"data".to_string(),
@@ -395,7 +631,7 @@ impl CGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\t*packet->{}[{}] = (double)({});\n\n",
+                            "\t(*packet)->{}[{}] = (double)({});\n",
                             expr.id,
                             i,
                             CGenerator::get_64bit_conversion_deserialization(
@@ -408,7 +644,7 @@ impl CGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\t*packet->{} = (double)({});\n\n",
+                        "\t(*packet)->{} = (double)({});\n",
                         expr.id,
                         CGenerator::get_64bit_conversion_deserialization(
                             &"data".to_string(),
@@ -419,7 +655,7 @@ impl CGenerator {
                 }
             },
             ExprNode::MacAddress => {
-                result.push_str(&format!("// Not implemented {};\n\n", &"data".to_string()));
+                result.push_str(&format!("// Not implemented {};\n", &"data".to_string()));
                 *position += expr.expr.get_type_length_bytes();
             }
             _ => (),
@@ -433,8 +669,8 @@ impl CGenerator {
 
     fn get_16bit_conversion_deserialization(variable: &String, position: usize) -> String {
         format!(
-            "(uint16_t) {}[{}] 
-                << (uint16_t) {}[{}]",
+            "(uint16_t) {}[{}] | 
+                ((uint16_t) {}[{}] << 8)",
             variable,
             position + 1,
             variable,
@@ -444,10 +680,10 @@ impl CGenerator {
 
     fn get_32bit_conversion_deserialization(variable: &String, position: usize) -> String {
         format!(
-            "(uint32_t) {}[{}] 
-                << (uint32_t) {}[{}] 
-                << (uint32_t) {}[{}] 
-                << (uint32_t) {}[{}]",
+            "(uint32_t) {}[{}] |
+                ((uint32_t) {}[{}] << 8) | 
+                ((uint32_t) {}[{}] << 16) |
+                ((uint32_t) {}[{}] << 24)",
             variable,
             position + 3,
             variable,
@@ -461,14 +697,14 @@ impl CGenerator {
 
     fn get_64bit_conversion_deserialization(variable: &String, position: usize) -> String {
         format!(
-            "(uint64_t) {}[{}] 
-                << (uint64_t) {}[{}] 
-                << (uint64_t) {}[{}] 
-                << (uint64_t) {}[{}] 
-                << (uint64_t) {}[{}] 
-                << (uint64_t) {}[{}] 
-                << (uint64_t) {}[{}]
-                << (uint64_t) {}[{}]",
+            "(uint64_t) {}[{}] |
+                ((uint64_t) {}[{}] << 8)  | 
+                ((uint64_t) {}[{}] << 16) |  
+                ((uint64_t) {}[{}] << 24) |
+                ((uint64_t) {}[{}] << 32) |
+                ((uint64_t) {}[{}] << 40) |
+                ((uint64_t) {}[{}] << 48) |
+                ((uint64_t) {}[{}] << 56)",
             variable,
             position + 7,
             variable,
