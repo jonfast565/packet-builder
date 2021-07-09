@@ -150,9 +150,9 @@ impl CGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tmemcpy(&packet->{}[{}], &data[{}], {});\n",
-                            expr.id,
+                            "\tmemcpy(&data[{}], &packet->{}[{}], {});\n",
                             i,
+                            expr.id,
                             *position,
                             expr.expr.get_type_length_bytes()
                         ));
@@ -161,9 +161,9 @@ impl CGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\tmemcpy(&packet->{}, &data[{}], {});\n",
-                        expr.id,
+                        "\tmemcpy(&data[{}], &packet->{}, {});\n",
                         *position,
+                        expr.id,
                         expr.expr.get_type_length_bytes()
                     ));
                     *position += expr.expr.get_type_length_bytes();
@@ -173,9 +173,9 @@ impl CGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tmemcpy(&packet->{}[{}], &data[{}], {});\n",
-                            expr.id,
+                            "\tmemcpy(&data[{}], &packet->{}[{}], {});\n",
                             i,
+                            expr.id,
                             *position,
                             expr.expr.get_type_length_bytes()
                         ));
@@ -184,9 +184,9 @@ impl CGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\tmemcpy(&packet->{}, &data[{}], {});\n",
-                        expr.id,
+                        "\tmemcpy(&data[{}], &packet->{}, {});\n",
                         *position,
+                        expr.id,
                         expr.expr.get_type_length_bytes()
                     ));
                     *position += expr.expr.get_type_length_bytes();
@@ -196,9 +196,9 @@ impl CGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tmemcpy(&packet->{}[{}], &data[{}], {});\n",
-                            expr.id,
+                            "\tmemcpy(&data[{}], &packet->{}[{}], {});\n",
                             i,
+                            expr.id,
                             *position,
                             expr.expr.get_type_length_bytes()
                         ));
@@ -207,9 +207,9 @@ impl CGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\tmemcpy(&packet->{}, &data[{}], {});\n",
-                        expr.id,
+                        "\tmemcpy(&data[{}], &packet->{}, {});\n",
                         *position,
+                        expr.id,
                         expr.expr.get_type_length_bytes()
                     ));
                     *position += expr.expr.get_type_length_bytes();
@@ -219,9 +219,9 @@ impl CGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tmemcpy(&packet->{}[{}], &data[{}], {});\n",
-                            expr.id,
+                            "\tmemcpy(&data[{}], &packet->{}[{}], {});\n",
                             i,
+                            expr.id,
                             *position,
                             expr.expr.get_type_length_bytes()
                         ));
@@ -230,9 +230,9 @@ impl CGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\tmemcpy(&packet->{}, &data[{}], {});\n",
-                        expr.id,
+                        "\tmemcpy(&data[{}], &packet->{}, {});\n",
                         *position,
+                        expr.id,
                         expr.expr.get_type_length_bytes()
                     ));
                     *position += expr.expr.get_type_length_bytes();
@@ -242,9 +242,9 @@ impl CGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tmemcpy(&packet->{}[{}], &data[{}], {});\n",
-                            expr.id,
+                            "\tmemcpy(&data[{}], &packet->{}[{}], {});\n",
                             i,
+                            expr.id,
                             *position,
                             expr.expr.get_type_length_bytes()
                         ));
@@ -253,9 +253,9 @@ impl CGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\tmemcpy(&packet->{}, &data[{}], {});\n",
-                        expr.id,
+                        "\tmemcpy(&data[{}], &packet->{}, {});\n",
                         *position,
+                        expr.id,
                         expr.expr.get_type_length_bytes()
                     ));
                     *position += expr.expr.get_type_length_bytes();
@@ -265,9 +265,9 @@ impl CGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tmemcpy(&packet->{}[{}], &data[{}], {});\n",
-                            expr.id,
+                            "\tmemcpy(&data[{}], &packet->{}[{}], {});\n",
                             i,
+                            expr.id,
                             *position,
                             expr.expr.get_type_length_bytes()
                         ));
@@ -276,9 +276,9 @@ impl CGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\tmemcpy(&packet->{}, &data[{}], {});\n",
-                        expr.id,
+                        "\tmemcpy(&data[{}], &packet->{}, {});\n",
                         *position,
+                        expr.id,
                         expr.expr.get_type_length_bytes()
                     ));
                     *position += expr.expr.get_type_length_bytes();
@@ -288,9 +288,9 @@ impl CGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tmemcpy(&packet->{}[{}], &data[{}], {});\n",
-                            expr.id,
+                            "\tmemcpy(&data[{}], &packet->{}[{}], {});\n",
                             i,
+                            expr.id,
                             *position,
                             expr.expr.get_type_length_bytes()
                         ));
@@ -299,9 +299,9 @@ impl CGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\tmemcpy(&packet->{}, &data[{}], {});\n",
-                        expr.id,
+                        "\tmemcpy(&data[{}], &packet->{}, {});\n",
                         *position,
+                        expr.id,
                         expr.expr.get_type_length_bytes()
                     ));
                     *position += expr.expr.get_type_length_bytes();
@@ -311,9 +311,9 @@ impl CGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tmemcpy(&packet->{}[{}], &data[{}], {});\n",
-                            expr.id,
+                            "\tmemcpy(&data[{}], &packet->{}[{}], {});\n",
                             i,
+                            expr.id,
                             *position,
                             expr.expr.get_type_length_bytes()
                         ));
@@ -322,9 +322,9 @@ impl CGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\tmemcpy(&packet->{}, &data[{}], {});\n",
-                        expr.id,
+                        "\tmemcpy(&data[{}], &packet->{}, {});\n",
                         *position,
+                        expr.id,
                         expr.expr.get_type_length_bytes()
                     ));
                     *position += expr.expr.get_type_length_bytes();
@@ -334,9 +334,9 @@ impl CGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tmemcpy(&packet->{}[{}], &data[{}], {});\n",
-                            expr.id,
+                            "\tmemcpy(&data[{}], &packet->{}[{}], {});\n",
                             i,
+                            expr.id,
                             *position,
                             expr.expr.get_type_length_bytes()
                         ));
@@ -345,9 +345,9 @@ impl CGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\tmemcpy(&packet->{}, &data[{}], {});\n",
-                        expr.id,
+                        "\tmemcpy(&data[{}], &packet->{}, {});\n",
                         *position,
+                        expr.id,
                         expr.expr.get_type_length_bytes()
                     ));
                     *position += expr.expr.get_type_length_bytes();
@@ -357,9 +357,9 @@ impl CGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tmemcpy(&packet->{}[{}], &data[{}], {});\n",
-                            expr.id,
+                            "\tmemcpy(&data[{}], &packet->{}[{}], {});\n",
                             i,
+                            expr.id,
                             *position,
                             expr.expr.get_type_length_bytes()
                         ));
@@ -368,9 +368,9 @@ impl CGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\tmemcpy(&packet->{}, &data[{}], {});\n",
-                        expr.id,
+                        "\tmemcpy(&data[{}], &packet->{}, {});\n",
                         *position,
+                        expr.id,
                         expr.expr.get_type_length_bytes()
                     ));
                     *position += expr.expr.get_type_length_bytes();
