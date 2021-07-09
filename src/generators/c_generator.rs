@@ -158,9 +158,9 @@ impl CGenerator {
                 None => {
                     result.push_str(&format!(
                         "\tmemcpy(&packet->{}, &data[{}], {});\n",
-                            expr.id,
-                            *position,
-                            expr.expr.get_type_length_bytes()
+                        expr.id,
+                        *position,
+                        expr.expr.get_type_length_bytes()
                     ));
                     *position += expr.expr.get_type_length_bytes();
                 }
@@ -181,9 +181,9 @@ impl CGenerator {
                 None => {
                     result.push_str(&format!(
                         "\tmemcpy(&packet->{}, &data[{}], {});\n",
-                            expr.id,
-                            *position,
-                            expr.expr.get_type_length_bytes()
+                        expr.id,
+                        *position,
+                        expr.expr.get_type_length_bytes()
                     ));
                     *position += expr.expr.get_type_length_bytes();
                 }
@@ -204,9 +204,9 @@ impl CGenerator {
                 None => {
                     result.push_str(&format!(
                         "\tmemcpy(&packet->{}, &data[{}], {});\n",
-                            expr.id,
-                            *position,
-                            expr.expr.get_type_length_bytes()
+                        expr.id,
+                        *position,
+                        expr.expr.get_type_length_bytes()
                     ));
                     *position += expr.expr.get_type_length_bytes();
                 }
@@ -227,9 +227,9 @@ impl CGenerator {
                 None => {
                     result.push_str(&format!(
                         "\tmemcpy(&packet->{}, &data[{}], {});\n",
-                            expr.id,
-                            *position,
-                            expr.expr.get_type_length_bytes()
+                        expr.id,
+                        *position,
+                        expr.expr.get_type_length_bytes()
                     ));
                     *position += expr.expr.get_type_length_bytes();
                 }
@@ -250,9 +250,9 @@ impl CGenerator {
                 None => {
                     result.push_str(&format!(
                         "\tmemcpy(&packet->{}, &data[{}], {});\n",
-                            expr.id,
-                            *position,
-                            expr.expr.get_type_length_bytes()
+                        expr.id,
+                        *position,
+                        expr.expr.get_type_length_bytes()
                     ));
                     *position += expr.expr.get_type_length_bytes();
                 }
@@ -273,9 +273,9 @@ impl CGenerator {
                 None => {
                     result.push_str(&format!(
                         "\tmemcpy(&packet->{}, &data[{}], {});\n",
-                            expr.id,
-                            *position,
-                            expr.expr.get_type_length_bytes()
+                        expr.id,
+                        *position,
+                        expr.expr.get_type_length_bytes()
                     ));
                     *position += expr.expr.get_type_length_bytes();
                 }
@@ -296,9 +296,9 @@ impl CGenerator {
                 None => {
                     result.push_str(&format!(
                         "\tmemcpy(&packet->{}, &data[{}], {});\n",
-                            expr.id,
-                            *position,
-                            expr.expr.get_type_length_bytes()
+                        expr.id,
+                        *position,
+                        expr.expr.get_type_length_bytes()
                     ));
                     *position += expr.expr.get_type_length_bytes();
                 }
@@ -319,9 +319,9 @@ impl CGenerator {
                 None => {
                     result.push_str(&format!(
                         "\tmemcpy(&packet->{}, &data[{}], {});\n",
-                            expr.id,
-                            *position,
-                            expr.expr.get_type_length_bytes()
+                        expr.id,
+                        *position,
+                        expr.expr.get_type_length_bytes()
                     ));
                     *position += expr.expr.get_type_length_bytes();
                 }
@@ -342,9 +342,9 @@ impl CGenerator {
                 None => {
                     result.push_str(&format!(
                         "\tmemcpy(&packet->{}, &data[{}], {});\n",
-                            expr.id,
-                            *position,
-                            expr.expr.get_type_length_bytes()
+                        expr.id,
+                        *position,
+                        expr.expr.get_type_length_bytes()
                     ));
                     *position += expr.expr.get_type_length_bytes();
                 }
@@ -365,9 +365,9 @@ impl CGenerator {
                 None => {
                     result.push_str(&format!(
                         "\tmemcpy(&packet->{}, &data[{}], {});\n",
-                            expr.id,
-                            *position,
-                            expr.expr.get_type_length_bytes()
+                        expr.id,
+                        *position,
+                        expr.expr.get_type_length_bytes()
                     ));
                     *position += expr.expr.get_type_length_bytes();
                 }
@@ -376,7 +376,7 @@ impl CGenerator {
                 result.push_str(&format!("// Not implemented {};\n", &"data".to_string()));
                 *position += expr.expr.get_type_length_bytes();
             }
-            _ => ()
+            _ => (),
         }
         result
     }
