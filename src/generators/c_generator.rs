@@ -52,6 +52,10 @@ impl CGenerator {
             *packet = ({}*) malloc(sizeof({}));
             {}
         }}
+
+        void main(int argc, char** argv) {{
+            
+        }}
         ",
             expr.name,
             expr.get_total_length(),
