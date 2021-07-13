@@ -11,6 +11,7 @@ mod utilities;
 mod generators;
 
 use crate::generators::c_generator::CGenerator;
+use crate::generators::zig_generator::ZigGenerator;
 use std::fs;
 
 fn main() {
@@ -21,5 +22,7 @@ fn main() {
     for packet in contents {
         let result = CGenerator::generate(&packet);
         println!("{}", result);
+        let result2 = ZigGenerator::generate(&packet);
+        println!("{}", result2)
     }
 }

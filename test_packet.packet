@@ -1,4 +1,4 @@
-packet test {
+packet Test {
     test1 uint8[10],
     test2 int16,
     test3 float32,
