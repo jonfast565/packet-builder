@@ -10,8 +10,10 @@ mod parser;
 mod utilities;
 mod generators;
 
-use crate::generators::c_generator::CGenerator;
-use crate::generators::zig_generator::ZigGenerator;
+// use crate::generators::c_generator::CGenerator;
+// use crate::generators::zig_generator::ZigGenerator;
+use crate::generators::rust_generator::RustGenerator;
+
 use std::fs;
 
 fn main() {
@@ -20,9 +22,11 @@ fn main() {
         fs::read_to_string("./test_packet.packet").expect("Something went wrong reading the file");
     let contents = parser::parse_file(&file).unwrap();
     for packet in contents {
-        let result = CGenerator::generate(&packet);
-        println!("{}", result);
-        let result2 = ZigGenerator::generate(&packet);
-        println!("{}", result2)
+        // let result = CGenerator::generate(&packet);
+        // println!("{}", result);
+        // let result2 = ZigGenerator::generate(&packet);
+        // println!("{}", result2);
+        let result3 = RustGenerator::generate(&packet);
+        println!("{}", result3);
     }
 }

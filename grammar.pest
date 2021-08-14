@@ -21,7 +21,7 @@ sumof = @ { "sumof" }
 productof = @ { "productof" }
 
 // identifiers and constants
-identifier = @{ (underscore | alpha){1} ~ (alpha | digit)* }
+identifier = @{ (underscore | alpha){1} ~ (alpha | digit | underscore)* }
 numeric_constant = @{ digit+ }
 
 // strings (fucking complicated)
