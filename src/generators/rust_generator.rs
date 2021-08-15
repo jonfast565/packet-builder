@@ -20,16 +20,16 @@ impl RustGenerator {
     fn create_headers() -> String {
         "\t
         use std::io::Cursor;
-        use byteorder::{ByteOrder, BigEndian};
+        use byteorder::{ByteOrder, BigEndian, ReadBytesExt, WriteBytesExt};
         "
         .to_string()
     }
 
     fn create_serialization_functions(expr: &PacketExpr) -> String {
         format!(
-            "\tfn serialize(p: {}) -> [u8; {}] {{
-            let data: [u8; {}] = [0; {}];
-            /*{}*/
+            "\tfn serialize(p: {}) -> Vec<u8> {{
+            let mut data: Vec<u8> = vec![];
+            {}
             data
         }}
 
@@ -45,9 +45,6 @@ impl RustGenerator {
         }}
         ",
             expr.name,
-            expr.get_total_length(),
-            expr.get_total_length(),
-            expr.get_total_length(),
             &RustGenerator::create_serializers(expr),
             expr.name,
             &RustGenerator::create_deserializers(expr),
@@ -182,21 +179,19 @@ impl RustGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tmemcpy(&(*data)[{}], &packet->{}[{}], {});\n",
-                            i,
+                            "\tdata.write_{}::<BigEndian>(p.{}[{}]).unwrap();\n",
+                            &"u8".to_string(),
                             expr.id,
-                            *position,
-                            expr.expr.get_type_length_bytes()
+                            i
                         ));
                         *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
                     result.push_str(&format!(
-                        "\tmemcpy(&(*data)[{}], &packet->{}, {});\n",
-                        *position,
-                        expr.id,
-                        expr.expr.get_type_length_bytes()
+                        "\tdata.write_{}::<BigEndian>(p.{}).unwrap();\n",
+                        &"u8".to_string(),
+                        expr.id
                     ));
                     *position += expr.expr.get_type_length_bytes();
                 }
@@ -205,21 +200,19 @@ impl RustGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tmemcpy(&(*data)[{}], &packet->{}[{}], {});\n",
-                            i,
+                            "\tdata.write_{}::<BigEndian>(p.{}[{}]).unwrap();\n",
+                            &"i8".to_string(),
                             expr.id,
-                            *position,
-                            expr.expr.get_type_length_bytes()
+                            i
                         ));
                         *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
                     result.push_str(&format!(
-                        "\tmemcpy(&(*data)[{}], &packet->{}, {});\n",
-                        *position,
-                        expr.id,
-                        expr.expr.get_type_length_bytes()
+                        "\tdata.write_{}::<BigEndian>(p.{}).unwrap();\n",
+                        &"i8".to_string(),
+                        expr.id
                     ));
                     *position += expr.expr.get_type_length_bytes();
                 }
@@ -228,21 +221,19 @@ impl RustGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tmemcpy(&(*data)[{}], &packet->{}[{}], {});\n",
-                            i,
+                            "\tdata.write_{}::<BigEndian>(p.{}[{}]).unwrap();\n",
+                            &"u16".to_string(),
                             expr.id,
-                            *position,
-                            expr.expr.get_type_length_bytes()
+                            i
                         ));
                         *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
                     result.push_str(&format!(
-                        "\tmemcpy(&(*data)[{}], &packet->{}, {});\n",
-                        *position,
-                        expr.id,
-                        expr.expr.get_type_length_bytes()
+                        "\tdata.write_{}::<BigEndian>(p.{}).unwrap();\n",
+                        &"u16".to_string(),
+                        expr.id
                     ));
                     *position += expr.expr.get_type_length_bytes();
                 }
@@ -251,21 +242,19 @@ impl RustGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tmemcpy(&(*data)[{}], &packet->{}[{}], {});\n",
-                            i,
+                            "\tdata.write_{}::<BigEndian>(p.{}[{}]).unwrap();\n",
+                            &"i16".to_string(),
                             expr.id,
-                            *position,
-                            expr.expr.get_type_length_bytes()
+                            i
                         ));
                         *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
                     result.push_str(&format!(
-                        "\tmemcpy(&(*data)[{}], &packet->{}, {});\n",
-                        *position,
-                        expr.id,
-                        expr.expr.get_type_length_bytes()
+                        "\tdata.write_{}::<BigEndian>(p.{}).unwrap();\n",
+                        &"i16".to_string(),
+                        expr.id
                     ));
                     *position += expr.expr.get_type_length_bytes();
                 }
@@ -274,21 +263,19 @@ impl RustGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tmemcpy(&(*data)[{}], &packet->{}[{}], {});\n",
-                            i,
+                            "\tdata.write_{}::<BigEndian>(p.{}[{}]).unwrap();\n",
+                            &"u32".to_string(),
                             expr.id,
-                            *position,
-                            expr.expr.get_type_length_bytes()
+                            i
                         ));
                         *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
                     result.push_str(&format!(
-                        "\tmemcpy(&(*data)[{}], &packet->{}, {});\n",
-                        *position,
-                        expr.id,
-                        expr.expr.get_type_length_bytes()
+                        "\tdata.write_{}::<BigEndian>(p.{}).unwrap();\n",
+                        &"u32".to_string(),
+                        expr.id
                     ));
                     *position += expr.expr.get_type_length_bytes();
                 }
@@ -297,21 +284,19 @@ impl RustGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tmemcpy(&(*data)[{}], &packet->{}[{}], {});\n",
-                            i,
+                            "\tdata.write_{}::<BigEndian>(p.{}[{}]).unwrap();\n",
+                            &"i32".to_string(),
                             expr.id,
-                            *position,
-                            expr.expr.get_type_length_bytes()
+                            i
                         ));
                         *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
                     result.push_str(&format!(
-                        "\tmemcpy(&(*data)[{}], &packet->{}, {});\n",
-                        *position,
-                        expr.id,
-                        expr.expr.get_type_length_bytes()
+                        "\tdata.write_{}::<BigEndian>(p.{}).unwrap();\n",
+                        &"i32".to_string(),
+                        expr.id
                     ));
                     *position += expr.expr.get_type_length_bytes();
                 }
@@ -320,21 +305,19 @@ impl RustGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tmemcpy(&(*data)[{}], &packet->{}[{}], {});\n",
-                            i,
+                            "\tdata.write_{}::<BigEndian>(p.{}[{}]).unwrap();\n",
+                            &"u64".to_string(),
                             expr.id,
-                            *position,
-                            expr.expr.get_type_length_bytes()
+                            i
                         ));
                         *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
                     result.push_str(&format!(
-                        "\tmemcpy(&(*data)[{}], &packet->{}, {});\n",
-                        *position,
-                        expr.id,
-                        expr.expr.get_type_length_bytes()
+                        "\tdata.write_{}::<BigEndian>(p.{}).unwrap();\n",
+                        &"u64".to_string(),
+                        expr.id
                     ));
                     *position += expr.expr.get_type_length_bytes();
                 }
@@ -343,21 +326,19 @@ impl RustGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tmemcpy(&(*data)[{}], &packet->{}[{}], {});\n",
-                            i,
+                            "\tdata.write_{}::<BigEndian>(p.{}[{}]).unwrap();\n",
+                            &"i64".to_string(),
                             expr.id,
-                            *position,
-                            expr.expr.get_type_length_bytes()
+                            i
                         ));
                         *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
                     result.push_str(&format!(
-                        "\tmemcpy(&(*data)[{}], &packet->{}, {});\n",
-                        *position,
-                        expr.id,
-                        expr.expr.get_type_length_bytes()
+                        "\tdata.write_{}::<BigEndian>(p.{}).unwrap();\n",
+                        &"i64".to_string(),
+                        expr.id
                     ));
                     *position += expr.expr.get_type_length_bytes();
                 }
@@ -366,21 +347,19 @@ impl RustGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tmemcpy(&(*data)[{}], &packet->{}[{}], {});\n",
-                            i,
+                            "\tdata.write_{}::<BigEndian>(p.{}[{}]).unwrap();\n",
+                            &"f32".to_string(),
                             expr.id,
-                            *position,
-                            expr.expr.get_type_length_bytes()
+                            i
                         ));
                         *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
                     result.push_str(&format!(
-                        "\tmemcpy(&(*data)[{}], &packet->{}, {});\n",
-                        *position,
-                        expr.id,
-                        expr.expr.get_type_length_bytes()
+                        "\tdata.write_{}::<BigEndian>(p.{}).unwrap();\n",
+                        &"f32".to_string(),
+                        expr.id
                     ));
                     *position += expr.expr.get_type_length_bytes();
                 }
@@ -389,21 +368,19 @@ impl RustGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tmemcpy(&(*data)[{}], &packet->{}[{}], {});\n",
-                            i,
+                            "\tdata.write_{}::<BigEndian>(p.{}[{}]).unwrap();\n",
+                            &"f64".to_string(),
                             expr.id,
-                            *position,
-                            expr.expr.get_type_length_bytes()
+                            i
                         ));
                         *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
                     result.push_str(&format!(
-                        "\tmemcpy(&(*data)[{}], &packet->{}, {});\n",
-                        *position,
-                        expr.id,
-                        expr.expr.get_type_length_bytes()
+                        "\tdata.write_{}::<BigEndian>(p.{}).unwrap();\n",
+                        &"f64".to_string(),
+                        expr.id
                     ));
                     *position += expr.expr.get_type_length_bytes();
                 }
