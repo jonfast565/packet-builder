@@ -2,8 +2,8 @@ use crate::models::parsing_models::{ExprNode, PacketExpr, TypeExpr};
 use pest::error::Error;
 use pest::Parser;
 
-#[grammar = "../grammar.pest"]
 #[derive(Parser)]
+#[grammar = "../grammar.pest"]
 pub struct PacketParser2;
 
 pub fn parse_file(input: &String) -> Result<Vec<PacketExpr>, Error<Rule>> {
