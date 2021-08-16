@@ -26,8 +26,9 @@ impl RustGenerator {
     }
 
     fn create_serialization_functions(expr: &PacketExpr) -> String {
-        format!(
-            "\tfn serialize(p: {}) -> Vec<u8> {{
+        format!("
+        impl {} {{
+        fn serialize(&self) -> Vec<u8> {{
             let mut data: Vec<u8> = vec![];
             {}
             data
@@ -39,9 +40,6 @@ impl RustGenerator {
                 {}
             }}
         }}
-
-        fn main() {{
-            
         }}
         ",
             expr.name,
@@ -179,7 +177,7 @@ impl RustGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tdata.write_{}::<BigEndian>(p.{}[{}]).unwrap();\n",
+                            "\tdata.write_{}::<BigEndian>(self.{}[{}]).unwrap();\n",
                             &"u8".to_string(),
                             expr.id,
                             i
@@ -189,7 +187,7 @@ impl RustGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\tdata.write_{}::<BigEndian>(p.{}).unwrap();\n",
+                        "\tdata.write_{}::<BigEndian>(self.{}).unwrap();\n",
                         &"u8".to_string(),
                         expr.id
                     ));
@@ -200,7 +198,7 @@ impl RustGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tdata.write_{}::<BigEndian>(p.{}[{}]).unwrap();\n",
+                            "\tdata.write_{}::<BigEndian>(self.{}[{}]).unwrap();\n",
                             &"i8".to_string(),
                             expr.id,
                             i
@@ -210,7 +208,7 @@ impl RustGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\tdata.write_{}::<BigEndian>(p.{}).unwrap();\n",
+                        "\tdata.write_{}::<BigEndian>(self.{}).unwrap();\n",
                         &"i8".to_string(),
                         expr.id
                     ));
@@ -221,7 +219,7 @@ impl RustGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tdata.write_{}::<BigEndian>(p.{}[{}]).unwrap();\n",
+                            "\tdata.write_{}::<BigEndian>(self.{}[{}]).unwrap();\n",
                             &"u16".to_string(),
                             expr.id,
                             i
@@ -231,7 +229,7 @@ impl RustGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\tdata.write_{}::<BigEndian>(p.{}).unwrap();\n",
+                        "\tdata.write_{}::<BigEndian>(self.{}).unwrap();\n",
                         &"u16".to_string(),
                         expr.id
                     ));
@@ -242,7 +240,7 @@ impl RustGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tdata.write_{}::<BigEndian>(p.{}[{}]).unwrap();\n",
+                            "\tdata.write_{}::<BigEndian>(self.{}[{}]).unwrap();\n",
                             &"i16".to_string(),
                             expr.id,
                             i
@@ -252,7 +250,7 @@ impl RustGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\tdata.write_{}::<BigEndian>(p.{}).unwrap();\n",
+                        "\tdata.write_{}::<BigEndian>(self.{}).unwrap();\n",
                         &"i16".to_string(),
                         expr.id
                     ));
@@ -263,7 +261,7 @@ impl RustGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tdata.write_{}::<BigEndian>(p.{}[{}]).unwrap();\n",
+                            "\tdata.write_{}::<BigEndian>(self.{}[{}]).unwrap();\n",
                             &"u32".to_string(),
                             expr.id,
                             i
@@ -273,7 +271,7 @@ impl RustGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\tdata.write_{}::<BigEndian>(p.{}).unwrap();\n",
+                        "\tdata.write_{}::<BigEndian>(self.{}).unwrap();\n",
                         &"u32".to_string(),
                         expr.id
                     ));
@@ -284,7 +282,7 @@ impl RustGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tdata.write_{}::<BigEndian>(p.{}[{}]).unwrap();\n",
+                            "\tdata.write_{}::<BigEndian>(self.{}[{}]).unwrap();\n",
                             &"i32".to_string(),
                             expr.id,
                             i
@@ -294,7 +292,7 @@ impl RustGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\tdata.write_{}::<BigEndian>(p.{}).unwrap();\n",
+                        "\tdata.write_{}::<BigEndian>(self.{}).unwrap();\n",
                         &"i32".to_string(),
                         expr.id
                     ));
@@ -305,7 +303,7 @@ impl RustGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tdata.write_{}::<BigEndian>(p.{}[{}]).unwrap();\n",
+                            "\tdata.write_{}::<BigEndian>(self.{}[{}]).unwrap();\n",
                             &"u64".to_string(),
                             expr.id,
                             i
@@ -315,7 +313,7 @@ impl RustGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\tdata.write_{}::<BigEndian>(p.{}).unwrap();\n",
+                        "\tdata.write_{}::<BigEndian>(self.{}).unwrap();\n",
                         &"u64".to_string(),
                         expr.id
                     ));
@@ -326,7 +324,7 @@ impl RustGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tdata.write_{}::<BigEndian>(p.{}[{}]).unwrap();\n",
+                            "\tdata.write_{}::<BigEndian>(self.{}[{}]).unwrap();\n",
                             &"i64".to_string(),
                             expr.id,
                             i
@@ -336,7 +334,7 @@ impl RustGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\tdata.write_{}::<BigEndian>(p.{}).unwrap();\n",
+                        "\tdata.write_{}::<BigEndian>(self.{}).unwrap();\n",
                         &"i64".to_string(),
                         expr.id
                     ));
@@ -347,7 +345,7 @@ impl RustGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tdata.write_{}::<BigEndian>(p.{}[{}]).unwrap();\n",
+                            "\tdata.write_{}::<BigEndian>(self.{}[{}]).unwrap();\n",
                             &"f32".to_string(),
                             expr.id,
                             i
@@ -357,7 +355,7 @@ impl RustGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\tdata.write_{}::<BigEndian>(p.{}).unwrap();\n",
+                        "\tdata.write_{}::<BigEndian>(self.{}).unwrap();\n",
                         &"f32".to_string(),
                         expr.id
                     ));
@@ -368,7 +366,7 @@ impl RustGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tdata.write_{}::<BigEndian>(p.{}[{}]).unwrap();\n",
+                            "\tdata.write_{}::<BigEndian>(self.{}[{}]).unwrap();\n",
                             &"f64".to_string(),
                             expr.id,
                             i
@@ -378,7 +376,7 @@ impl RustGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\tdata.write_{}::<BigEndian>(p.{}).unwrap();\n",
+                        "\tdata.write_{}::<BigEndian>(self.{}).unwrap();\n",
                         &"f64".to_string(),
                         expr.id
                     ));
