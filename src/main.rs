@@ -15,20 +15,30 @@ use crate::generators::zig_generator::ZigGenerator;
 use crate::generators::rust_generator::RustGenerator;
 
 use std::fs;
+use std::fs::File;
 
-fn main() {
+fn main() -> std::io::Result<()> {
     println!("--- Packet Builder ---");
-    let result_type = "rust";
     let file =
         fs::read_to_string("./test_packet.packet").expect("Something went wrong reading the file");
     let contents = parser::parse_file(&file).unwrap();
     for packet in contents {
-        let packet_result = match result_type {
+        let packet_result = match "rust" {
             "c" => CGenerator::generate(&packet),
             "rust" => RustGenerator::generate(&packet),
             "zig" => ZigGenerator::generate(&packet),
             _ => String::new()
         };
+        let file_extension = match "rust" {
+            "c" => "c",
+            "rust" => "rs",
+            "zig" => "zig",
+            _ => ""
+        };
         println!("{}", packet_result);
+        let filename = format!("{}_{}.{}", packet.name, "packet", file_extension);
+        File::create(&filename)?;
+        fs::write(&filename, packet_result)?;
     }
+    Ok(())
 }
