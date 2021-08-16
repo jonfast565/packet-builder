@@ -14,6 +14,7 @@ use crate::generators::c_generator::CGenerator;
 use crate::generators::zig_generator::ZigGenerator;
 use crate::generators::rust_generator::RustGenerator;
 
+use std::path::Path;
 use std::fs;
 use std::fs::File;
 
@@ -36,7 +37,10 @@ fn main() -> std::io::Result<()> {
             _ => ""
         };
         println!("{}", packet_result);
-        let filename = format!("{}_{}.{}", packet.name, "packet", file_extension);
+        if !Path::new("./results").exists() {
+            fs::create_dir("./results")?;
+        }
+        let filename = format!("./results/{}_{}.{}", packet.name, "packet", file_extension);
         File::create(&filename)?;
         fs::write(&filename, packet_result)?;
     }

@@ -177,7 +177,7 @@ impl RustGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tdata.write_{}::<BigEndian>(self.{}[{}]).unwrap();\n",
+                            "\tdata.write_{}(self.{}[{}]).unwrap();\n",
                             &"u8".to_string(),
                             expr.id,
                             i
