@@ -28,13 +28,13 @@ impl RustGenerator {
     fn create_serialization_functions(expr: &PacketExpr) -> String {
         format!("
         impl {} {{
-        fn serialize(&self) -> Vec<u8> {{
+        pub fn serialize(&self) -> Vec<u8> {{
             let mut data: Vec<u8> = vec![];
             {}
             data
         }}
 
-        fn deserialize(data: &[u8]) -> {} {{
+        pub fn deserialize(data: &[u8]) -> {} {{
             {}
             {} {{
                 {}
