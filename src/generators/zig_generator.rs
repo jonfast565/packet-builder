@@ -3,14 +3,16 @@ use crate::models::parsing_models::{ExprNode, PacketExpr, TypeExpr};
 pub struct ZigGenerator {}
 
 impl ZigGenerator {
-    pub fn generate(expr: &PacketExpr) -> String {
+    pub fn generate(expr: Vec<PacketExpr>) -> String {
         let mut result = String::new();
         result.push_str(&ZigGenerator::create_headers());
         result.push_str(&ZigGenerator::create_spacer());
         result.push_str(&ZigGenerator::create_supporting_functions());
         result.push_str(&ZigGenerator::create_spacer());
-        result.push_str(&ZigGenerator::build_struct(expr, false));
-        result.push_str(&ZigGenerator::create_serialization_functions(expr));
+        for exp in expr {
+            result.push_str(&ZigGenerator::build_struct(&exp, false));
+            result.push_str(&ZigGenerator::create_serialization_functions(&exp));
+        }
         result
     }
 

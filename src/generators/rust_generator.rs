@@ -3,13 +3,15 @@ use crate::models::parsing_models::{ExprNode, PacketExpr, TypeExpr};
 pub struct RustGenerator {}
 
 impl RustGenerator {
-    pub fn generate(expr: &PacketExpr) -> String {
+    pub fn generate(expr: Vec<PacketExpr>) -> String {
         let mut result = String::new();
         result.push_str(&RustGenerator::create_headers());
         result.push_str(&RustGenerator::create_spacer());
         result.push_str(&RustGenerator::create_spacer());
-        result.push_str(&RustGenerator::build_struct(expr, false));
-        result.push_str(&RustGenerator::create_serialization_functions(expr));
+        for exp in expr {
+            result.push_str(&RustGenerator::build_struct(&exp, false));
+            result.push_str(&RustGenerator::create_serialization_functions(&exp));
+        }
         result
     }
 
