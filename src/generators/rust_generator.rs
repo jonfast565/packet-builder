@@ -21,6 +21,7 @@ impl RustGenerator {
         "\t
         use std::io::Cursor;
         use byteorder::{ByteOrder, BigEndian, ReadBytesExt, WriteBytesExt};
+        use serde::{Serialize, Deserialize};
         "
         .to_string()
     }
@@ -93,7 +94,8 @@ impl RustGenerator {
 
         if !just_fields {
             format!(
-                "\tpub struct {} {{\n {} \n\t}}\n\n",
+                "\t#[derive(Debug, Serialize, Deserialize)]
+                pub struct {} {{\n {} \n\t}}\n\n",
                 expr.name, field_aggregation
             )
         } else {

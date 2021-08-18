@@ -5,18 +5,18 @@ extern crate serde;
 #[macro_use]
 extern crate pest_derive;
 
+mod generators;
 mod models;
 mod parser;
 mod utilities;
-mod generators;
 
 use crate::generators::c_generator::CGenerator;
-use crate::generators::zig_generator::ZigGenerator;
 use crate::generators::rust_generator::RustGenerator;
+use crate::generators::zig_generator::ZigGenerator;
 
-use std::path::Path;
 use std::fs;
 use std::fs::File;
+use std::path::Path;
 
 fn main() -> std::io::Result<()> {
     println!("--- Packet Builder ---");
@@ -28,13 +28,13 @@ fn main() -> std::io::Result<()> {
             "c" => CGenerator::generate(&packet),
             "rust" => RustGenerator::generate(&packet),
             "zig" => ZigGenerator::generate(&packet),
-            _ => String::new()
+            _ => String::new(),
         };
         let file_extension = match "rust" {
             "c" => "c",
             "rust" => "rs",
             "zig" => "zig",
-            _ => ""
+            _ => "",
         };
         println!("{}", packet_result);
         if !Path::new("./results").exists() {
