@@ -24,25 +24,27 @@ fn main() -> std::io::Result<()> {
         fs::read_to_string("./test_packet.packet").expect("Something went wrong reading the file");
     let packet = parser::parse_file(&file).unwrap();
 
-    let packet_result = match "rust" {
-        "c" => CGenerator::generate(packet),
-        "rust" => RustGenerator::generate(packet),
-        "zig" => ZigGenerator::generate(packet),
-        _ => String::new(),
-    };
-    let file_extension = match "rust" {
-        "c" => "c",
-        "rust" => "rs",
-        "zig" => "zig",
-        _ => "",
-    };
+    for item in vec!["c", "rust", "zig"] {
+        let packet_result = match item {
+            "c" => CGenerator::generate(&packet),
+            "rust" => RustGenerator::generate(&packet),
+            "zig" => ZigGenerator::generate(&packet),
+            _ => String::new(),
+        };
+        let file_extension = match item {
+            "c" => "c",
+            "rust" => "rs",
+            "zig" => "zig",
+            _ => "",
+        };
 
-    if !Path::new("./results").exists() {
-        fs::create_dir("./results")?;
+        if !Path::new("./results").exists() {
+            fs::create_dir("./results")?;
+        }
+        let filename = format!("./results/{}.{}", "packets", file_extension);
+        File::create(&filename)?;
+        fs::write(&filename, packet_result)?;
     }
-    let filename = format!("./results/{}.{}", "packets", file_extension);
-    File::create(&filename)?;
-    fs::write(&filename, packet_result)?;
     println!("{}", "Done!");
     Ok(())
 }

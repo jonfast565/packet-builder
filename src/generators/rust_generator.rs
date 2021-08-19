@@ -3,7 +3,7 @@ use crate::models::parsing_models::{ExprNode, PacketExpr, TypeExpr};
 pub struct RustGenerator {}
 
 impl RustGenerator {
-    pub fn generate(expr: Vec<PacketExpr>) -> String {
+    pub fn generate(expr: &Vec<PacketExpr>) -> String {
         let mut result = String::new();
         result.push_str(&RustGenerator::create_headers());
         result.push_str(&RustGenerator::create_spacer());
@@ -728,7 +728,7 @@ impl RustGenerator {
             format!("{}[{}]", variable, position)
         } else {
             format!(
-                "BigEndian::read_{}(&{}[{}..{}])",
+                "LittleEndian::read_{}(&{}[{}..{}])",
                 data_type,
                 variable,
                 position,

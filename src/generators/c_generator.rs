@@ -3,7 +3,7 @@ use crate::models::parsing_models::{ExprNode, PacketExpr, TypeExpr};
 pub struct CGenerator {}
 
 impl CGenerator {
-    pub fn generate(expr: Vec<PacketExpr>) -> String {
+    pub fn generate(expr: &Vec<PacketExpr>) -> String {
         let mut result = String::new();
         result.push_str(&CGenerator::create_headers());
         result.push_str(&CGenerator::create_spacer());
