@@ -135,3 +135,10 @@ impl PacketExpr {
         result
     }
 }
+
+#[derive(Debug)]
+pub struct CalculatedField {
+    pub name: String,
+    pub type_name: String,
+    pub expr: Box<ExprNode>,
+}

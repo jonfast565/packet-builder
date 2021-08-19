@@ -107,11 +107,26 @@ fn parse_packet_rule(packet_rule: pest::iterators::Pair<Rule>) -> TypeExpr {
 }
 
 fn parse_calculated_field(packet_rule: pest::iterators::Pair<Rule>) {
-    let declaration = packet_rule.into_inner();
+    let calc_field_declaration = packet_rule.into_inner();
+    let mut identifier = String::new();
+    let mut type_name = String::new();
+    for field in calc_field_declaration {
+        match field.as_rule() {
+            Rule::identifier => identifier = field.as_str().to_string(),
+            Rule::type_name => type_name = field.as_str().to_string(),
+            Rule::expr => parse_expr(field),
+            Rule::guard_clause => parse_guard_clause(field),
+            _ => ()
+        }
+    }
     
 }
 
 fn parse_expr(packet_rule: pest::iterators::Pair<Rule>) {
+
+}
+
+fn parse_guard_clause(packet_rule: pest::iterators::Pair<Rule>) {
 
 }
 
