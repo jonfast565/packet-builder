@@ -107,7 +107,12 @@ fn parse_packet_rule(packet_rule: pest::iterators::Pair<Rule>) -> TypeExpr {
 }
 
 fn parse_calculated_field(packet_rule: pest::iterators::Pair<Rule>) {
-    println!("Calculated fields not implemented.");
+    let declaration = packet_rule.into_inner();
+    
+}
+
+fn parse_expr(packet_rule: pest::iterators::Pair<Rule>) {
+
 }
 
 fn expr_from_type_name(type_name: String, array_length: Option<String>) -> ExprNode {
