@@ -30,6 +30,7 @@ equals = @{ "==" }
 not_equals = @ { "!=" | "<>" }
 and_expr = @{ "and" }
 or_expr = @ { "or" }
+comma = @ { "," }
 
 // identifiers and constants
 identifier = @{ (underscore | alpha){1} ~ (alpha | digit | underscore)* }
@@ -44,10 +45,13 @@ char = {
     | "\\" ~ ("u" ~ ASCII_HEX_DIGIT{4})
 }
 
+// parameter list (should fix this to terminate with rparen)
+parameter_list = { lparen ~ (expr ~ comma*)* ~ rparen }
+
 // intrinsic functions
-sqrt = { "sqrt" }
-min = { "min" }
-max = { "max" }
+sqrt = @{ "sqrt" }
+min = @{ "min" }
+max = @{ "max" }
 
 // types
 int8 = @{"int8"}
@@ -77,7 +81,7 @@ sum = { product ~ ((plus | minus) ~ product)* }
 product = { power ~ ((mult | div) ~ power)* }
 power = { value ~ (pw ~ power)? }
 value = { numeric_constant | accessor | lparen ~ expr ~ rparen }
-intrinsic_function_clause = { intrinsic_function ~ lparen ~ expr ~ rparen }
+intrinsic_function_clause = { intrinsic_function ~ parameter_list }
 
 // declaring and accessing variables
 declaration = { identifier ~ type_name ~ array_specifier? }
