@@ -22,7 +22,7 @@ impl RustGenerator {
     fn create_headers() -> String {
         "\t
         use std::io::Cursor;
-        use byteorder::{ByteOrder, BigEndian, ReadBytesExt, WriteBytesExt};
+        use byteorder::{ByteOrder, LittleEndian, BigEndian, ReadBytesExt, WriteBytesExt};
         use serde::{Serialize, Deserialize};
         "
         .to_string()

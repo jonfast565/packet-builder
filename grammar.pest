@@ -19,10 +19,21 @@ larray = @{ "[" }
 rarray = @{ "]" }
 sumof = @ { "sumof" }
 productof = @ { "productof" }
+assign = @ { "=" }
+when = @ { "when" }
+otherwise = @ { "otherwise" }
+greater_than = @ { ">" }
+greater_than_equal = @ { ">=" }
+less_than = @ { "<" }
+less_than_equal = @ { "<= "}
+equals = @{ "==" }
+not_equals = @ { "!=" | "<>" }
+and_expr = @{ "and" }
+or_expr = @ { "or" }
 
 // identifiers and constants
 identifier = @{ (underscore | alpha){1} ~ (alpha | digit | underscore)* }
-numeric_constant = @{ digit+ }
+numeric_constant = @{ digit+ ~ ("." ~ digit*)? }
 
 // strings (fucking complicated)
 string = ${ "\"" ~ inner ~ "\"" }
@@ -32,6 +43,11 @@ char = {
     | "\\" ~ ("\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t")
     | "\\" ~ ("u" ~ ASCII_HEX_DIGIT{4})
 }
+
+// intrinsic functions
+sqrt = { "sqrt" }
+min = { "min" }
+max = { "max" }
 
 // types
 int8 = @{"int8"}
@@ -47,21 +63,25 @@ float64 = @{"float64"}
 macaddress = @{"macaddress"}
 datetime = @{"datetime"}
 type_name = @{ int8 | uint8 | int16 | uint16 | int32 | uint32 | int64 | uint64 | float32 | float64 | macaddress | datetime }
+intrinsic_function = @{ sqrt | min | max }
 
 // packet keywords
 packet_keyword = @{ "packet" }
 calculated_keyword = @{ "calc" }
 
 // expressions
-expr = { sum }
-sum = { product ~ ((plus | minus) ~ product)*}
-product = { power ~ ((mult | div) ~ power)*}
+expr = { bool_and_or_expr }
+bool_and_or_expr = { bool_comp_expr ~ ((and_expr | or_expr) ~ bool_comp_expr)* }
+bool_comp_expr = { sum ~ ((greater_than | greater_than_equal | less_than | less_than_equal | equals | not_equals) ~ sum)* }
+sum = { product ~ ((plus | minus) ~ product)* }
+product = { power ~ ((mult | div) ~ power)* }
 power = { value ~ (pw ~ power)? }
 value = { numeric_constant | accessor | lparen ~ expr ~ rparen }
+intrinsic_function_clause = { intrinsic_function ~ lparen ~ expr ~ rparen }
 
 // declaring and accessing variables
 declaration = { identifier ~ type_name ~ array_specifier? }
-accessor = {  (sumof | productof) ~ identifier ~ !array_specifier | identifier ~ array_specifier? }
+accessor = { intrinsic_function_clause | (sumof | productof) ~ identifier ~ !array_specifier | identifier ~ array_specifier? }
 array_specifier = { larray ~ numeric_constant ~ rarray }
 
 // packet body
@@ -69,4 +89,5 @@ packets = { SOI ~ packet+ ~ EOI }
 packet = { packet_keyword ~ identifier ~ lbracket ~ rule_list ~ rbracket }
 rule_list = { rule ~ (listsep ~ rule)* }
 rule = { declaration | calculated_field }
-calculated_field = { calculated_keyword ~ identifier ~ expr }
+calculated_field = { calculated_keyword ~ identifier ~ type_name ~ assign ~ expr ~ guard_clause? }
+guard_clause = { when ~ expr ~ otherwise ~ expr }

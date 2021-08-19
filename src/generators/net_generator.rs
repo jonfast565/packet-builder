@@ -3,7 +3,7 @@ use crate::models::parsing_models::{ExprNode, PacketExpr, TypeExpr};
 pub struct CSharpGenerator {}
 
 impl CSharpGenerator {
-    pub fn generate(expr: Vec<PacketExpr>) -> String {
+    pub fn generate(expr: &Vec<PacketExpr>) -> String {
         let mut result = String::new();
         result.push_str(&CSharpGenerator::create_headers());
         result.push_str(&CSharpGenerator::create_spacer());
@@ -58,34 +58,34 @@ impl CSharpGenerator {
             .iter()
             .map(|x| match x.expr {
                 ExprNode::UnsignedInteger8(y) => {
-                    format!("public {}: {},", x.id, CSharpGenerator::get_array_bounds("u8", y))
+                    format!("public {} {} {{ get; set; }}", CSharpGenerator::get_array_bounds("byte", y), x.id)
                 }
                 ExprNode::Integer8(y) => {
-                    format!("{}: {},", x.id, CSharpGenerator::get_array_bounds("i8", y))
+                    format!("public {} {} {{ get; set; }}", CSharpGenerator::get_array_bounds("sbyte", y), x.id)
                 }
                 ExprNode::UnsignedInteger16(y) => {
-                    format!("{}: {},", x.id, CSharpGenerator::get_array_bounds("u16", y))
+                    format!("public {} {} {{ get; set; }}", CSharpGenerator::get_array_bounds("ushort", y), x.id)
                 }
                 ExprNode::Integer16(y) => {
-                    format!("{}: {},", x.id, CSharpGenerator::get_array_bounds("i16", y))
+                    format!("public {} {} {{ get; set; }}", CSharpGenerator::get_array_bounds("short", y), x.id)
                 }
                 ExprNode::UnsignedInteger32(y) => {
-                    format!("{}: {},", x.id, CSharpGenerator::get_array_bounds("u32", y))
+                    format!("public {} {} {{ get; set; }}", CSharpGenerator::get_array_bounds("uint", y), x.id)
                 }
                 ExprNode::Integer32(y) => {
-                    format!("{}: {},", x.id, CSharpGenerator::get_array_bounds("i32", y))
+                    format!("public {} {} {{ get; set; }}", CSharpGenerator::get_array_bounds("int", y), x.id)
                 }
                 ExprNode::UnsignedInteger64(y) => {
-                    format!("{}: {},", x.id, CSharpGenerator::get_array_bounds("u64", y))
+                    format!("public {} {} {{ get; set; }}", CSharpGenerator::get_array_bounds("ulong", y), x.id)
                 }
                 ExprNode::Integer64(y) => {
-                    format!("{}: {},", x.id, CSharpGenerator::get_array_bounds("i64", y))
+                    format!("public {} {} {{ get; set; }}", CSharpGenerator::get_array_bounds("long", y), x.id)
                 }
                 ExprNode::Float32(y) => {
-                    format!("{}: {},", x.id, CSharpGenerator::get_array_bounds("f32", y))
+                    format!("public {} {} {{ get; set; }}", CSharpGenerator::get_array_bounds("float", y), x.id)
                 }
                 ExprNode::Float64(y) => {
-                    format!("{}: {},", x.id, CSharpGenerator::get_array_bounds("f64", y))
+                    format!("public {} {} {{ get; set; }}", CSharpGenerator::get_array_bounds("double", y), x.id)
                 }
                 _ => "".to_string(),
             })
@@ -93,12 +93,10 @@ impl CSharpGenerator {
 
         if !just_fields {
             format!(
-                "{}
-                \t#[derive(Debug, Serialize, Deserialize)]
-                pub struct {} {{\n {} \n\t}}\n\n",
-                &CSharpGenerator::create_serialization_functions(&exp),
+                "public class {} {{\n {} \n \t{}}}\n\n",
                 expr.name,
-                field_aggregation
+                field_aggregation,
+                &CSharpGenerator::create_serialization_functions(&expr),
             )
         } else {
             format!("{}", field_aggregation)
@@ -107,7 +105,7 @@ impl CSharpGenerator {
 
     fn get_array_bounds(data_type: &str, expr: Option<usize>) -> String {
         match expr {
-            Some(x) => format!("[{}; {}]", data_type, x.to_string()),
+            Some(_x) => format!("{}[]", data_type),
             None => format!("{}", data_type.to_string()),
         }
     }
@@ -148,15 +146,15 @@ impl CSharpGenerator {
                 Some(y) => {
                     let mut array = String::new();
                     for i in 0..y {
-                        array.push_str(&format!("{}_{}", expr.id, i).to_string());
+                        array.push_str(&format!("{}{}", expr.id, i).to_string());
                         if i < y - 1 {
                             array.push_str(", ");
                         }
                     }
-                    result.push_str(&format!("{}: [{}],\n", expr.id, array).to_string());
+                    result.push_str(&format!("{} = new byte[] {{ {} }},\n", expr.id, array).to_string());
                 }
                 None => {
-                    result.push_str(&format!("{}: {},\n", expr.id, expr.id).to_string());
+                    result.push_str(&format!("{} = {},\n", expr.id, expr.id).to_string());
                 }
             },
             ExprNode::MacAddress => {}
