@@ -1,4 +1,4 @@
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ExprNode {
     UnsignedInteger8(Option<usize>),
     UnsignedInteger16(Option<usize>),
@@ -22,11 +22,14 @@ pub enum ExprNode {
     Lt(Box<ExprNode>, Box<ExprNode>),
     Gte(Box<ExprNode>, Box<ExprNode>),
     Lte(Box<ExprNode>, Box<ExprNode>),
+    Equals(Box<ExprNode>, Box<ExprNode>),
+    NotEquals(Box<ExprNode>, Box<ExprNode>),
     And(Box<ExprNode>, Box<ExprNode>),
     Or(Box<ExprNode>, Box<ExprNode>),
     WhenOtherwise(Box<ExprNode>, Box<ExprNode>),
     SumOf(String),
     ProductOf(String),
+    NoExpr
 }
 
 impl ExprNode {
@@ -124,6 +127,7 @@ pub struct TypeExpr {
 pub struct PacketExpr {
     pub name: String,
     pub fields: Vec<TypeExpr>,
+    pub calculated_fields: Vec<CalculatedField>,
 }
 
 impl PacketExpr {
