@@ -100,7 +100,13 @@ impl RustGenerator {
         let calc_field_aggregation = expr
             .calculated_fields
             .iter()
-            .map(|x| format!("{}: {},", x.name, RustGenerator::datatype_to_rust_type(x.data_type.clone())))
+            .map(|x| {
+                format!(
+                    "{}: {},",
+                    x.name,
+                    RustGenerator::datatype_to_rust_type(x.data_type.clone())
+                )
+            })
             .fold(String::new(), |acc, v| format!("{}\t    {}\n", acc, v));
 
         if !just_fields {
@@ -270,8 +276,13 @@ impl RustGenerator {
                         + &RustGenerator::get_expr_builder(*rexpr),
                 );
             }
-            ExprNode::GuardExpression(lexpr, rexpr) => {
-                // ignore this for now
+            ExprNode::GuardExpression(bexpr, texpr, oexpr) => {
+                string_vec.push(format!(
+                    "if {} {{ {} }} else {{ {} }}",
+                    RustGenerator::get_expr_builder(*bexpr),
+                    RustGenerator::get_expr_builder(*texpr),
+                    RustGenerator::get_expr_builder(*oexpr)
+                ));
             }
             ExprNode::SumOf(lexpr) => {
                 panic!("Aggregate expressions not implemented")

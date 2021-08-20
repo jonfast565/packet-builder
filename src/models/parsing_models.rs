@@ -29,7 +29,7 @@ pub enum ExprNode {
     NotEquals(Box<ExprNode>, Box<ExprNode>),
     And(Box<ExprNode>, Box<ExprNode>),
     Or(Box<ExprNode>, Box<ExprNode>),
-    GuardExpression(Box<ExprNode>, Box<ExprNode>),
+    GuardExpression(Box<ExprNode>, Box<ExprNode>, Box<ExprNode>),
     SumOf(Box<ExprNode>),
     ProductOf(Box<ExprNode>),
     ActivationRecord(String, Vec<ExprNode>),
@@ -129,5 +129,4 @@ pub struct CalculatedField {
     pub name: String,
     pub data_type: String,
     pub expr: Box<ExprNode>,
-    pub guard_expr: Option<Box<ExprNode>>
 }
