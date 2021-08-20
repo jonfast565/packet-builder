@@ -154,200 +154,270 @@ impl ZigGenerator {
             ExprNode::UnsignedInteger8(y) => match y {
                 Some(y) => {
                     for i in 0..y {
-                        result.push_str(&format!("\t{}[{}];\n", &ZigGenerator::get_8bit_conversion_serialization(
-                            &"data".to_string(),
-                            &expr.id,
-                            *position,
-                        ), i));
+                        result.push_str(&format!(
+                            "\t{}[{}];\n",
+                            &ZigGenerator::get_8bit_conversion_serialization(
+                                &"data".to_string(),
+                                &expr.id,
+                                *position,
+                            ),
+                            i
+                        ));
                         *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
-                    result.push_str(&format!("\t{};\n", &ZigGenerator::get_8bit_conversion_serialization(
-                        &"data".to_string(),
-                        &expr.id,
-                        *position,
-                    )));
+                    result.push_str(&format!(
+                        "\t{};\n",
+                        &ZigGenerator::get_8bit_conversion_serialization(
+                            &"data".to_string(),
+                            &expr.id,
+                            *position,
+                        )
+                    ));
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
             ExprNode::Integer8(y) => match y {
                 Some(y) => {
                     for i in 0..y {
-                        result.push_str(&format!("\t{}[{}];\n", &ZigGenerator::get_8bit_conversion_serialization(
-                            &"data".to_string(),
-                            &expr.id,
-                            *position,
-                        ), i));
+                        result.push_str(&format!(
+                            "\t{}[{}];\n",
+                            &ZigGenerator::get_8bit_conversion_serialization(
+                                &"data".to_string(),
+                                &expr.id,
+                                *position,
+                            ),
+                            i
+                        ));
                         *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
-                    result.push_str(&format!("\t{};\n", &ZigGenerator::get_8bit_conversion_serialization(
-                        &"data".to_string(),
-                        &expr.id,
-                        *position,
-                    )));
+                    result.push_str(&format!(
+                        "\t{};\n",
+                        &ZigGenerator::get_8bit_conversion_serialization(
+                            &"data".to_string(),
+                            &expr.id,
+                            *position,
+                        )
+                    ));
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
             ExprNode::UnsignedInteger16(y) => match y {
                 Some(y) => {
                     for i in 0..y {
-                        result.push_str(&format!("\t{}[{}];\n", &ZigGenerator::get_16bit_conversion_serialization(
-                            &"data".to_string(),
-                            &expr.id,
-                            *position,
-                        ), i));
+                        result.push_str(&format!(
+                            "\t{}[{}];\n",
+                            &ZigGenerator::get_16bit_conversion_serialization(
+                                &"data".to_string(),
+                                &expr.id,
+                                *position,
+                            ),
+                            i
+                        ));
                         *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
-                    result.push_str(&format!("\t{};\n", &ZigGenerator::get_16bit_conversion_serialization(
-                        &"data".to_string(),
-                        &expr.id,
-                        *position,
-                    )));
+                    result.push_str(&format!(
+                        "\t{};\n",
+                        &ZigGenerator::get_16bit_conversion_serialization(
+                            &"data".to_string(),
+                            &expr.id,
+                            *position,
+                        )
+                    ));
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
             ExprNode::Integer16(y) => match y {
                 Some(y) => {
                     for i in 0..y {
-                        result.push_str(&format!("\t{}[{}];\n", &ZigGenerator::get_16bit_conversion_serialization(
-                            &"data".to_string(),
-                            &expr.id,
-                            *position,
-                        ), i));
+                        result.push_str(&format!(
+                            "\t{}[{}];\n",
+                            &ZigGenerator::get_16bit_conversion_serialization(
+                                &"data".to_string(),
+                                &expr.id,
+                                *position,
+                            ),
+                            i
+                        ));
                         *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
-                    result.push_str(&format!("\t{};\n", &ZigGenerator::get_16bit_conversion_serialization(
-                        &"data".to_string(),
-                        &expr.id,
-                        *position,
-                    )));
+                    result.push_str(&format!(
+                        "\t{};\n",
+                        &ZigGenerator::get_16bit_conversion_serialization(
+                            &"data".to_string(),
+                            &expr.id,
+                            *position,
+                        )
+                    ));
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
             ExprNode::UnsignedInteger32(y) => match y {
                 Some(y) => {
                     for i in 0..y {
-                        result.push_str(&format!("\t{}[{}];\n", &ZigGenerator::get_32bit_conversion_serialization(
-                            &"data".to_string(),
-                            &expr.id,
-                            *position,
-                        ), i));
+                        result.push_str(&format!(
+                            "\t{}[{}];\n",
+                            &ZigGenerator::get_32bit_conversion_serialization(
+                                &"data".to_string(),
+                                &expr.id,
+                                *position,
+                            ),
+                            i
+                        ));
                         *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
-                    result.push_str(&format!("\t{};\n", &ZigGenerator::get_32bit_conversion_serialization(
-                        &"data".to_string(),
-                        &expr.id,
-                        *position,
-                    )));
+                    result.push_str(&format!(
+                        "\t{};\n",
+                        &ZigGenerator::get_32bit_conversion_serialization(
+                            &"data".to_string(),
+                            &expr.id,
+                            *position,
+                        )
+                    ));
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
             ExprNode::Integer32(y) => match y {
                 Some(y) => {
                     for i in 0..y {
-                        result.push_str(&format!("\t{}[{}];\n", &ZigGenerator::get_32bit_conversion_serialization(
-                            &"data".to_string(),
-                            &expr.id,
-                            *position,
-                        ), i));
+                        result.push_str(&format!(
+                            "\t{}[{}];\n",
+                            &ZigGenerator::get_32bit_conversion_serialization(
+                                &"data".to_string(),
+                                &expr.id,
+                                *position,
+                            ),
+                            i
+                        ));
                         *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
-                    result.push_str(&format!("\t{};\n", &ZigGenerator::get_32bit_conversion_serialization(
-                        &"data".to_string(),
-                        &expr.id,
-                        *position,
-                    )));
+                    result.push_str(&format!(
+                        "\t{};\n",
+                        &ZigGenerator::get_32bit_conversion_serialization(
+                            &"data".to_string(),
+                            &expr.id,
+                            *position,
+                        )
+                    ));
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
             ExprNode::UnsignedInteger64(y) => match y {
                 Some(y) => {
                     for i in 0..y {
-                        result.push_str(&format!("\t{}[{}];\n", &ZigGenerator::get_64bit_conversion_serialization(
-                            &"data".to_string(),
-                            &expr.id,
-                            *position,
-                        ), i));
+                        result.push_str(&format!(
+                            "\t{}[{}];\n",
+                            &ZigGenerator::get_64bit_conversion_serialization(
+                                &"data".to_string(),
+                                &expr.id,
+                                *position,
+                            ),
+                            i
+                        ));
                         *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
-                    result.push_str(&format!("\t{};\n", &ZigGenerator::get_32bit_conversion_serialization(
-                        &"data".to_string(),
-                        &expr.id,
-                        *position,
-                    )));
+                    result.push_str(&format!(
+                        "\t{};\n",
+                        &ZigGenerator::get_32bit_conversion_serialization(
+                            &"data".to_string(),
+                            &expr.id,
+                            *position,
+                        )
+                    ));
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
             ExprNode::Integer64(y) => match y {
                 Some(y) => {
                     for i in 0..y {
-                        result.push_str(&format!("\t{}[{}];\n", &ZigGenerator::get_64bit_conversion_serialization(
-                            &"data".to_string(),
-                            &expr.id,
-                            *position,
-                        ), i));
+                        result.push_str(&format!(
+                            "\t{}[{}];\n",
+                            &ZigGenerator::get_64bit_conversion_serialization(
+                                &"data".to_string(),
+                                &expr.id,
+                                *position,
+                            ),
+                            i
+                        ));
                         *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
-                    result.push_str(&format!("\t{};\n", &ZigGenerator::get_64bit_conversion_serialization(
-                        &"data".to_string(),
-                        &expr.id,
-                        *position,
-                    )));
+                    result.push_str(&format!(
+                        "\t{};\n",
+                        &ZigGenerator::get_64bit_conversion_serialization(
+                            &"data".to_string(),
+                            &expr.id,
+                            *position,
+                        )
+                    ));
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
             ExprNode::Float32(y) => match y {
                 Some(y) => {
                     for i in 0..y {
-                        result.push_str(&format!("\t{}[{}];\n", &ZigGenerator::get_32bit_conversion_serialization(
-                            &"data".to_string(),
-                            &expr.id,
-                            *position,
-                        ), i));
+                        result.push_str(&format!(
+                            "\t{}[{}];\n",
+                            &ZigGenerator::get_32bit_conversion_serialization(
+                                &"data".to_string(),
+                                &expr.id,
+                                *position,
+                            ),
+                            i
+                        ));
                         *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
-                    result.push_str(&format!("\t{};\n", &ZigGenerator::get_32bit_conversion_serialization(
-                        &"data".to_string(),
-                        &expr.id,
-                        *position,
-                    )));
+                    result.push_str(&format!(
+                        "\t{};\n",
+                        &ZigGenerator::get_32bit_conversion_serialization(
+                            &"data".to_string(),
+                            &expr.id,
+                            *position,
+                        )
+                    ));
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
             ExprNode::Float64(y) => match y {
                 Some(y) => {
                     for i in 0..y {
-                        result.push_str(&format!("\t{}[{}];\n", &ZigGenerator::get_64bit_conversion_serialization(
-                            &"data".to_string(),
-                            &expr.id,
-                            *position,
-                        ), i));
+                        result.push_str(&format!(
+                            "\t{}[{}];\n",
+                            &ZigGenerator::get_64bit_conversion_serialization(
+                                &"data".to_string(),
+                                &expr.id,
+                                *position,
+                            ),
+                            i
+                        ));
                         *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
-                    result.push_str(&format!("\t{};\n", &ZigGenerator::get_64bit_conversion_serialization(
-                        &"data".to_string(),
-                        &expr.id,
-                        *position,
-                    )));
+                    result.push_str(&format!(
+                        "\t{};\n",
+                        &ZigGenerator::get_64bit_conversion_serialization(
+                            &"data".to_string(),
+                            &expr.id,
+                            *position,
+                        )
+                    ));
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
@@ -655,13 +725,15 @@ impl ZigGenerator {
         data_variable: &String,
         position: usize,
     ) -> String {
-        format!("{}[{}] = @intCast(u16, {});\n", result_variable, position, data_variable)
-            + &format!(
-                "\t{}[{}] = @intCast(u16, {}) >> 8",
-                result_variable,
-                position + 1,
-                data_variable
-            )
+        format!(
+            "{}[{}] = @intCast(u16, {});\n",
+            result_variable, position, data_variable
+        ) + &format!(
+            "\t{}[{}] = @intCast(u16, {}) >> 8",
+            result_variable,
+            position + 1,
+            data_variable
+        )
     }
 
     fn get_32bit_conversion_serialization(
@@ -669,25 +741,25 @@ impl ZigGenerator {
         data_variable: &String,
         position: usize,
     ) -> String {
-        format!("{}[{}] = @intCast(u32, {});\n", result_variable, position, data_variable)
-            + &format!(
-                "\t{}[{}] = @intCast(u32, {}) >> 8;\n",
-                result_variable,
-                position + 1,
-                data_variable
-            )
-            + &format!(
-                "\t{}[{}] = @intCast(u32, {}) >> 16;\n",
-                result_variable,
-                position + 2,
-                data_variable
-            )
-            + &format!(
-                "\t{}[{}] = @intCast(u32, {}) >> 24",
-                result_variable,
-                position + 3,
-                data_variable
-            )
+        format!(
+            "{}[{}] = @intCast(u32, {});\n",
+            result_variable, position, data_variable
+        ) + &format!(
+            "\t{}[{}] = @intCast(u32, {}) >> 8;\n",
+            result_variable,
+            position + 1,
+            data_variable
+        ) + &format!(
+            "\t{}[{}] = @intCast(u32, {}) >> 16;\n",
+            result_variable,
+            position + 2,
+            data_variable
+        ) + &format!(
+            "\t{}[{}] = @intCast(u32, {}) >> 24",
+            result_variable,
+            position + 3,
+            data_variable
+        )
     }
 
     fn get_64bit_conversion_serialization(
@@ -695,49 +767,45 @@ impl ZigGenerator {
         data_variable: &String,
         position: usize,
     ) -> String {
-        format!("{}[{}] = @intCast(u64, {});\n", result_variable, position, data_variable)
-            + &format!(
-                "\t{}[{}] = @intCast(u64, {}) >> 8;\n",
-                result_variable,
-                position + 1,
-                data_variable
-            )
-            + &format!(
-                "\t{}[{}] = @intCast(u64, {}) >> 16;\n",
-                result_variable,
-                position + 2,
-                data_variable
-            )
-            + &format!(
-                "\t{}[{}] = @intCast(u64, {}) >> 24;\n",
-                result_variable,
-                position + 3,
-                data_variable
-            )
-            + &format!(
-                "\t{}[{}] = @intCast(u64, {}) >> 32;\n",
-                result_variable,
-                position + 4,
-                data_variable
-            )
-            + &format!(
-                "\t{}[{}] = @intCast(u64, {}) >> 40;\n",
-                result_variable,
-                position + 5,
-                data_variable
-            )
-            + &format!(
-                "\t{}[{}] = @intCast(u64, {}) >> 48;\n",
-                result_variable,
-                position + 6,
-                data_variable
-            )
-            + &format!(
-                "\t{}[{}] = @intCast(u64, {}) >> 56",
-                result_variable,
-                position + 7,
-                data_variable
-            )
+        format!(
+            "{}[{}] = @intCast(u64, {});\n",
+            result_variable, position, data_variable
+        ) + &format!(
+            "\t{}[{}] = @intCast(u64, {}) >> 8;\n",
+            result_variable,
+            position + 1,
+            data_variable
+        ) + &format!(
+            "\t{}[{}] = @intCast(u64, {}) >> 16;\n",
+            result_variable,
+            position + 2,
+            data_variable
+        ) + &format!(
+            "\t{}[{}] = @intCast(u64, {}) >> 24;\n",
+            result_variable,
+            position + 3,
+            data_variable
+        ) + &format!(
+            "\t{}[{}] = @intCast(u64, {}) >> 32;\n",
+            result_variable,
+            position + 4,
+            data_variable
+        ) + &format!(
+            "\t{}[{}] = @intCast(u64, {}) >> 40;\n",
+            result_variable,
+            position + 5,
+            data_variable
+        ) + &format!(
+            "\t{}[{}] = @intCast(u64, {}) >> 48;\n",
+            result_variable,
+            position + 6,
+            data_variable
+        ) + &format!(
+            "\t{}[{}] = @intCast(u64, {}) >> 56",
+            result_variable,
+            position + 7,
+            data_variable
+        )
     }
 
     fn get_8bit_conversion_deserialization(variable: &String, position: usize) -> String {
@@ -757,7 +825,7 @@ impl ZigGenerator {
 
     fn get_32bit_conversion_deserialization(variable: &String, position: usize) -> String {
         format!(
-            "(@intCast(u32, {}[{}]) |
+            "@intCast(u32, {}[{}]) |
                 (@intCast(u32, {}[{}]) << 8) | 
                 (@intCast(u32, {}[{}]) << 16) |
                 (@intCast(u32, {}[{}]) << 24)",
