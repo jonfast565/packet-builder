@@ -127,7 +127,7 @@ impl PacketExpr {
 #[derive(Debug)]
 pub struct CalculatedField {
     pub name: String,
-    pub type_name: String,
+    pub data_type: String,
     pub expr: Box<ExprNode>,
     pub guard_expr: Option<Box<ExprNode>>
 }

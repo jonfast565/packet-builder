@@ -97,11 +97,17 @@ impl RustGenerator {
             })
             .fold(String::new(), |acc, v| format!("{}\t    {}\n", acc, v));
 
+        let calc_field_aggregation = expr
+            .calculated_fields
+            .iter()
+            .map(|x| format!("{}: {},", x.name, RustGenerator::datatype_to_rust_type(x.data_type.clone())))
+            .fold(String::new(), |acc, v| format!("{}\t    {}\n", acc, v));
+
         if !just_fields {
             format!(
                 "\t#[derive(Debug, Serialize, Deserialize)]
-                pub struct {} {{\n {} \n\t}}\n\n",
-                expr.name, field_aggregation
+                pub struct {} {{\n {} {}\n\t}}\n\n",
+                expr.name, field_aggregation, calc_field_aggregation
             )
         } else {
             format!("{}", field_aggregation)
@@ -130,7 +136,12 @@ impl RustGenerator {
     fn create_deserializer_builders(expr: &PacketExpr) -> String {
         let mut result = String::new();
         for field in &expr.fields {
-            result.push_str(&RustGenerator::get_field_serializer_builder(field));
+            result.push_str(&RustGenerator::get_field_deserializer_builder(field));
+        }
+        for field in &expr.calculated_fields {
+            result.push_str(&RustGenerator::get_calculated_field_deserializer_builder(
+                field,
+            ));
         }
         result
     }
@@ -141,6 +152,10 @@ impl RustGenerator {
             expr.name,
             RustGenerator::get_expr_builder(*expr.expr.clone())
         )
+    }
+
+    fn get_calculated_field_deserializer_builder(expr: &CalculatedField) -> String {
+        format!("\t{}: {},\n", expr.name, expr.name)
     }
 
     fn get_expr_builder(expr: ExprNode) -> String {
@@ -266,11 +281,22 @@ impl RustGenerator {
             }
             ExprNode::ActivationRecord(function_name, parameters) => {
                 if function_name == "sqrt" {
-                    string_vec.push("(".to_string() + &RustGenerator::get_expr_builder(parameters[0].clone()) + " as f64).sqrt()")
+                    string_vec.push(
+                        "(".to_string()
+                            + &RustGenerator::get_expr_builder(parameters[0].clone())
+                            + " as f64).sqrt()",
+                    )
                 } else if function_name == "min" || function_name == "max" {
-                    string_vec.push("(".to_string() + &RustGenerator::get_expr_builder(parameters[0].clone()) + "." + &function_name + "(" + &RustGenerator::get_expr_builder(parameters[1].clone()) + "))")
+                    string_vec.push(
+                        "(".to_string()
+                            + &RustGenerator::get_expr_builder(parameters[0].clone())
+                            + "."
+                            + &function_name
+                            + "("
+                            + &RustGenerator::get_expr_builder(parameters[1].clone())
+                            + "))",
+                    )
                 }
-
             }
             _ => {
                 panic!("Unsupported statement type")
@@ -279,7 +305,7 @@ impl RustGenerator {
         string_vec.join(" ")
     }
 
-    fn get_field_serializer_builder(expr: &TypeExpr) -> String {
+    fn get_field_deserializer_builder(expr: &TypeExpr) -> String {
         let mut result = String::new();
         match expr.expr {
             ExprNode::UnsignedInteger8(y)
@@ -883,5 +909,13 @@ impl RustGenerator {
                 position + data_byte_size
             )
         }
+    }
+
+    fn datatype_to_rust_type(data_type: String) -> String {
+        match data_type.as_str() {
+            "float64" => "f64",
+            _ => "unknown",
+        }
+        .to_string()
     }
 }
