@@ -265,12 +265,20 @@ fn parse_power_expr(parser_rule: pest::iterators::Pair<Rule>) -> ExprNode {
         }
     }
 
+    for field in bool_and_or_expr.clone() {
+        match field.as_rule() {
+            Rule::pw => {
+                return ExprNode::Pow(Box::new(rules[0].clone()), Box::new(rules[1].clone()))
+            }
+            _ => (),
+        }
+    }
+
     rules[0].clone()
 }
 
 fn parse_value_expr(parser_rule: pest::iterators::Pair<Rule>) -> ExprNode {
     let value_expr = parser_rule.into_inner();
-
     for value in value_expr.clone() {
         match value.as_rule() {
             Rule::numeric_constant => {
@@ -317,21 +325,21 @@ fn parse_numeric_constant(parser_rule: pest::iterators::Pair<Rule>) -> ExprNode 
 
 fn parse_direct_value_accessor(parser_rule: pest::iterators::Pair<Rule>) -> ExprNode {
     let mut identifier = String::new();
-    let mut array_specifier : Option<usize> = None;
+    let mut array_specifier: Option<usize> = None;
     let direct_value_rule = parser_rule.into_inner();
     for value in direct_value_rule.clone() {
         match value.as_rule() {
             Rule::identifier => {
-                identifier =  value.as_str().to_string();
-            },
+                identifier = value.as_str().to_string();
+            }
             Rule::array_specifier => {
                 let constant = value.into_inner();
                 for c in constant {
                     match c.as_rule() {
                         Rule::numeric_constant => {
                             array_specifier = Some(c.as_str().parse::<usize>().unwrap());
-                        },
-                        _ => ()
+                        }
+                        _ => (),
                     }
                 }
             }
@@ -343,13 +351,34 @@ fn parse_direct_value_accessor(parser_rule: pest::iterators::Pair<Rule>) -> Expr
 
 fn parse_intrinsic_function_clause(parser_rule: pest::iterators::Pair<Rule>) -> ExprNode {
     let intrinsic_function_rule = parser_rule.into_inner();
+    let mut function_name: String = String::new();
+    let mut parameter_list = Vec::new();
     for value in intrinsic_function_rule.clone() {
         match value.as_rule() {
-            Rule::value => {}
+            Rule::intrinsic_function => {
+                function_name = value.as_str().to_string();
+            }
+            Rule::parameter_list => {
+                parameter_list = parse_parameter_list(value);
+            }
             _ => (),
         }
     }
-    ExprNode::NoExpr
+    ExprNode::ActivationRecord(function_name, parameter_list)
+}
+
+fn parse_parameter_list(parser_rule: pest::iterators::Pair<Rule>) -> Vec<ExprNode> {
+    let parameter_list_rule = parser_rule.into_inner();
+    let mut expression_list = Vec::new();
+    for value in parameter_list_rule.clone() {
+        match value.as_rule() {
+            Rule::expr => {
+                expression_list.push(parse_expr(value));
+            }
+            _ => {}
+        }
+    }
+    expression_list
 }
 
 fn parse_guard_clause(parser_rule: pest::iterators::Pair<Rule>) -> ExprNode {

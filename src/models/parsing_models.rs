@@ -29,9 +29,10 @@ pub enum ExprNode {
     NotEquals(Box<ExprNode>, Box<ExprNode>),
     And(Box<ExprNode>, Box<ExprNode>),
     Or(Box<ExprNode>, Box<ExprNode>),
-    WhenOtherwise(Box<ExprNode>, Box<ExprNode>),
-    SumOf(String),
-    ProductOf(String),
+    GuardExpression(Box<ExprNode>, Box<ExprNode>),
+    SumOf(Box<ExprNode>),
+    ProductOf(Box<ExprNode>),
+    ActivationRecord(String, Vec<ExprNode>),
     NoExpr
 }
 
