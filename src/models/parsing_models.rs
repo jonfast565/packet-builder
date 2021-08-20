@@ -129,4 +129,5 @@ pub struct CalculatedField {
     pub name: String,
     pub type_name: String,
     pub expr: Box<ExprNode>,
+    pub guard_expr: Option<Box<ExprNode>>
 }

@@ -1,4 +1,4 @@
-use crate::models::parsing_models::{ExprNode, PacketExpr, TypeExpr};
+use crate::models::parsing_models::{CalculatedField, ExprNode, PacketExpr, TypeExpr};
 
 pub struct RustGenerator {}
 
@@ -29,7 +29,8 @@ impl RustGenerator {
     }
 
     fn create_serialization_functions(expr: &PacketExpr) -> String {
-        format!("
+        format!(
+            "
         impl {} {{
         pub fn serialize(&self) -> Vec<u8> {{
             let mut data: Vec<u8> = vec![];
@@ -43,6 +44,8 @@ impl RustGenerator {
                 {}
             }}
         }}
+
+
         }}
         ",
             expr.name,
@@ -118,6 +121,9 @@ impl RustGenerator {
         for field in &expr.fields {
             result.push_str(&RustGenerator::get_field_deserializer(field, &mut counter));
         }
+        for field in &expr.calculated_fields {
+            result.push_str(&RustGenerator::get_calculated_field_deserializer(field));
+        }
         result
     }
 
@@ -127,6 +133,150 @@ impl RustGenerator {
             result.push_str(&RustGenerator::get_field_serializer_builder(field));
         }
         result
+    }
+
+    fn get_calculated_field_deserializer(expr: &CalculatedField) -> String {
+        format!(
+            "\tlet {} = {};\n",
+            expr.name,
+            RustGenerator::get_expr_builder(*expr.expr.clone())
+        )
+    }
+
+    fn get_expr_builder(expr: ExprNode) -> String {
+        let mut string_vec = Vec::new();
+        match expr {
+            ExprNode::UnsignedInteger64Value(value) => {
+                string_vec.push(value.to_string() + " as f64");
+            }
+            ExprNode::Integer64Value(value) => {
+                string_vec.push(value.to_string() + " as f64");
+            }
+            ExprNode::Float64Value(value) => {
+                string_vec.push(value.to_string());
+            }
+            ExprNode::ValueReference(ident, optional_array_size) => match optional_array_size {
+                Some(x) => string_vec.push(format!("{}_{} as f64", ident, x)),
+                None => string_vec.push(format!("{} as f64", ident.to_string())),
+            },
+            ExprNode::ParenthesizedExpr(lexpr) => {
+                string_vec.push(
+                    "(".to_string() + &RustGenerator::get_expr_builder(*lexpr) + &")".to_string(),
+                );
+            }
+            ExprNode::Plus(lexpr, rexpr) => {
+                string_vec.push(
+                    RustGenerator::get_expr_builder(*lexpr)
+                        + &" + ".to_string()
+                        + &RustGenerator::get_expr_builder(*rexpr),
+                );
+            }
+            ExprNode::Minus(lexpr, rexpr) => {
+                string_vec.push(
+                    RustGenerator::get_expr_builder(*lexpr)
+                        + &" - ".to_string()
+                        + &RustGenerator::get_expr_builder(*rexpr),
+                );
+            }
+            ExprNode::Mult(lexpr, rexpr) => {
+                string_vec.push(
+                    RustGenerator::get_expr_builder(*lexpr)
+                        + &" * ".to_string()
+                        + &RustGenerator::get_expr_builder(*rexpr),
+                );
+            }
+            ExprNode::Div(lexpr, rexpr) => {
+                string_vec.push(
+                    RustGenerator::get_expr_builder(*lexpr)
+                        + &" / ".to_string()
+                        + &RustGenerator::get_expr_builder(*rexpr),
+                );
+            }
+            ExprNode::Pow(lexpr, rexpr) => {
+                string_vec.push(
+                    RustGenerator::get_expr_builder(*lexpr)
+                        + &" ^ ".to_string()
+                        + &RustGenerator::get_expr_builder(*rexpr),
+                );
+            }
+            ExprNode::Gt(lexpr, rexpr) => {
+                string_vec.push(
+                    RustGenerator::get_expr_builder(*lexpr)
+                        + &" > ".to_string()
+                        + &RustGenerator::get_expr_builder(*rexpr),
+                );
+            }
+            ExprNode::Lt(lexpr, rexpr) => {
+                string_vec.push(
+                    RustGenerator::get_expr_builder(*lexpr)
+                        + &" < ".to_string()
+                        + &RustGenerator::get_expr_builder(*rexpr),
+                );
+            }
+            ExprNode::Gte(lexpr, rexpr) => {
+                string_vec.push(
+                    RustGenerator::get_expr_builder(*lexpr)
+                        + &" >= ".to_string()
+                        + &RustGenerator::get_expr_builder(*rexpr),
+                );
+            }
+            ExprNode::Lte(lexpr, rexpr) => {
+                string_vec.push(
+                    RustGenerator::get_expr_builder(*lexpr)
+                        + &" <= ".to_string()
+                        + &RustGenerator::get_expr_builder(*rexpr),
+                );
+            }
+            ExprNode::Equals(lexpr, rexpr) => {
+                string_vec.push(
+                    RustGenerator::get_expr_builder(*lexpr)
+                        + &" == ".to_string()
+                        + &RustGenerator::get_expr_builder(*rexpr),
+                );
+            }
+            ExprNode::NotEquals(lexpr, rexpr) => {
+                string_vec.push(
+                    RustGenerator::get_expr_builder(*lexpr)
+                        + &" != ".to_string()
+                        + &RustGenerator::get_expr_builder(*rexpr),
+                );
+            }
+            ExprNode::And(lexpr, rexpr) => {
+                string_vec.push(
+                    RustGenerator::get_expr_builder(*lexpr)
+                        + &" && ".to_string()
+                        + &RustGenerator::get_expr_builder(*rexpr),
+                );
+            }
+            ExprNode::Or(lexpr, rexpr) => {
+                string_vec.push(
+                    RustGenerator::get_expr_builder(*lexpr)
+                        + &" || ".to_string()
+                        + &RustGenerator::get_expr_builder(*rexpr),
+                );
+            }
+            ExprNode::GuardExpression(lexpr, rexpr) => {
+                // ignore this for now
+            }
+            ExprNode::SumOf(lexpr) => {
+                panic!("Aggregate expressions not implemented")
+            }
+            ExprNode::ProductOf(lexpr) => {
+                panic!("Aggregate expressions not implemented")
+            }
+            ExprNode::ActivationRecord(function_name, parameters) => {
+                if function_name == "sqrt" {
+                    string_vec.push("(".to_string() + &RustGenerator::get_expr_builder(parameters[0].clone()) + " as f64).sqrt()")
+                } else if function_name == "min" || function_name == "max" {
+                    string_vec.push("(".to_string() + &RustGenerator::get_expr_builder(parameters[0].clone()) + "." + &function_name + "(" + &RustGenerator::get_expr_builder(parameters[1].clone()) + "))")
+                }
+
+            }
+            _ => {
+                panic!("Unsupported statement type")
+            }
+        }
+        string_vec.join(" ")
     }
 
     fn get_field_serializer_builder(expr: &TypeExpr) -> String {
@@ -141,23 +291,21 @@ impl RustGenerator {
             | ExprNode::UnsignedInteger64(y)
             | ExprNode::Integer64(y)
             | ExprNode::Float32(y)
-            | ExprNode::Float64(y) => {
-                match y {
-                    Some(y) => {
-                        let mut array = String::new();
-                        for i in 0..y {
-                            array.push_str(&format!("{}_{}", expr.id, i).to_string());
-                            if i < y - 1 {
-                                array.push_str(", ");
-                            }
+            | ExprNode::Float64(y) => match y {
+                Some(y) => {
+                    let mut array = String::new();
+                    for i in 0..y {
+                        array.push_str(&format!("{}_{}", expr.id, i).to_string());
+                        if i < y - 1 {
+                            array.push_str(", ");
                         }
-                        result.push_str(&format!("{}: [{}],\n", expr.id, array).to_string());
-                    },
-                    None => {
-                        result.push_str(&format!("{}: {},\n", expr.id, expr.id).to_string());
                     }
+                    result.push_str(&format!("{}: [{}],\n", expr.id, array).to_string());
                 }
-            }
+                None => {
+                    result.push_str(&format!("{}: {},\n", expr.id, expr.id).to_string());
+                }
+            },
             ExprNode::MacAddress => {}
             _ => (),
         };

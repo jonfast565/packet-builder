@@ -128,6 +128,10 @@ fn parse_calculated_field(parser_rule: pest::iterators::Pair<Rule>) -> Calculate
         name: identifier,
         type_name: type_name,
         expr: Box::new(option_expr.unwrap()),
+        guard_expr: match guard_expression {
+            Some(x) => Some(Box::new(x.clone())),
+            None => None,
+        },
     }
 }
 
