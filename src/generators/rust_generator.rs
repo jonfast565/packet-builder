@@ -168,17 +168,17 @@ impl RustGenerator {
         let mut string_vec = Vec::new();
         match expr {
             ExprNode::UnsignedInteger64Value(value) => {
-                string_vec.push(value.to_string() + " as f64");
+                string_vec.push(format!("({} as f64)", value.to_string()));
             }
             ExprNode::Integer64Value(value) => {
-                string_vec.push(value.to_string() + " as f64");
+                string_vec.push(format!("({} as f64)", value.to_string()));
             }
             ExprNode::Float64Value(value) => {
                 string_vec.push(value.to_string());
             }
             ExprNode::ValueReference(ident, optional_array_size) => match optional_array_size {
-                Some(x) => string_vec.push(format!("{}_{} as f64", ident, x)),
-                None => string_vec.push(format!("{} as f64", ident.to_string())),
+                Some(x) => string_vec.push(format!("({}_{} as f64)", ident, x)),
+                None => string_vec.push(format!("({} as f64)", ident.to_string())),
             },
             ExprNode::ParenthesizedExpr(lexpr) => {
                 string_vec.push(
