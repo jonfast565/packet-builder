@@ -132,8 +132,8 @@ fn parse_calculated_field(parser_rule: pest::iterators::Pair<Rule>) -> Calculate
 }
 
 fn parse_expr(parser_rule: pest::iterators::Pair<Rule>) -> ExprNode {
-    let bool_and_or_expr = parser_rule.into_inner();
-    for field in bool_and_or_expr.clone() {
+    let expr = parser_rule.into_inner();
+    for field in expr.clone() {
         match field.as_rule() {
             Rule::bool_and_or_expr => return parse_boolean_and_or_expr(field),
             _ => return ExprNode::NoExpr,
@@ -169,15 +169,15 @@ fn parse_boolean_and_or_expr(parser_rule: pest::iterators::Pair<Rule>) -> ExprNo
 
 fn parse_boolean_comp_expr(parser_rule: pest::iterators::Pair<Rule>) -> ExprNode {
     let mut rules = Vec::<ExprNode>::new();
-    let bool_and_or_expr = parser_rule.into_inner();
-    for field in bool_and_or_expr.clone() {
+    let boolean_comp_expr = parser_rule.into_inner();
+    for field in boolean_comp_expr.clone() {
         match field.as_rule() {
             Rule::sum => rules.push(parse_sum_expr(field)),
             _ => (),
         }
     }
 
-    for field in bool_and_or_expr.clone() {
+    for field in boolean_comp_expr.clone() {
         match field.as_rule() {
             Rule::greater_than => {
                 return ExprNode::Gt(Box::new(rules[0].clone()), Box::new(rules[1].clone()))
@@ -206,15 +206,15 @@ fn parse_boolean_comp_expr(parser_rule: pest::iterators::Pair<Rule>) -> ExprNode
 
 fn parse_sum_expr(parser_rule: pest::iterators::Pair<Rule>) -> ExprNode {
     let mut rules = Vec::<ExprNode>::new();
-    let bool_and_or_expr = parser_rule.into_inner();
-    for field in bool_and_or_expr.clone() {
+    let sum_expr = parser_rule.into_inner();
+    for field in sum_expr.clone() {
         match field.as_rule() {
             Rule::product => rules.push(parse_product_expr(field)),
             _ => (),
         }
     }
 
-    for field in bool_and_or_expr.clone() {
+    for field in sum_expr.clone() {
         match field.as_rule() {
             Rule::plus => {
                 return ExprNode::Plus(Box::new(rules[0].clone()), Box::new(rules[1].clone()))
@@ -231,15 +231,15 @@ fn parse_sum_expr(parser_rule: pest::iterators::Pair<Rule>) -> ExprNode {
 
 fn parse_product_expr(parser_rule: pest::iterators::Pair<Rule>) -> ExprNode {
     let mut rules = Vec::<ExprNode>::new();
-    let bool_and_or_expr = parser_rule.into_inner();
-    for field in bool_and_or_expr.clone() {
+    let product_expr = parser_rule.into_inner();
+    for field in product_expr.clone() {
         match field.as_rule() {
             Rule::power => rules.push(parse_power_expr(field)),
             _ => (),
         }
     }
 
-    for field in bool_and_or_expr.clone() {
+    for field in product_expr.clone() {
         match field.as_rule() {
             Rule::mult => {
                 return ExprNode::Mult(Box::new(rules[0].clone()), Box::new(rules[1].clone()))
@@ -256,16 +256,16 @@ fn parse_product_expr(parser_rule: pest::iterators::Pair<Rule>) -> ExprNode {
 
 fn parse_power_expr(parser_rule: pest::iterators::Pair<Rule>) -> ExprNode {
     let mut rules = Vec::<ExprNode>::new();
-    let bool_and_or_expr = parser_rule.into_inner();
+    let power_expr = parser_rule.into_inner();
 
-    for field in bool_and_or_expr.clone() {
+    for field in power_expr.clone() {
         match field.as_rule() {
             Rule::value => rules.push(parse_value_expr(field)),
             _ => (),
         }
     }
 
-    for field in bool_and_or_expr.clone() {
+    for field in power_expr.clone() {
         match field.as_rule() {
             Rule::pw => {
                 return ExprNode::Pow(Box::new(rules[0].clone()), Box::new(rules[1].clone()))
