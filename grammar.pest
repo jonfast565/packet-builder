@@ -49,9 +49,9 @@ char = {
 parameter_list = { lparen ~ (expr ~ comma*)* ~ rparen }
 
 // intrinsic functions
-sqrt = @{ "sqrt" }
-min = @{ "min" }
-max = @{ "max" }
+sqrt = @{"sqrt"}
+min = @{"min"}
+max = @{"max"}
 
 // types
 int8 = @{"int8"}
@@ -70,8 +70,8 @@ type_name = @{ int8 | uint8 | int16 | uint16 | int32 | uint32 | int64 | uint64 |
 intrinsic_function = @{ sqrt | min | max }
 
 // packet keywords
-packet_keyword = @{ "packet" }
-calculated_keyword = @{ "calc" }
+packet_keyword = @{"packet"}
+calculated_keyword = @{"calc"}
 
 // expressions
 expr = { bool_and_or_expr }
