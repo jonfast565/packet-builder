@@ -81,12 +81,13 @@ sum = { product ~ ((plus | minus) ~ product)* }
 product = { power ~ ((mult | div) ~ power)* }
 power = { value ~ (pw ~ power)? }
 inner_expr = { lparen ~ expr ~ rparen }
-value = { numeric_constant | accessor | inner_expr }
+value = { numeric_constant | intrinsic_function_clause | aggregate_accessor | direct_value_accessor | inner_expr }
 intrinsic_function_clause = { intrinsic_function ~ parameter_list }
 
 // declaring and accessing variables
 declaration = { identifier ~ type_name ~ array_specifier? }
-accessor = { intrinsic_function_clause | (sumof | productof) ~ identifier ~ !array_specifier | identifier ~ array_specifier? }
+direct_value_accessor = { identifier ~ array_specifier? }
+aggregate_accessor = { (sumof | productof) ~ identifier ~ !array_specifier }
 array_specifier = { larray ~ numeric_constant ~ rarray }
 
 // packet body
