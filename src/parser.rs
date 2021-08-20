@@ -114,13 +114,13 @@ fn parse_calculated_field(parser_rule: pest::iterators::Pair<Rule>) -> Calculate
     let mut identifier = String::new();
     let mut type_name = String::new();
     let mut option_expr: Option<ExprNode> = None;
-    let mut guard_clause: Option<ExprNode> = None;
+    let mut guard_expression: Option<ExprNode> = None;
     for field in calc_field_declaration {
         match field.as_rule() {
             Rule::identifier => identifier = field.as_str().to_string(),
             Rule::type_name => type_name = field.as_str().to_string(),
             Rule::expr => option_expr = Some(parse_expr(field)),
-            Rule::guard_clause => guard_clause = Some(parse_guard_clause(field)),
+            Rule::guard_clause => guard_expression = Some(parse_guard_expression(field)),
             _ => (),
         }
     }
@@ -381,15 +381,16 @@ fn parse_parameter_list(parser_rule: pest::iterators::Pair<Rule>) -> Vec<ExprNod
     expression_list
 }
 
-fn parse_guard_clause(parser_rule: pest::iterators::Pair<Rule>) -> ExprNode {
+fn parse_guard_expression(parser_rule: pest::iterators::Pair<Rule>) -> ExprNode {
     let guard_clause_rule = parser_rule.into_inner();
+    let mut exprs = Vec::new();
     for value in guard_clause_rule.clone() {
         match value.as_rule() {
-            Rule::value => {}
+            Rule::expr => exprs.push(parse_expr(value)),
             _ => (),
         }
     }
-    ExprNode::NoExpr
+    ExprNode::GuardExpression(Box::new(exprs[0].clone()), Box::new(exprs[1].clone()))
 }
 
 fn expr_from_type_name(type_name: String, array_length: Option<String>) -> ExprNode {
