@@ -22,7 +22,7 @@ use std::path::Path;
 fn main() -> std::io::Result<()> {
     println!("--- Packet Builder ---");
     let file =
-        fs::read_to_string("./test_packet2.packet").expect("Something went wrong reading the file");
+        fs::read_to_string("./test_packet3.packet").expect("Something went wrong reading the file");
     let packet = parser::parse_file(&file).unwrap();
     dbg!(&packet);
     for item in vec!["c", "rust", "zig", "net"] {

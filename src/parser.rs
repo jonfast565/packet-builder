@@ -80,8 +80,8 @@ fn parse_packet(packet: pest::iterators::Pair<Rule>) -> PacketExpr {
     }
 }
 
-fn parse_packet_rule(packet_rule: pest::iterators::Pair<Rule>) -> TypeExpr {
-    let declaration = packet_rule.into_inner();
+fn parse_packet_rule(parser_rule: pest::iterators::Pair<Rule>) -> TypeExpr {
+    let declaration = parser_rule.into_inner();
     let mut identifier = String::new();
     let mut type_name = String::new();
     let mut array_length: Option<String> = None;
@@ -109,8 +109,8 @@ fn parse_packet_rule(packet_rule: pest::iterators::Pair<Rule>) -> TypeExpr {
     }
 }
 
-fn parse_calculated_field(packet_rule: pest::iterators::Pair<Rule>) -> CalculatedField {
-    let calc_field_declaration = packet_rule.into_inner();
+fn parse_calculated_field(parser_rule: pest::iterators::Pair<Rule>) -> CalculatedField {
+    let calc_field_declaration = parser_rule.into_inner();
     let mut identifier = String::new();
     let mut type_name = String::new();
     let mut option_expr: Option<ExprNode> = None;
@@ -130,8 +130,8 @@ fn parse_calculated_field(packet_rule: pest::iterators::Pair<Rule>) -> Calculate
     }
 }
 
-fn parse_expr(packet_rule: pest::iterators::Pair<Rule>) -> ExprNode {
-    let bool_and_or_expr = packet_rule.into_inner();
+fn parse_expr(parser_rule: pest::iterators::Pair<Rule>) -> ExprNode {
+    let bool_and_or_expr = parser_rule.into_inner();
     for field in bool_and_or_expr.clone() {
         match field.as_rule() {
             Rule::bool_and_or_expr => return parse_boolean_and_or_expr(field),
@@ -141,9 +141,9 @@ fn parse_expr(packet_rule: pest::iterators::Pair<Rule>) -> ExprNode {
     ExprNode::NoExpr
 }
 
-fn parse_boolean_and_or_expr(packet_rule: pest::iterators::Pair<Rule>) -> ExprNode {
+fn parse_boolean_and_or_expr(parser_rule: pest::iterators::Pair<Rule>) -> ExprNode {
     let mut rules = Vec::<ExprNode>::new();
-    let bool_and_or_expr = packet_rule.into_inner();
+    let bool_and_or_expr = parser_rule.into_inner();
     for field in bool_and_or_expr.clone() {
         match field.as_rule() {
             Rule::bool_comp_expr => rules.push(parse_boolean_comp_expr(field)),
@@ -166,9 +166,9 @@ fn parse_boolean_and_or_expr(packet_rule: pest::iterators::Pair<Rule>) -> ExprNo
     rules[0].clone()
 }
 
-fn parse_boolean_comp_expr(packet_rule: pest::iterators::Pair<Rule>) -> ExprNode {
+fn parse_boolean_comp_expr(parser_rule: pest::iterators::Pair<Rule>) -> ExprNode {
     let mut rules = Vec::<ExprNode>::new();
-    let bool_and_or_expr = packet_rule.into_inner();
+    let bool_and_or_expr = parser_rule.into_inner();
     for field in bool_and_or_expr.clone() {
         match field.as_rule() {
             Rule::sum => rules.push(parse_sum_expr(field)),
@@ -203,9 +203,9 @@ fn parse_boolean_comp_expr(packet_rule: pest::iterators::Pair<Rule>) -> ExprNode
     rules[0].clone()
 }
 
-fn parse_sum_expr(packet_rule: pest::iterators::Pair<Rule>) -> ExprNode {
+fn parse_sum_expr(parser_rule: pest::iterators::Pair<Rule>) -> ExprNode {
     let mut rules = Vec::<ExprNode>::new();
-    let bool_and_or_expr = packet_rule.into_inner();
+    let bool_and_or_expr = parser_rule.into_inner();
     for field in bool_and_or_expr.clone() {
         match field.as_rule() {
             Rule::product => rules.push(parse_product_expr(field)),
@@ -228,9 +228,9 @@ fn parse_sum_expr(packet_rule: pest::iterators::Pair<Rule>) -> ExprNode {
     rules[0].clone()
 }
 
-fn parse_product_expr(packet_rule: pest::iterators::Pair<Rule>) -> ExprNode {
+fn parse_product_expr(parser_rule: pest::iterators::Pair<Rule>) -> ExprNode {
     let mut rules = Vec::<ExprNode>::new();
-    let bool_and_or_expr = packet_rule.into_inner();
+    let bool_and_or_expr = parser_rule.into_inner();
     for field in bool_and_or_expr.clone() {
         match field.as_rule() {
             Rule::power => rules.push(parse_power_expr(field)),
@@ -253,9 +253,9 @@ fn parse_product_expr(packet_rule: pest::iterators::Pair<Rule>) -> ExprNode {
     rules[0].clone()
 }
 
-fn parse_power_expr(packet_rule: pest::iterators::Pair<Rule>) -> ExprNode {
+fn parse_power_expr(parser_rule: pest::iterators::Pair<Rule>) -> ExprNode {
     let mut rules = Vec::<ExprNode>::new();
-    let bool_and_or_expr = packet_rule.into_inner();
+    let bool_and_or_expr = parser_rule.into_inner();
 
     for field in bool_and_or_expr.clone() {
         match field.as_rule() {
@@ -267,19 +267,25 @@ fn parse_power_expr(packet_rule: pest::iterators::Pair<Rule>) -> ExprNode {
     rules[0].clone()
 }
 
-fn parse_value_expr(packet_rule: pest::iterators::Pair<Rule>) -> ExprNode {
-    let value_expr = packet_rule.into_inner();
+fn parse_value_expr(parser_rule: pest::iterators::Pair<Rule>) -> ExprNode {
+    let value_expr = parser_rule.into_inner();
 
     for value in value_expr.clone() {
         match value.as_rule() {
             Rule::numeric_constant => {
-                let constant = value.into_inner();
+                return parse_numeric_constant(value)
             }
-            Rule::intrinsic_function_clause => {}
-            Rule::aggregate_accessor => {}
-            Rule::direct_value_accessor => {},
+            Rule::intrinsic_function_clause => {
+                return parse_intrinsic_function_clause(value)
+            }
+            Rule::aggregate_accessor => {
+                panic!("Not implemented yet")
+            }
+            Rule::direct_value_accessor => {
+                return parse_direct_value_accessor(value)
+            },
             Rule::inner_expr => {
-                return ExprNode::ParenthesizedExpr(Box::new(parse_expr(value)))
+                return ExprNode::ParenthesizedExpr(Box::new(parse_inner_expr(value)))
             }
             _ => (),
         }
@@ -288,12 +294,33 @@ fn parse_value_expr(packet_rule: pest::iterators::Pair<Rule>) -> ExprNode {
     ExprNode::NoExpr
 }
 
-//fn parse_numeric_constant(packet_rule: pest::iterators::Pair<Rule>) -> ExprNode {
-    //
-//}
+fn parse_inner_expr(parser_rule: pest::iterators::Pair<Rule>) -> ExprNode {
+    let parenthesized_expr = parser_rule.into_inner();
+    for value in parenthesized_expr.clone() {
+        match value.as_rule() {
+            Rule::expr => {
+                return parse_expr(value);
+            },
+            _ => ()
+        }
+    }
+    ExprNode::NoExpr
+}
 
-fn parse_guard_clause(packet_rule: pest::iterators::Pair<Rule>) {
-    // dbg!(packet_rule);
+fn parse_numeric_constant(parser_rule: pest::iterators::Pair<Rule>) -> ExprNode {
+    ExprNode::NoExpr
+}
+
+fn parse_direct_value_accessor(parser_rule: pest::iterators::Pair<Rule>) -> ExprNode {
+    ExprNode::NoExpr
+}
+
+fn parse_intrinsic_function_clause(parser_rule: pest::iterators::Pair<Rule>) -> ExprNode {
+    ExprNode::NoExpr
+}
+
+fn parse_guard_clause(parser_rule: pest::iterators::Pair<Rule>) {
+    // ExprNode::NoExpr
 }
 
 fn expr_from_type_name(type_name: String, array_length: Option<String>) -> ExprNode {
