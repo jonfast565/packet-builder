@@ -114,12 +114,13 @@ fn parse_calculated_field(parser_rule: pest::iterators::Pair<Rule>) -> Calculate
     let mut identifier = String::new();
     let mut type_name = String::new();
     let mut option_expr: Option<ExprNode> = None;
+    let mut guard_clause: Option<ExprNode> = None;
     for field in calc_field_declaration {
         match field.as_rule() {
             Rule::identifier => identifier = field.as_str().to_string(),
             Rule::type_name => type_name = field.as_str().to_string(),
             Rule::expr => option_expr = Some(parse_expr(field)),
-            Rule::guard_clause => parse_guard_clause(field),
+            Rule::guard_clause => guard_clause = Some(parse_guard_clause(field)),
             _ => (),
         }
     }
@@ -185,7 +186,7 @@ fn parse_boolean_comp_expr(parser_rule: pest::iterators::Pair<Rule>) -> ExprNode
                 return ExprNode::Gte(Box::new(rules[0].clone()), Box::new(rules[1].clone()))
             }
             Rule::less_than => {
-                return ExprNode::Gte(Box::new(rules[0].clone()), Box::new(rules[1].clone()))
+                return ExprNode::Lt(Box::new(rules[0].clone()), Box::new(rules[1].clone()))
             }
             Rule::less_than_equal => {
                 return ExprNode::Lte(Box::new(rules[0].clone()), Box::new(rules[1].clone()))
@@ -273,17 +274,13 @@ fn parse_value_expr(parser_rule: pest::iterators::Pair<Rule>) -> ExprNode {
     for value in value_expr.clone() {
         match value.as_rule() {
             Rule::numeric_constant => {
-                return parse_numeric_constant(value)
+                return parse_numeric_constant(value);
             }
-            Rule::intrinsic_function_clause => {
-                return parse_intrinsic_function_clause(value)
-            }
+            Rule::intrinsic_function_clause => return parse_intrinsic_function_clause(value),
             Rule::aggregate_accessor => {
                 panic!("Not implemented yet")
             }
-            Rule::direct_value_accessor => {
-                return parse_direct_value_accessor(value)
-            },
+            Rule::direct_value_accessor => return parse_direct_value_accessor(value),
             Rule::inner_expr => {
                 return ExprNode::ParenthesizedExpr(Box::new(parse_inner_expr(value)))
             }
@@ -300,27 +297,70 @@ fn parse_inner_expr(parser_rule: pest::iterators::Pair<Rule>) -> ExprNode {
         match value.as_rule() {
             Rule::expr => {
                 return parse_expr(value);
-            },
-            _ => ()
+            }
+            _ => (),
         }
     }
     ExprNode::NoExpr
 }
 
 fn parse_numeric_constant(parser_rule: pest::iterators::Pair<Rule>) -> ExprNode {
-    ExprNode::NoExpr
+    let numeric_constant_value = parser_rule.as_str();
+    if numeric_constant_value.to_string().contains(".") {
+        return ExprNode::Float64Value(numeric_constant_value.parse::<f64>().unwrap());
+    } else if numeric_constant_value.to_string().contains("-") {
+        return ExprNode::Integer64Value(numeric_constant_value.parse::<i64>().unwrap());
+    } else {
+        return ExprNode::UnsignedInteger64Value(numeric_constant_value.parse::<u64>().unwrap());
+    }
 }
 
 fn parse_direct_value_accessor(parser_rule: pest::iterators::Pair<Rule>) -> ExprNode {
-    ExprNode::NoExpr
+    let mut identifier = String::new();
+    let mut array_specifier : Option<usize> = None;
+    let direct_value_rule = parser_rule.into_inner();
+    for value in direct_value_rule.clone() {
+        match value.as_rule() {
+            Rule::identifier => {
+                identifier =  value.as_str().to_string();
+            },
+            Rule::array_specifier => {
+                let constant = value.into_inner();
+                for c in constant {
+                    match c.as_rule() {
+                        Rule::numeric_constant => {
+                            array_specifier = Some(c.as_str().parse::<usize>().unwrap());
+                        },
+                        _ => ()
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
+    ExprNode::ValueReference(identifier, array_specifier)
 }
 
 fn parse_intrinsic_function_clause(parser_rule: pest::iterators::Pair<Rule>) -> ExprNode {
+    let intrinsic_function_rule = parser_rule.into_inner();
+    for value in intrinsic_function_rule.clone() {
+        match value.as_rule() {
+            Rule::value => {}
+            _ => (),
+        }
+    }
     ExprNode::NoExpr
 }
 
-fn parse_guard_clause(parser_rule: pest::iterators::Pair<Rule>) {
-    // ExprNode::NoExpr
+fn parse_guard_clause(parser_rule: pest::iterators::Pair<Rule>) -> ExprNode {
+    let guard_clause_rule = parser_rule.into_inner();
+    for value in guard_clause_rule.clone() {
+        match value.as_rule() {
+            Rule::value => {}
+            _ => (),
+        }
+    }
+    ExprNode::NoExpr
 }
 
 fn expr_from_type_name(type_name: String, array_length: Option<String>) -> ExprNode {
