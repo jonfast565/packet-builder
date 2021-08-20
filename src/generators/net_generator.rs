@@ -181,7 +181,7 @@ impl CSharpGenerator {
                     for i in 0..y {
                         result.push_str(&format!(
                             "\tdata.write_{}(self.{}[{}]).unwrap();\n",
-                            &"u8".to_string(),
+                            &"byte".to_string(),
                             expr.id,
                             i
                         ));
@@ -191,7 +191,7 @@ impl CSharpGenerator {
                 None => {
                     result.push_str(&format!(
                         "\tdata.write_{}(self.{}).unwrap();\n",
-                        &"u8".to_string(),
+                        &"byte".to_string(),
                         expr.id
                     ));
                     *position += expr.expr.get_type_length_bytes();
@@ -202,7 +202,7 @@ impl CSharpGenerator {
                     for i in 0..y {
                         result.push_str(&format!(
                             "\tdata.write_{}::<BigEndian>(self.{}[{}]).unwrap();\n",
-                            &"i8".to_string(),
+                            &"sbyte".to_string(),
                             expr.id,
                             i
                         ));
@@ -212,7 +212,7 @@ impl CSharpGenerator {
                 None => {
                     result.push_str(&format!(
                         "\tdata.write_{}::<BigEndian>(self.{}).unwrap();\n",
-                        &"i8".to_string(),
+                        &"sbyte".to_string(),
                         expr.id
                     ));
                     *position += expr.expr.get_type_length_bytes();
@@ -223,7 +223,7 @@ impl CSharpGenerator {
                     for i in 0..y {
                         result.push_str(&format!(
                             "\tdata.write_{}::<BigEndian>(self.{}[{}]).unwrap();\n",
-                            &"u16".to_string(),
+                            &"ushort".to_string(),
                             expr.id,
                             i
                         ));
@@ -233,7 +233,7 @@ impl CSharpGenerator {
                 None => {
                     result.push_str(&format!(
                         "\tdata.write_{}::<BigEndian>(self.{}).unwrap();\n",
-                        &"u16".to_string(),
+                        &"ushort".to_string(),
                         expr.id
                     ));
                     *position += expr.expr.get_type_length_bytes();
@@ -244,7 +244,7 @@ impl CSharpGenerator {
                     for i in 0..y {
                         result.push_str(&format!(
                             "\tdata.write_{}::<BigEndian>(self.{}[{}]).unwrap();\n",
-                            &"i16".to_string(),
+                            &"short".to_string(),
                             expr.id,
                             i
                         ));
@@ -254,7 +254,7 @@ impl CSharpGenerator {
                 None => {
                     result.push_str(&format!(
                         "\tdata.write_{}::<BigEndian>(self.{}).unwrap();\n",
-                        &"i16".to_string(),
+                        &"short".to_string(),
                         expr.id
                     ));
                     *position += expr.expr.get_type_length_bytes();
@@ -265,7 +265,7 @@ impl CSharpGenerator {
                     for i in 0..y {
                         result.push_str(&format!(
                             "\tdata.write_{}::<BigEndian>(self.{}[{}]).unwrap();\n",
-                            &"u32".to_string(),
+                            &"uint".to_string(),
                             expr.id,
                             i
                         ));
@@ -275,7 +275,7 @@ impl CSharpGenerator {
                 None => {
                     result.push_str(&format!(
                         "\tdata.write_{}::<BigEndian>(self.{}).unwrap();\n",
-                        &"u32".to_string(),
+                        &"uint".to_string(),
                         expr.id
                     ));
                     *position += expr.expr.get_type_length_bytes();
@@ -286,7 +286,7 @@ impl CSharpGenerator {
                     for i in 0..y {
                         result.push_str(&format!(
                             "\tdata.write_{}::<BigEndian>(self.{}[{}]).unwrap();\n",
-                            &"i32".to_string(),
+                            &"int".to_string(),
                             expr.id,
                             i
                         ));
@@ -296,7 +296,7 @@ impl CSharpGenerator {
                 None => {
                     result.push_str(&format!(
                         "\tdata.write_{}::<BigEndian>(self.{}).unwrap();\n",
-                        &"i32".to_string(),
+                        &"int".to_string(),
                         expr.id
                     ));
                     *position += expr.expr.get_type_length_bytes();
@@ -307,7 +307,7 @@ impl CSharpGenerator {
                     for i in 0..y {
                         result.push_str(&format!(
                             "\tdata.write_{}::<BigEndian>(self.{}[{}]).unwrap();\n",
-                            &"u64".to_string(),
+                            &"ulong".to_string(),
                             expr.id,
                             i
                         ));
@@ -317,7 +317,7 @@ impl CSharpGenerator {
                 None => {
                     result.push_str(&format!(
                         "\tdata.write_{}::<BigEndian>(self.{}).unwrap();\n",
-                        &"u64".to_string(),
+                        &"ulong".to_string(),
                         expr.id
                     ));
                     *position += expr.expr.get_type_length_bytes();
@@ -328,7 +328,7 @@ impl CSharpGenerator {
                     for i in 0..y {
                         result.push_str(&format!(
                             "\tdata.write_{}::<BigEndian>(self.{}[{}]).unwrap();\n",
-                            &"i64".to_string(),
+                            &"long".to_string(),
                             expr.id,
                             i
                         ));
@@ -338,7 +338,7 @@ impl CSharpGenerator {
                 None => {
                     result.push_str(&format!(
                         "\tdata.write_{}::<BigEndian>(self.{}).unwrap();\n",
-                        &"i64".to_string(),
+                        &"long".to_string(),
                         expr.id
                     ));
                     *position += expr.expr.get_type_length_bytes();
@@ -349,7 +349,7 @@ impl CSharpGenerator {
                     for i in 0..y {
                         result.push_str(&format!(
                             "\tdata.write_{}::<BigEndian>(self.{}[{}]).unwrap();\n",
-                            &"f32".to_string(),
+                            &"float".to_string(),
                             expr.id,
                             i
                         ));
@@ -359,7 +359,7 @@ impl CSharpGenerator {
                 None => {
                     result.push_str(&format!(
                         "\tdata.write_{}::<BigEndian>(self.{}).unwrap();\n",
-                        &"f32".to_string(),
+                        &"float".to_string(),
                         expr.id
                     ));
                     *position += expr.expr.get_type_length_bytes();
@@ -370,7 +370,7 @@ impl CSharpGenerator {
                     for i in 0..y {
                         result.push_str(&format!(
                             "\tdata.write_{}::<BigEndian>(self.{}[{}]).unwrap();\n",
-                            &"f64".to_string(),
+                            &"double".to_string(),
                             expr.id,
                             i
                         ));
@@ -380,7 +380,7 @@ impl CSharpGenerator {
                 None => {
                     result.push_str(&format!(
                         "\tdata.write_{}::<BigEndian>(self.{}).unwrap();\n",
-                        &"f64".to_string(),
+                        &"double".to_string(),
                         expr.id
                     ));
                     *position += expr.expr.get_type_length_bytes();
@@ -402,12 +402,12 @@ impl CSharpGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tlet {}_{} = {};\n",
+                            "\tvar {}_{} = {};\n",
                             expr.id,
                             i,
                             CSharpGenerator::get_conversion_deserialization(
                                 &"data".to_string(),
-                                &"u8".to_string(),
+                                &"byte".to_string(),
                                 *position,
                                 1
                             )
@@ -417,11 +417,11 @@ impl CSharpGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\tlet {} = {};\n",
+                        "\tvar {} = {};\n",
                         expr.id,
                         CSharpGenerator::get_conversion_deserialization(
                             &"data".to_string(),
-                            &"u8".to_string(),
+                            &"byte".to_string(),
                             *position,
                             1
                         )
@@ -433,12 +433,12 @@ impl CSharpGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tlet {}_{} = {};\n",
+                            "\tvar {}_{} = {};\n",
                             expr.id,
                             i,
                             CSharpGenerator::get_conversion_deserialization(
                                 &"data".to_string(),
-                                &"i8".to_string(),
+                                &"sbyte".to_string(),
                                 *position,
                                 1
                             )
@@ -448,11 +448,11 @@ impl CSharpGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\tlet {} = {};\n",
+                        "\tvar {} = {};\n",
                         expr.id,
                         CSharpGenerator::get_conversion_deserialization(
                             &"data".to_string(),
-                            &"i8".to_string(),
+                            &"sbyte".to_string(),
                             *position,
                             1
                         )
@@ -464,12 +464,12 @@ impl CSharpGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tlet {}_{} = {};\n",
+                            "\tvar {}_{} = {};\n",
                             expr.id,
                             i,
                             CSharpGenerator::get_conversion_deserialization(
                                 &"data".to_string(),
-                                &"u16".to_string(),
+                                &"ushort".to_string(),
                                 *position,
                                 2
                             )
@@ -479,11 +479,11 @@ impl CSharpGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\tlet {} = {};\n",
+                        "\tvar {} = {};\n",
                         expr.id,
                         CSharpGenerator::get_conversion_deserialization(
                             &"data".to_string(),
-                            &"u16".to_string(),
+                            &"ushort".to_string(),
                             *position,
                             2
                         )
@@ -495,12 +495,12 @@ impl CSharpGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tlet {}_{} = {};\n",
+                            "\tvar {}_{} = {};\n",
                             expr.id,
                             i,
                             CSharpGenerator::get_conversion_deserialization(
                                 &"data".to_string(),
-                                &"i16".to_string(),
+                                &"short".to_string(),
                                 *position,
                                 2
                             )
@@ -510,11 +510,11 @@ impl CSharpGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\tlet {} = {};\n",
+                        "\tvar {} = {};\n",
                         expr.id,
                         CSharpGenerator::get_conversion_deserialization(
                             &"data".to_string(),
-                            &"i16".to_string(),
+                            &"short".to_string(),
                             *position,
                             2
                         )
@@ -526,12 +526,12 @@ impl CSharpGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tlet {}_{} = {};\n",
+                            "\tvar {}_{} = {};\n",
                             expr.id,
                             i,
                             CSharpGenerator::get_conversion_deserialization(
                                 &"data".to_string(),
-                                &"u32".to_string(),
+                                &"uint".to_string(),
                                 *position,
                                 4
                             )
@@ -541,11 +541,11 @@ impl CSharpGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\tlet {} = {};\n",
+                        "\tvar {} = {};\n",
                         expr.id,
                         CSharpGenerator::get_conversion_deserialization(
                             &"data".to_string(),
-                            &"u32".to_string(),
+                            &"uint".to_string(),
                             *position,
                             4
                         )
@@ -557,12 +557,12 @@ impl CSharpGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tlet {}_{} = {};\n",
+                            "\tvar {}_{} = {};\n",
                             expr.id,
                             i,
                             CSharpGenerator::get_conversion_deserialization(
                                 &"data".to_string(),
-                                &"i32".to_string(),
+                                &"int".to_string(),
                                 *position,
                                 4
                             )
@@ -572,11 +572,11 @@ impl CSharpGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\tlet {} = {};\n",
+                        "\tvar {} = {};\n",
                         expr.id,
                         CSharpGenerator::get_conversion_deserialization(
                             &"data".to_string(),
-                            &"i32".to_string(),
+                            &"int".to_string(),
                             *position,
                             4
                         )
@@ -588,12 +588,12 @@ impl CSharpGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tlet {}_{} = {};\n",
+                            "\tvar {}_{} = {};\n",
                             expr.id,
                             i,
                             CSharpGenerator::get_conversion_deserialization(
                                 &"data".to_string(),
-                                &"u64".to_string(),
+                                &"ulong".to_string(),
                                 *position,
                                 8
                             )
@@ -603,11 +603,11 @@ impl CSharpGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\tlet {} = {};\n",
+                        "\tvar {} = {};\n",
                         expr.id,
                         CSharpGenerator::get_conversion_deserialization(
                             &"data".to_string(),
-                            &"u64".to_string(),
+                            &"ulong".to_string(),
                             *position,
                             8
                         )
@@ -619,12 +619,12 @@ impl CSharpGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tlet {}_{} = {};\n",
+                            "\tvar {}_{} = {};\n",
                             expr.id,
                             i,
                             CSharpGenerator::get_conversion_deserialization(
                                 &"data".to_string(),
-                                &"i64".to_string(),
+                                &"long".to_string(),
                                 *position,
                                 8
                             )
@@ -634,11 +634,11 @@ impl CSharpGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\tlet {} = {};\n",
+                        "\tvar {} = {};\n",
                         expr.id,
                         CSharpGenerator::get_conversion_deserialization(
                             &"data".to_string(),
-                            &"i64".to_string(),
+                            &"long".to_string(),
                             *position,
                             8
                         )
@@ -650,12 +650,12 @@ impl CSharpGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tlet {}_{} = {};\n",
+                            "\tvar {}_{} = {};\n",
                             expr.id,
                             i,
                             CSharpGenerator::get_conversion_deserialization(
                                 &"data".to_string(),
-                                &"f32".to_string(),
+                                &"float".to_string(),
                                 *position,
                                 4
                             )
@@ -665,11 +665,11 @@ impl CSharpGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\tlet {} = {};\n",
+                        "\tvar {} = {};\n",
                         expr.id,
                         CSharpGenerator::get_conversion_deserialization(
                             &"data".to_string(),
-                            &"f32".to_string(),
+                            &"float".to_string(),
                             *position,
                             4
                         )
@@ -681,12 +681,12 @@ impl CSharpGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\tlet {}_{} = {};\n",
+                            "\tvar {}_{} = {};\n",
                             expr.id,
                             i,
                             CSharpGenerator::get_conversion_deserialization(
                                 &"data".to_string(),
-                                &"f64".to_string(),
+                                &"double".to_string(),
                                 *position,
                                 8
                             )
@@ -696,11 +696,11 @@ impl CSharpGenerator {
                 }
                 None => {
                     result.push_str(&format!(
-                        "\tlet {} = {};\n",
+                        "\tvar {} = {};\n",
                         expr.id,
                         CSharpGenerator::get_conversion_deserialization(
                             &"data".to_string(),
-                            &"f64".to_string(),
+                            &"double".to_string(),
                             *position,
                             8
                         )
@@ -723,12 +723,12 @@ impl CSharpGenerator {
         position: usize,
         data_byte_size: usize,
     ) -> String {
-        if data_type == "u8" {
+        if data_type == "byte" {
             format!("{}[{}]", variable, position)
         } else {
             format!(
-                "LittleEndian::read_{}(&{}[{}..{}])",
-                data_type,
+                "BitConverter.To{}({}[{}..{}])",
+                data_type.to_uppercase(),
                 variable,
                 position,
                 position + data_byte_size
