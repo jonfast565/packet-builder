@@ -1,5 +1,5 @@
 use crate::models::parsing_models::{ExprNode, PacketExpr, TypeExpr};
-use crate::utilities::{CaseWrapper, Casing};
+use crate::utilities::{CaseWrapper, Casing, capitalize_first};
 
 pub struct CSharpGenerator {}
 
@@ -731,7 +731,7 @@ impl CSharpGenerator {
         } else {
             format!(
                 "BitConverter.To{}({}[{}..{}])",
-                data_type.to_uppercase(),
+                capitalize_first(data_type.clone()),
                 variable,
                 position,
                 position + data_byte_size

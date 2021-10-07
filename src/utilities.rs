@@ -1,3 +1,10 @@
+pub fn capitalize_first(s: String) -> String {
+    let mut first = s.chars().nth(0).unwrap().to_uppercase().to_string();
+    let second = s[1..].to_string();
+    first.push_str(&second);
+    first
+}
+
 pub struct CaseWrapper(pub String);
 
 pub trait Casing {
@@ -15,9 +22,7 @@ impl Casing for CaseWrapper {
             let mut results = String::new();
             let splitted = self.split_string_by(|c| c == '_');
             for c in splitted {
-                let mut first = c.chars().nth(0).unwrap().to_uppercase().to_string();
-                let second = c[1..].to_string();
-                first.push_str(&second);
+                let first = capitalize_first(c);
                 results.push_str(&first);
             }
             results
@@ -28,9 +33,7 @@ impl Casing for CaseWrapper {
         if self.0.is_empty() || self.0.len() < 2 {
             self.0.clone()
         } else {
-            let mut first = self.0.chars().nth(0).unwrap().to_lowercase().to_string();
-            let second = self.0[1..].to_string();
-            first.push_str(&second);
+            let first = capitalize_first(self.0.clone());
             first
         }
     }
