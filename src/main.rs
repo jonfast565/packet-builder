@@ -24,7 +24,7 @@ fn main() -> std::io::Result<()> {
     let file =
         fs::read_to_string("./test_packet.packet").expect("Something went wrong reading the file");
     let packet = parser::parse_file(&file).unwrap();
-    // dbg!(&packet);
+
     for item in vec!["c", "rust", "zig", "net"] {
         let packet_result = match item {
             "c" => CGenerator::generate(&packet),
