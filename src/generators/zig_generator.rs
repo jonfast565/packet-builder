@@ -49,7 +49,7 @@ impl ZigGenerator {
         format!(
             "\tpub fn serialize(packet: {}, verbose: bool) []u8 {{
             var data: []u8 = try allocator.alloc(u8, {});
-            for (data[0..{}] |*v| v = 0;
+            for (data[0..{}]) |*v| v = 0;
             {}
         }}
 
