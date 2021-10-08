@@ -1,5 +1,5 @@
 use crate::models::parsing_models::{ExprNode, PacketExpr, TypeExpr};
-use crate::utilities::{CaseWrapper, Casing, capitalize_first};
+use crate::utilities::{capitalize_first, CaseWrapper, Casing};
 
 pub struct CSharpGenerator {}
 
@@ -31,9 +31,7 @@ impl CSharpGenerator {
             "
         public byte[] Serialize() {{
             var data = new byte[] {{}};
-            /*
             {}
-            */
             return data;
         }}
 
@@ -46,7 +44,7 @@ impl CSharpGenerator {
         }}
         ",
             //expr.name,
-            &CSharpGenerator::create_serializers(expr),
+            "", //&CSharpGenerator::create_serializers(expr),
             expr.name,
             &CSharpGenerator::create_deserializers(expr),
             expr.name,
@@ -61,34 +59,74 @@ impl CSharpGenerator {
             .iter()
             .map(|x| match x.expr {
                 ExprNode::UnsignedInteger8(y) => {
-                    format!("public {} {} {{ get; set; }}", CSharpGenerator::get_array_bounds("byte", y), CaseWrapper(x.id.clone()).to_pascal_case())
+                    format!(
+                        "public {} {} {{ get; set; }}",
+                        CSharpGenerator::get_array_bounds("byte", y),
+                        CaseWrapper(x.id.clone()).to_pascal_case()
+                    )
                 }
                 ExprNode::Integer8(y) => {
-                    format!("public {} {} {{ get; set; }}", CSharpGenerator::get_array_bounds("sbyte", y), CaseWrapper(x.id.clone()).to_pascal_case())
+                    format!(
+                        "public {} {} {{ get; set; }}",
+                        CSharpGenerator::get_array_bounds("sbyte", y),
+                        CaseWrapper(x.id.clone()).to_pascal_case()
+                    )
                 }
                 ExprNode::UnsignedInteger16(y) => {
-                    format!("public {} {} {{ get; set; }}", CSharpGenerator::get_array_bounds("ushort", y), CaseWrapper(x.id.clone()).to_pascal_case())
+                    format!(
+                        "public {} {} {{ get; set; }}",
+                        CSharpGenerator::get_array_bounds("ushort", y),
+                        CaseWrapper(x.id.clone()).to_pascal_case()
+                    )
                 }
                 ExprNode::Integer16(y) => {
-                    format!("public {} {} {{ get; set; }}", CSharpGenerator::get_array_bounds("short", y), CaseWrapper(x.id.clone()).to_pascal_case())
+                    format!(
+                        "public {} {} {{ get; set; }}",
+                        CSharpGenerator::get_array_bounds("short", y),
+                        CaseWrapper(x.id.clone()).to_pascal_case()
+                    )
                 }
                 ExprNode::UnsignedInteger32(y) => {
-                    format!("public {} {} {{ get; set; }}", CSharpGenerator::get_array_bounds("uint", y), CaseWrapper(x.id.clone()).to_pascal_case())
+                    format!(
+                        "public {} {} {{ get; set; }}",
+                        CSharpGenerator::get_array_bounds("uint", y),
+                        CaseWrapper(x.id.clone()).to_pascal_case()
+                    )
                 }
                 ExprNode::Integer32(y) => {
-                    format!("public {} {} {{ get; set; }}", CSharpGenerator::get_array_bounds("int", y), CaseWrapper(x.id.clone()).to_pascal_case())
+                    format!(
+                        "public {} {} {{ get; set; }}",
+                        CSharpGenerator::get_array_bounds("int", y),
+                        CaseWrapper(x.id.clone()).to_pascal_case()
+                    )
                 }
                 ExprNode::UnsignedInteger64(y) => {
-                    format!("public {} {} {{ get; set; }}", CSharpGenerator::get_array_bounds("ulong", y), CaseWrapper(x.id.clone()).to_pascal_case())
+                    format!(
+                        "public {} {} {{ get; set; }}",
+                        CSharpGenerator::get_array_bounds("ulong", y),
+                        CaseWrapper(x.id.clone()).to_pascal_case()
+                    )
                 }
                 ExprNode::Integer64(y) => {
-                    format!("public {} {} {{ get; set; }}", CSharpGenerator::get_array_bounds("long", y), CaseWrapper(x.id.clone()).to_pascal_case())
+                    format!(
+                        "public {} {} {{ get; set; }}",
+                        CSharpGenerator::get_array_bounds("long", y),
+                        CaseWrapper(x.id.clone()).to_pascal_case()
+                    )
                 }
                 ExprNode::Float32(y) => {
-                    format!("public {} {} {{ get; set; }}", CSharpGenerator::get_array_bounds("float", y), CaseWrapper(x.id.clone()).to_pascal_case())
+                    format!(
+                        "public {} {} {{ get; set; }}",
+                        CSharpGenerator::get_array_bounds("float", y),
+                        CaseWrapper(x.id.clone()).to_pascal_case()
+                    )
                 }
                 ExprNode::Float64(y) => {
-                    format!("public {} {} {{ get; set; }}", CSharpGenerator::get_array_bounds("double", y), CaseWrapper(x.id.clone()).to_pascal_case())
+                    format!(
+                        "public {} {} {{ get; set; }}",
+                        CSharpGenerator::get_array_bounds("double", y),
+                        CaseWrapper(x.id.clone()).to_pascal_case()
+                    )
                 }
                 _ => "".to_string(),
             })
@@ -149,15 +187,32 @@ impl CSharpGenerator {
                 Some(y) => {
                     let mut array = String::new();
                     for i in 0..y {
-                        array.push_str(&format!("{}{}", CaseWrapper(expr.id.clone()).to_pascal_case(), i).to_string());
+                        array.push_str(
+                            &format!("{}{}", CaseWrapper(expr.id.clone()).to_pascal_case(), i)
+                                .to_string(),
+                        );
                         if i < y - 1 {
                             array.push_str(", ");
                         }
                     }
-                    result.push_str(&format!("{} = new byte[] {{ {} }},\n", CaseWrapper(expr.id.clone()).to_pascal_case(), array).to_string());
+                    result.push_str(
+                        &format!(
+                            "{} = new byte[] {{ {} }},\n",
+                            CaseWrapper(expr.id.clone()).to_pascal_case(),
+                            array
+                        )
+                        .to_string(),
+                    );
                 }
                 None => {
-                    result.push_str(&format!("{} = {},\n", CaseWrapper(expr.id.clone()).to_pascal_case(), CaseWrapper(expr.id.clone()).to_pascal_case()).to_string());
+                    result.push_str(
+                        &format!(
+                            "{} = {},\n",
+                            CaseWrapper(expr.id.clone()).to_pascal_case(),
+                            CaseWrapper(expr.id.clone()).to_pascal_case()
+                        )
+                        .to_string(),
+                    );
                 }
             },
             ExprNode::MacAddress => {}
@@ -404,30 +459,24 @@ impl CSharpGenerator {
             ExprNode::UnsignedInteger8(y) => match y {
                 Some(y) => {
                     for i in 0..y {
-                        result.push_str(&format!(
-                            "\tvar {}{} = {};\n",
-                            CaseWrapper(expr.id.clone()).to_pascal_case(),
+                        result.push_str(&CSharpGenerator::format_array_deserialization_variable(
+                            expr,
                             i,
-                            CSharpGenerator::get_conversion_deserialization(
-                                &"data".to_string(),
-                                &"byte".to_string(),
-                                *position,
-                                1
-                            )
+                            *position,
+                            &"data".to_string(),
+                            &"byte".to_string(),
+                            1,
                         ));
                         *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
-                    result.push_str(&format!(
-                        "\tvar {} = {};\n",
-                        CaseWrapper(expr.id.clone()).to_pascal_case(),
-                        CSharpGenerator::get_conversion_deserialization(
-                            &"data".to_string(),
-                            &"byte".to_string(),
-                            *position,
-                            1
-                        )
+                    result.push_str(&CSharpGenerator::format_deserialization_variable(
+                        expr,
+                        *position,
+                        &"data".to_string(),
+                        &"byte".to_string(),
+                        1,
                     ));
                     *position += expr.expr.get_type_length_bytes();
                 }
@@ -435,30 +484,24 @@ impl CSharpGenerator {
             ExprNode::Integer8(y) => match y {
                 Some(y) => {
                     for i in 0..y {
-                        result.push_str(&format!(
-                            "\tvar {}{} = {};\n",
-                            CaseWrapper(expr.id.clone()).to_pascal_case(),
+                        result.push_str(&CSharpGenerator::format_array_deserialization_variable(
+                            expr,
                             i,
-                            CSharpGenerator::get_conversion_deserialization(
-                                &"data".to_string(),
-                                &"sbyte".to_string(),
-                                *position,
-                                1
-                            )
+                            *position,
+                            &"data".to_string(),
+                            &"sbyte".to_string(),
+                            1,
                         ));
                         *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
-                    result.push_str(&format!(
-                        "\tvar {} = {};\n",
-                        CaseWrapper(expr.id.clone()).to_pascal_case(),
-                        CSharpGenerator::get_conversion_deserialization(
-                            &"data".to_string(),
-                            &"sbyte".to_string(),
-                            *position,
-                            1
-                        )
+                    result.push_str(&CSharpGenerator::format_deserialization_variable(
+                        expr,
+                        *position,
+                        &"data".to_string(),
+                        &"sbyte".to_string(),
+                        1,
                     ));
                     *position += expr.expr.get_type_length_bytes();
                 }
@@ -466,30 +509,24 @@ impl CSharpGenerator {
             ExprNode::UnsignedInteger16(y) => match y {
                 Some(y) => {
                     for i in 0..y {
-                        result.push_str(&format!(
-                            "\tvar {}{} = {};\n",
-                            CaseWrapper(expr.id.clone()).to_pascal_case(),
+                        result.push_str(&CSharpGenerator::format_array_deserialization_variable(
+                            expr,
                             i,
-                            CSharpGenerator::get_conversion_deserialization(
-                                &"data".to_string(),
-                                &"ushort".to_string(),
-                                *position,
-                                2
-                            )
+                            *position,
+                            &"data".to_string(),
+                            &"ushort".to_string(),
+                            2,
                         ));
                         *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
-                    result.push_str(&format!(
-                        "\tvar {} = {};\n",
-                        CaseWrapper(expr.id.clone()).to_pascal_case(),
-                        CSharpGenerator::get_conversion_deserialization(
-                            &"data".to_string(),
-                            &"ushort".to_string(),
-                            *position,
-                            2
-                        )
+                    result.push_str(&CSharpGenerator::format_deserialization_variable(
+                        expr,
+                        *position,
+                        &"data".to_string(),
+                        &"ushort".to_string(),
+                        2,
                     ));
                     *position += expr.expr.get_type_length_bytes();
                 }
@@ -497,30 +534,24 @@ impl CSharpGenerator {
             ExprNode::Integer16(y) => match y {
                 Some(y) => {
                     for i in 0..y {
-                        result.push_str(&format!(
-                            "\tvar {}{} = {};\n",
-                            CaseWrapper(expr.id.clone()).to_pascal_case(),
+                        result.push_str(&CSharpGenerator::format_array_deserialization_variable(
+                            expr,
                             i,
-                            CSharpGenerator::get_conversion_deserialization(
-                                &"data".to_string(),
-                                &"short".to_string(),
-                                *position,
-                                2
-                            )
+                            *position,
+                            &"data".to_string(),
+                            &"short".to_string(),
+                            2,
                         ));
                         *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
-                    result.push_str(&format!(
-                        "\tvar {} = {};\n",
-                        CaseWrapper(expr.id.clone()).to_pascal_case(),
-                        CSharpGenerator::get_conversion_deserialization(
-                            &"data".to_string(),
-                            &"short".to_string(),
-                            *position,
-                            2
-                        )
+                    result.push_str(&CSharpGenerator::format_deserialization_variable(
+                        expr,
+                        *position,
+                        &"data".to_string(),
+                        &"short".to_string(),
+                        2,
                     ));
                     *position += expr.expr.get_type_length_bytes();
                 }
@@ -528,30 +559,24 @@ impl CSharpGenerator {
             ExprNode::UnsignedInteger32(y) => match y {
                 Some(y) => {
                     for i in 0..y {
-                        result.push_str(&format!(
-                            "\tvar {}{} = {};\n",
-                            CaseWrapper(expr.id.clone()).to_pascal_case(),
+                        result.push_str(&CSharpGenerator::format_array_deserialization_variable(
+                            expr,
                             i,
-                            CSharpGenerator::get_conversion_deserialization(
-                                &"data".to_string(),
-                                &"uint".to_string(),
-                                *position,
-                                4
-                            )
+                            *position,
+                            &"data".to_string(),
+                            &"uint".to_string(),
+                            4,
                         ));
                         *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
-                    result.push_str(&format!(
-                        "\tvar {} = {};\n",
-                        CaseWrapper(expr.id.clone()).to_pascal_case(),
-                        CSharpGenerator::get_conversion_deserialization(
-                            &"data".to_string(),
-                            &"uint".to_string(),
-                            *position,
-                            4
-                        )
+                    result.push_str(&CSharpGenerator::format_deserialization_variable(
+                        expr,
+                        *position,
+                        &"data".to_string(),
+                        &"uint".to_string(),
+                        4,
                     ));
                     *position += expr.expr.get_type_length_bytes();
                 }
@@ -559,30 +584,24 @@ impl CSharpGenerator {
             ExprNode::Integer32(y) => match y {
                 Some(y) => {
                     for i in 0..y {
-                        result.push_str(&format!(
-                            "\tvar {}{} = {};\n",
-                            CaseWrapper(expr.id.clone()).to_pascal_case(),
+                        result.push_str(&CSharpGenerator::format_array_deserialization_variable(
+                            expr,
                             i,
-                            CSharpGenerator::get_conversion_deserialization(
-                                &"data".to_string(),
-                                &"int".to_string(),
-                                *position,
-                                4
-                            )
+                            *position,
+                            &"data".to_string(),
+                            &"int".to_string(),
+                            4,
                         ));
                         *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
-                    result.push_str(&format!(
-                        "\tvar {} = {};\n",
-                        CaseWrapper(expr.id.clone()).to_pascal_case(),
-                        CSharpGenerator::get_conversion_deserialization(
-                            &"data".to_string(),
-                            &"int".to_string(),
-                            *position,
-                            4
-                        )
+                    result.push_str(&CSharpGenerator::format_deserialization_variable(
+                        expr,
+                        *position,
+                        &"data".to_string(),
+                        &"int".to_string(),
+                        4,
                     ));
                     *position += expr.expr.get_type_length_bytes();
                 }
@@ -590,30 +609,24 @@ impl CSharpGenerator {
             ExprNode::UnsignedInteger64(y) => match y {
                 Some(y) => {
                     for i in 0..y {
-                        result.push_str(&format!(
-                            "\tvar {}{} = {};\n",
-                            CaseWrapper(expr.id.clone()).to_pascal_case(),
+                        result.push_str(&CSharpGenerator::format_array_deserialization_variable(
+                            expr,
                             i,
-                            CSharpGenerator::get_conversion_deserialization(
-                                &"data".to_string(),
-                                &"ulong".to_string(),
-                                *position,
-                                8
-                            )
+                            *position,
+                            &"data".to_string(),
+                            &"ulong".to_string(),
+                            8,
                         ));
                         *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
-                    result.push_str(&format!(
-                        "\tvar {} = {};\n",
-                        CaseWrapper(expr.id.clone()).to_pascal_case(),
-                        CSharpGenerator::get_conversion_deserialization(
-                            &"data".to_string(),
-                            &"ulong".to_string(),
-                            *position,
-                            8
-                        )
+                    result.push_str(&CSharpGenerator::format_deserialization_variable(
+                        expr,
+                        *position,
+                        &"data".to_string(),
+                        &"ulong".to_string(),
+                        8,
                     ));
                     *position += expr.expr.get_type_length_bytes();
                 }
@@ -621,30 +634,24 @@ impl CSharpGenerator {
             ExprNode::Integer64(y) => match y {
                 Some(y) => {
                     for i in 0..y {
-                        result.push_str(&format!(
-                            "\tvar {}{} = {};\n",
-                            CaseWrapper(expr.id.clone()).to_pascal_case(),
+                        result.push_str(&CSharpGenerator::format_array_deserialization_variable(
+                            expr,
                             i,
-                            CSharpGenerator::get_conversion_deserialization(
-                                &"data".to_string(),
-                                &"long".to_string(),
-                                *position,
-                                8
-                            )
+                            *position,
+                            &"data".to_string(),
+                            &"long".to_string(),
+                            8,
                         ));
                         *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
-                    result.push_str(&format!(
-                        "\tvar {} = {};\n",
-                        CaseWrapper(expr.id.clone()).to_pascal_case(),
-                        CSharpGenerator::get_conversion_deserialization(
-                            &"data".to_string(),
-                            &"long".to_string(),
-                            *position,
-                            8
-                        )
+                    result.push_str(&CSharpGenerator::format_deserialization_variable(
+                        expr,
+                        *position,
+                        &"data".to_string(),
+                        &"long".to_string(),
+                        8,
                     ));
                     *position += expr.expr.get_type_length_bytes();
                 }
@@ -652,30 +659,24 @@ impl CSharpGenerator {
             ExprNode::Float32(y) => match y {
                 Some(y) => {
                     for i in 0..y {
-                        result.push_str(&format!(
-                            "\tvar {}{} = {};\n",
-                            CaseWrapper(expr.id.clone()).to_pascal_case(),
+                        result.push_str(&CSharpGenerator::format_array_deserialization_variable(
+                            expr,
                             i,
-                            CSharpGenerator::get_conversion_deserialization(
-                                &"data".to_string(),
-                                &"float".to_string(),
-                                *position,
-                                4
-                            )
+                            *position,
+                            &"data".to_string(),
+                            &"float".to_string(),
+                            4,
                         ));
                         *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
-                    result.push_str(&format!(
-                        "\tvar {} = {};\n",
-                        CaseWrapper(expr.id.clone()).to_pascal_case(),
-                        CSharpGenerator::get_conversion_deserialization(
-                            &"data".to_string(),
-                            &"float".to_string(),
-                            *position,
-                            4
-                        )
+                    result.push_str(&CSharpGenerator::format_deserialization_variable(
+                        expr,
+                        *position,
+                        &"data".to_string(),
+                        &"float".to_string(),
+                        4,
                     ));
                     *position += expr.expr.get_type_length_bytes();
                 }
@@ -683,30 +684,24 @@ impl CSharpGenerator {
             ExprNode::Float64(y) => match y {
                 Some(y) => {
                     for i in 0..y {
-                        result.push_str(&format!(
-                            "\tvar {}{} = {};\n",
-                            CaseWrapper(expr.id.clone()).to_pascal_case(),
+                        result.push_str(&CSharpGenerator::format_array_deserialization_variable(
+                            expr,
                             i,
-                            CSharpGenerator::get_conversion_deserialization(
-                                &"data".to_string(),
-                                &"double".to_string(),
-                                *position,
-                                8
-                            )
+                            *position,
+                            &"data".to_string(),
+                            &"double".to_string(),
+                            8,
                         ));
                         *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
-                    result.push_str(&format!(
-                        "\tvar {} = {};\n",
-                        CaseWrapper(expr.id.clone()).to_pascal_case(),
-                        CSharpGenerator::get_conversion_deserialization(
-                            &"data".to_string(),
-                            &"double".to_string(),
-                            *position,
-                            8
-                        )
+                    result.push_str(&CSharpGenerator::format_deserialization_variable(
+                        expr,
+                        *position,
+                        &"data".to_string(),
+                        &"double".to_string(),
+                        8,
                     ));
                     *position += expr.expr.get_type_length_bytes();
                 }
@@ -720,19 +715,80 @@ impl CSharpGenerator {
         result
     }
 
-    fn get_conversion_deserialization(
+    fn format_deserialization_variable(
+        expr: &TypeExpr,
+        position: usize,
+        data_variable: &String,
+        variable_type: &String,
+        variable_type_size: usize,
+    ) -> String {
+        format!(
+            "{}\n\tvar {} = {};\n",
+            CSharpGenerator::get_array_reversal_function(
+                data_variable,
+                position,
+                variable_type_size
+            ),
+            CaseWrapper(expr.id.clone()).to_pascal_case(),
+            CSharpGenerator::get_conversion_deserialization(
+                data_variable,
+                variable_type,
+                position,
+                variable_type_size
+            )
+        )
+    }
+
+    fn format_array_deserialization_variable(
+        expr: &TypeExpr,
+        i: usize,
+        position: usize,
+        data_variable: &String,
+        variable_type: &String,
+        variable_type_size: usize,
+    ) -> String {
+        format!(
+            "{}\n\tvar {}{} = {};\n",
+            CSharpGenerator::get_array_reversal_function(
+                data_variable,
+                position,
+                variable_type_size
+            ),
+            CaseWrapper(expr.id.clone()).to_pascal_case(),
+            i,
+            CSharpGenerator::get_conversion_deserialization(
+                data_variable,
+                variable_type,
+                position,
+                variable_type_size
+            )
+        )
+    }
+
+    fn get_array_reversal_function(
         variable: &String,
+        position: usize,
+        data_byte_size: usize,
+    ) -> String {
+        format!(
+            "\tArray.Reverse({}, {}, {});",
+            variable, position, data_byte_size
+        )
+    }
+
+    fn get_conversion_deserialization(
+        data_variable: &String,
         data_type: &String,
         position: usize,
         data_byte_size: usize,
     ) -> String {
         if data_type == "byte" {
-            format!("{}[{}]", variable, position)
+            format!("{}[{}]", data_variable, position)
         } else {
             format!(
                 "BitConverter.To{}({}[{}..{}])",
                 capitalize_first(data_type.clone()),
-                variable,
+                data_variable,
                 position,
                 position + data_byte_size
             )
