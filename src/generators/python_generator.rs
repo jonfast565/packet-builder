@@ -5,10 +5,6 @@ pub struct PythonGenerator {}
 impl PythonGenerator {
     pub fn generate(expr: &Vec<PacketExpr>) -> String {
         let mut result = String::new();
-        result.push_str(&PythonGenerator::create_headers());
-        result.push_str(&PythonGenerator::create_spacer());
-        result.push_str(&PythonGenerator::create_supporting_functions());
-        result.push_str(&PythonGenerator::create_spacer());
         for exp in expr {
             result.push_str(&PythonGenerator::build_struct(&exp, false));
             result.push_str(&PythonGenerator::create_serialization_functions(&exp));
@@ -16,25 +12,10 @@ impl PythonGenerator {
         result
     }
 
-    fn create_spacer() -> String {
-        "\n".to_string()
-    }
-
-    fn create_headers() -> String {
-        "import 
-        "
-        .to_string()
-    }
-
-    fn create_supporting_functions() -> String {
-        "\t
-        "
-        .to_string()
-    }
-
     fn create_serialization_functions(expr: &PacketExpr) -> String {
         format!(
-        "\tdef serialize(packet, verbose):
+        "
+        def serialize(packet, verbose):
         \t{}
 
         def deserialize(data, verbose):
@@ -55,34 +36,34 @@ impl PythonGenerator {
             .iter()
             .map(|x| match x.expr {
                 ExprNode::UnsignedInteger8(y) => {
-                    format!("{}: {}u8,", x.id, PythonGenerator::get_array_bounds(y))
+                    format!("self.{} = {}", x.id, match y { Some(_) => "[]", None => "0"})
                 }
                 ExprNode::Integer8(y) => {
-                    format!("{}: {}i8,", x.id, PythonGenerator::get_array_bounds(y))
+                    format!("self.{} = {}", x.id, match y { Some(_) => "[]", None => "0"})
                 }
                 ExprNode::UnsignedInteger16(y) => {
-                    format!("{}: {}u16,", x.id, PythonGenerator::get_array_bounds(y))
+                    format!("self.{} = {}", x.id, match y { Some(_) => "[]", None => "0"})
                 }
                 ExprNode::Integer16(y) => {
-                    format!("{}: {}i16,", x.id, PythonGenerator::get_array_bounds(y))
+                    format!("self.{} = {}", x.id, match y { Some(_) => "[]", None => "0"})
                 }
                 ExprNode::UnsignedInteger32(y) => {
-                    format!("{}: {}u32,", x.id, PythonGenerator::get_array_bounds(y))
+                    format!("self.{} = {}", x.id, match y { Some(_) => "[]", None => "0"})
                 }
                 ExprNode::Integer32(y) => {
-                    format!("{}: {}i32,", x.id, PythonGenerator::get_array_bounds(y))
+                    format!("self.{} = {}", x.id, match y { Some(_) => "[]", None => "0"})
                 }
                 ExprNode::UnsignedInteger64(y) => {
-                    format!("{}: {}u64,", x.id, PythonGenerator::get_array_bounds(y))
+                    format!("self.{} = {}", x.id, match y { Some(_) => "[]", None => "0"})
                 }
                 ExprNode::Integer64(y) => {
-                    format!("{}: {}i64,", x.id, PythonGenerator::get_array_bounds(y))
+                    format!("self.{} = {}", x.id, match y { Some(_) => "[]", None => "0"})
                 }
                 ExprNode::Float32(y) => {
-                    format!("{}: {}f32,", x.id, PythonGenerator::get_array_bounds(y))
+                    format!("self.{} = {}", x.id, match y { Some(_) => "[]", None => "0"})
                 }
                 ExprNode::Float64(y) => {
-                    format!("{}: {}f64;", x.id, PythonGenerator::get_array_bounds(y))
+                    format!("self.{} = {}", x.id, match y { Some(_) => "[]", None => "0"})
                 }
                 _ => "".to_string(),
             })
@@ -90,7 +71,7 @@ impl PythonGenerator {
 
         if !just_fields {
             format!(
-                "\tconst {} = struct {{\n {} \n\t}};\n\n",
+                "\tclass {}: \ndef __init__(self):\n\t\t {} \n\t \n\n",
                 expr.name, field_aggregation
             )
         } else {
