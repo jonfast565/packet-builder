@@ -79,13 +79,6 @@ impl PythonGenerator {
         }
     }
 
-    fn get_array_bounds(expr: Option<usize>) -> String {
-        match expr {
-            Some(x) => format!("[{}]", x.to_string()),
-            None => "".to_string(),
-        }
-    }
-
     fn create_deserializers(expr: &PacketExpr) -> String {
         let mut result = String::new();
         let mut counter = 0;
@@ -682,10 +675,10 @@ impl PythonGenerator {
         position: usize,
     ) -> String {
         format!(
-            "{}[{}] = @intCast(u16, {});\n",
+            "{}[{}] = {}\n",
             result_variable, position, data_variable
         ) + &format!(
-            "\t{}[{}] = @intCast(u16, {}) >> 8",
+            "\t{}[{}] = {} >> 8",
             result_variable,
             position + 1,
             data_variable
@@ -698,20 +691,20 @@ impl PythonGenerator {
         position: usize,
     ) -> String {
         format!(
-            "{}[{}] = @intCast(u32, {});\n",
+            "{}[{}] = {}\n",
             result_variable, position, data_variable
         ) + &format!(
-            "\t{}[{}] = @intCast(u32, {}) >> 8;\n",
+            "\t{}[{}] = {} >> 8\n",
             result_variable,
             position + 1,
             data_variable
         ) + &format!(
-            "\t{}[{}] = @intCast(u32, {}) >> 16;\n",
+            "\t{}[{}] = {} >> 16\n",
             result_variable,
             position + 2,
             data_variable
         ) + &format!(
-            "\t{}[{}] = @intCast(u32, {}) >> 24",
+            "\t{}[{}] = {} >> 24",
             result_variable,
             position + 3,
             data_variable
@@ -724,40 +717,40 @@ impl PythonGenerator {
         position: usize,
     ) -> String {
         format!(
-            "{}[{}] = @intCast(u64, {});\n",
+            "{}[{}] = {}\n",
             result_variable, position, data_variable
         ) + &format!(
-            "\t{}[{}] = @intCast(u64, {}) >> 8;\n",
+            "\t{}[{}] = {} >> 8\n",
             result_variable,
             position + 1,
             data_variable
         ) + &format!(
-            "\t{}[{}] = @intCast(u64, {}) >> 16;\n",
+            "\t{}[{}] = {} >> 16\n",
             result_variable,
             position + 2,
             data_variable
         ) + &format!(
-            "\t{}[{}] = @intCast(u64, {}) >> 24;\n",
+            "\t{}[{}] = {} >> 24\n",
             result_variable,
             position + 3,
             data_variable
         ) + &format!(
-            "\t{}[{}] = @intCast(u64, {}) >> 32;\n",
+            "\t{}[{}] = {} >> 32\n",
             result_variable,
             position + 4,
             data_variable
         ) + &format!(
-            "\t{}[{}] = @intCast(u64, {}) >> 40;\n",
+            "\t{}[{}] = {} >> 40\n",
             result_variable,
             position + 5,
             data_variable
         ) + &format!(
-            "\t{}[{}] = @intCast(u64, {}) >> 48;\n",
+            "\t{}[{}] = {} >> 48\n",
             result_variable,
             position + 6,
             data_variable
         ) + &format!(
-            "\t{}[{}] = @intCast(u64, {}) >> 56",
+            "\t{}[{}] = {} >> 56",
             result_variable,
             position + 7,
             data_variable
@@ -780,10 +773,10 @@ impl PythonGenerator {
         i: usize
     ) -> String {
         format!(
-            "{}[{}] = @intCast(u16, {}[{}]);\n",
+            "{}[{}] = {}[{}];\n",
             result_variable, position, data_variable, i
         ) + &format!(
-            "\t{}[{}] = @intCast(u16, {}[{}]) >> 8",
+            "\t{}[{}] = {}[{}] >> 8",
             result_variable,
             position + 1,
             data_variable, i
@@ -797,20 +790,20 @@ impl PythonGenerator {
         i: usize
     ) -> String {
         format!(
-            "{}[{}] = @intCast(u32, {}[{}]);\n",
+            "{}[{}] = {}[{}]\n",
             result_variable, position, data_variable, i
         ) + &format!(
-            "\t{}[{}] = @intCast(u32, {}[{}]) >> 8;\n",
+            "\t{}[{}] = {}[{}] >> 8\n",
             result_variable,
             position + 1,
             data_variable, i
         ) + &format!(
-            "\t{}[{}] = @intCast(u32, {}[{}]) >> 16;\n",
+            "\t{}[{}] = {}[{}] >> 16\n",
             result_variable,
             position + 2,
             data_variable, i
         ) + &format!(
-            "\t{}[{}] = @intCast(u32, {}[{}]) >> 24",
+            "\t{}[{}] = {}[{}] >> 24",
             result_variable,
             position + 3,
             data_variable, i
@@ -824,46 +817,46 @@ impl PythonGenerator {
         i: usize
     ) -> String {
         format!(
-            "{}[{}] = @intCast(u64, {}[{}]);\n",
+            "{}[{}] = {}[{}]\n",
             result_variable, position, data_variable, i
         ) + &format!(
-            "\t{}[{}] = @intCast(u64, {}[{}]) >> 8;\n",
+            "\t{}[{}] = {}[{}] >> 8\n",
             result_variable,
             position + 1,
             data_variable,
             i
         ) + &format!(
-            "\t{}[{}] = @intCast(u64, {}[{}]) >> 16;\n",
+            "\t{}[{}] = {}[{}] >> 16\n",
             result_variable,
             position + 2,
             data_variable,
             i
         ) + &format!(
-            "\t{}[{}] = @intCast(u64, {}[{}]) >> 24;\n",
+            "\t{}[{}] = {}[{}] >> 24\n",
             result_variable,
             position + 3,
             data_variable,
             i
         ) + &format!(
-            "\t{}[{}] = @intCast(u64, {}[{}]) >> 32;\n",
+            "\t{}[{}] = {}[{}] >> 32\n",
             result_variable,
             position + 4,
             data_variable,
             i
         ) + &format!(
-            "\t{}[{}] = @intCast(u64, {}[{}]) >> 40;\n",
+            "\t{}[{}] = {}[{}] >> 40\n",
             result_variable,
             position + 5,
             data_variable,
             i
         ) + &format!(
-            "\t{}[{}] = @intCast(u64, {}[{}]) >> 48;\n",
+            "\t{}[{}] = {}[{}] >> 48\n",
             result_variable,
             position + 6,
             data_variable,
             i
         ) + &format!(
-            "\t{}[{}] = @intCast(u64, {}[{}]) >> 56",
+            "\t{}[{}] = {}[{}] >> 56",
             result_variable,
             position + 7,
             data_variable,
@@ -877,8 +870,7 @@ impl PythonGenerator {
 
     fn get_16bit_conversion_deserialization(variable: &String, position: usize) -> String {
         format!(
-            "@intCast(u16, {}[{}]) | 
-                (@intCast(u16, {}[{}]) << 8)",
+            "{}[{}] | {}[{}] << 8",
             variable,
             position + 1,
             variable,
@@ -888,10 +880,7 @@ impl PythonGenerator {
 
     fn get_32bit_conversion_deserialization(variable: &String, position: usize) -> String {
         format!(
-            "@intCast(u32, {}[{}]) |
-                (@intCast(u32, {}[{}]) << 8) | 
-                (@intCast(u32, {}[{}]) << 16) |
-                (@intCast(u32, {}[{}]) << 24)",
+            "{}[{}] | {}[{}] << 8 | {}[{}] << 16 | {}[{}] << 24",
             variable,
             position + 3,
             variable,
@@ -905,14 +894,7 @@ impl PythonGenerator {
 
     fn get_64bit_conversion_deserialization(variable: &String, position: usize) -> String {
         format!(
-            "@intCast(u64, {}[{}]) |
-                (@intCast(u64, {}[{}]) << 8)  | 
-                (@intCast(u64, {}[{}]) << 16) |  
-                (@intCast(u64, {}[{}]) << 24) |
-                (@intCast(u64, {}[{}]) << 32) |
-                (@intCast(u64, {}[{}]) << 40) |
-                (@intCast(u64, {}[{}]) << 48) |
-                (@intCast(u64, {}[{}]) << 56)",
+            "{}[{}] | {}[{}] << 8 | {}[{}] << 16 | {}[{}] << 24 | {}[{}] << 32 | {}[{}] << 40 | {}[{}] << 48 | {}[{}] << 56",
             variable,
             position + 7,
             variable,
