@@ -155,13 +155,13 @@ impl ZigGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\t{}[{}];\n",
-                            &ZigGenerator::get_8bit_conversion_serialization(
+                            "\t{};\n",
+                            &ZigGenerator::get_8bit_conversion_serialization_array(
                                 &"data".to_string(),
                                 &expr.id,
                                 *position,
-                            ),
-                            i
+                                i
+                            )
                         ));
                         *position += expr.expr.get_type_length_bytes();
                     }
@@ -182,13 +182,13 @@ impl ZigGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\t{}[{}];\n",
-                            &ZigGenerator::get_8bit_conversion_serialization(
+                            "\t{};\n",
+                            &ZigGenerator::get_8bit_conversion_serialization_array(
                                 &"data".to_string(),
                                 &expr.id,
                                 *position,
-                            ),
-                            i
+                                i
+                            )
                         ));
                         *position += expr.expr.get_type_length_bytes();
                     }
@@ -209,13 +209,13 @@ impl ZigGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\t{}[{}];\n",
-                            &ZigGenerator::get_16bit_conversion_serialization(
+                            "\t{};\n",
+                            &ZigGenerator::get_16bit_conversion_serialization_array(
                                 &"data".to_string(),
                                 &expr.id,
                                 *position,
-                            ),
-                            i
+                                i
+                            )
                         ));
                         *position += expr.expr.get_type_length_bytes();
                     }
@@ -236,13 +236,13 @@ impl ZigGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\t{}[{}];\n",
-                            &ZigGenerator::get_16bit_conversion_serialization(
+                            "\t{};\n",
+                            &ZigGenerator::get_16bit_conversion_serialization_array(
                                 &"data".to_string(),
                                 &expr.id,
                                 *position,
-                            ),
-                            i
+                                i
+                            )
                         ));
                         *position += expr.expr.get_type_length_bytes();
                     }
@@ -263,13 +263,13 @@ impl ZigGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\t{}[{}];\n",
-                            &ZigGenerator::get_32bit_conversion_serialization(
+                            "\t{};\n",
+                            &ZigGenerator::get_32bit_conversion_serialization_array(
                                 &"data".to_string(),
                                 &expr.id,
                                 *position,
-                            ),
-                            i
+                                i
+                            )
                         ));
                         *position += expr.expr.get_type_length_bytes();
                     }
@@ -290,13 +290,13 @@ impl ZigGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\t{}[{}];\n",
-                            &ZigGenerator::get_32bit_conversion_serialization(
+                            "\t{};\n",
+                            &ZigGenerator::get_32bit_conversion_serialization_array(
                                 &"data".to_string(),
                                 &expr.id,
                                 *position,
-                            ),
-                            i
+                                i
+                            )
                         ));
                         *position += expr.expr.get_type_length_bytes();
                     }
@@ -317,13 +317,13 @@ impl ZigGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\t{}[{}];\n",
-                            &ZigGenerator::get_64bit_conversion_serialization(
+                            "\t{};\n",
+                            &ZigGenerator::get_64bit_conversion_serialization_array(
                                 &"data".to_string(),
                                 &expr.id,
                                 *position,
-                            ),
-                            i
+                                i
+                            )
                         ));
                         *position += expr.expr.get_type_length_bytes();
                     }
@@ -344,13 +344,13 @@ impl ZigGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\t{}[{}];\n",
-                            &ZigGenerator::get_64bit_conversion_serialization(
+                            "\t{};\n",
+                            &ZigGenerator::get_64bit_conversion_serialization_array(
                                 &"data".to_string(),
                                 &expr.id,
                                 *position,
-                            ),
-                            i
+                                i
+                            )
                         ));
                         *position += expr.expr.get_type_length_bytes();
                     }
@@ -371,13 +371,13 @@ impl ZigGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\t{}[{}];\n",
-                            &ZigGenerator::get_32bit_conversion_serialization(
+                            "\t{};\n",
+                            &ZigGenerator::get_32bit_conversion_serialization_array(
                                 &"data".to_string(),
                                 &expr.id,
                                 *position,
-                            ),
-                            i
+                                i
+                            )
                         ));
                         *position += expr.expr.get_type_length_bytes();
                     }
@@ -398,13 +398,13 @@ impl ZigGenerator {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
-                            "\t{}[{}];\n",
-                            &ZigGenerator::get_64bit_conversion_serialization(
+                            "\t{};\n",
+                            &ZigGenerator::get_64bit_conversion_serialization_array(
                                 &"data".to_string(),
                                 &expr.id,
                                 *position,
-                            ),
-                            i
+                                i
+                            )
                         ));
                         *position += expr.expr.get_type_length_bytes();
                     }
@@ -805,6 +805,113 @@ impl ZigGenerator {
             result_variable,
             position + 7,
             data_variable
+        )
+    }
+
+    fn get_8bit_conversion_serialization_array(
+        result_variable: &String,
+        data_variable: &String,
+        position: usize,
+        i: usize,
+    ) -> String {
+        format!("{}[{}] = {}[{}]", result_variable, position, data_variable, i)
+    }
+
+    fn get_16bit_conversion_serialization_array(
+        result_variable: &String,
+        data_variable: &String,
+        position: usize,
+        i: usize
+    ) -> String {
+        format!(
+            "{}[{}] = @intCast(u16, {}[{}]);\n",
+            result_variable, position, data_variable, i
+        ) + &format!(
+            "\t{}[{}] = @intCast(u16, {}[{}]) >> 8",
+            result_variable,
+            position + 1,
+            data_variable, i
+        )
+    }
+
+    fn get_32bit_conversion_serialization_array(
+        result_variable: &String,
+        data_variable: &String,
+        position: usize,
+        i: usize
+    ) -> String {
+        format!(
+            "{}[{}] = @intCast(u32, {}[{}]);\n",
+            result_variable, position, data_variable, i
+        ) + &format!(
+            "\t{}[{}] = @intCast(u32, {}[{}]) >> 8;\n",
+            result_variable,
+            position + 1,
+            data_variable, i
+        ) + &format!(
+            "\t{}[{}] = @intCast(u32, {}[{}]) >> 16;\n",
+            result_variable,
+            position + 2,
+            data_variable, i
+        ) + &format!(
+            "\t{}[{}] = @intCast(u32, {}[{}]) >> 24",
+            result_variable,
+            position + 3,
+            data_variable, i
+        )
+    }
+
+    fn get_64bit_conversion_serialization_array(
+        result_variable: &String,
+        data_variable: &String,
+        position: usize,
+        i: usize
+    ) -> String {
+        format!(
+            "{}[{}] = @intCast(u64, {}[{}]);\n",
+            result_variable, position, data_variable, i
+        ) + &format!(
+            "\t{}[{}] = @intCast(u64, {}[{}]) >> 8;\n",
+            result_variable,
+            position + 1,
+            data_variable,
+            i
+        ) + &format!(
+            "\t{}[{}] = @intCast(u64, {}[{}]) >> 16;\n",
+            result_variable,
+            position + 2,
+            data_variable,
+            i
+        ) + &format!(
+            "\t{}[{}] = @intCast(u64, {}[{}]) >> 24;\n",
+            result_variable,
+            position + 3,
+            data_variable,
+            i
+        ) + &format!(
+            "\t{}[{}] = @intCast(u64, {}[{}]) >> 32;\n",
+            result_variable,
+            position + 4,
+            data_variable,
+            i
+        ) + &format!(
+            "\t{}[{}] = @intCast(u64, {}[{}]) >> 40;\n",
+            result_variable,
+            position + 5,
+            data_variable,
+            i
+        ) + &format!(
+            "\t{}[{}] = @intCast(u64, {}[{}]) >> 48;\n",
+            result_variable,
+            position + 6,
+            data_variable,
+            i
+        ) + &format!(
+            "\t{}[{}] = @intCast(u64, {}[{}]) >> 56",
+            result_variable,
+            position + 7,
+            data_variable,
+            i
         )
     }
 
