@@ -22,6 +22,7 @@ impl CSharpGenerator {
     fn create_headers() -> String {
         "\t
         using System;
+        using System.Buffers.Binary;
         "
         .to_string()
     }
@@ -30,7 +31,7 @@ impl CSharpGenerator {
         format!(
             "
         public byte[] Serialize() {{
-            var data = new byte[] {{}};
+            var data = new byte[{}] {{}};
             {}
             return data;
         }}
@@ -43,8 +44,8 @@ impl CSharpGenerator {
             return result;
         }}
         ",
-            //expr.name,
-            "", //&CSharpGenerator::create_serializers(expr),
+            expr.get_total_length(),
+            &CSharpGenerator::create_serializers(expr),
             expr.name,
             &CSharpGenerator::create_deserializers(expr),
             expr.name,
@@ -237,20 +238,24 @@ impl CSharpGenerator {
             ExprNode::UnsignedInteger8(y) => match y {
                 Some(y) => {
                     for i in 0..y {
-                        result.push_str(&format!(
-                            "\tdata.write_{}(self.{}[{}]).unwrap();\n",
+                        result.push_str(&CSharpGenerator::format_array_serialization_variable(
+                            expr,
+                            i,
+                            *position,
+                            &"data".to_string(),
                             &"byte".to_string(),
-                            CaseWrapper(expr.id.clone()).to_pascal_case(),
-                            i
+                            1,
                         ));
                         *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
-                    result.push_str(&format!(
-                        "\tdata.write_{}(self.{}).unwrap();\n",
+                    result.push_str(&CSharpGenerator::format_serialization_variable(
+                        expr,
+                        *position,
+                        &"data".to_string(),
                         &"byte".to_string(),
-                        CaseWrapper(expr.id.clone()).to_pascal_case()
+                        1,
                     ));
                     *position += expr.expr.get_type_length_bytes();
                 }
@@ -258,20 +263,24 @@ impl CSharpGenerator {
             ExprNode::Integer8(y) => match y {
                 Some(y) => {
                     for i in 0..y {
-                        result.push_str(&format!(
-                            "\tdata.write_{}::<BigEndian>(self.{}[{}]).unwrap();\n",
+                        result.push_str(&CSharpGenerator::format_array_serialization_variable(
+                            expr,
+                            i,
+                            *position,
+                            &"data".to_string(),
                             &"sbyte".to_string(),
-                            CaseWrapper(expr.id.clone()).to_pascal_case(),
-                            i
+                            1,
                         ));
                         *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
-                    result.push_str(&format!(
-                        "\tdata.write_{}::<BigEndian>(self.{}).unwrap();\n",
+                    result.push_str(&CSharpGenerator::format_serialization_variable(
+                        expr,
+                        *position,
+                        &"data".to_string(),
                         &"sbyte".to_string(),
-                        CaseWrapper(expr.id.clone()).to_pascal_case()
+                        1,
                     ));
                     *position += expr.expr.get_type_length_bytes();
                 }
@@ -279,20 +288,24 @@ impl CSharpGenerator {
             ExprNode::UnsignedInteger16(y) => match y {
                 Some(y) => {
                     for i in 0..y {
-                        result.push_str(&format!(
-                            "\tdata.write_{}::<BigEndian>(self.{}[{}]).unwrap();\n",
+                        result.push_str(&CSharpGenerator::format_array_serialization_variable(
+                            expr,
+                            i,
+                            *position,
+                            &"data".to_string(),
                             &"ushort".to_string(),
-                            CaseWrapper(expr.id.clone()).to_pascal_case(),
-                            i
+                            2,
                         ));
                         *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
-                    result.push_str(&format!(
-                        "\tdata.write_{}::<BigEndian>(self.{}).unwrap();\n",
+                    result.push_str(&CSharpGenerator::format_serialization_variable(
+                        expr,
+                        *position,
+                        &"data".to_string(),
                         &"ushort".to_string(),
-                        CaseWrapper(expr.id.clone()).to_pascal_case()
+                        2,
                     ));
                     *position += expr.expr.get_type_length_bytes();
                 }
@@ -300,20 +313,24 @@ impl CSharpGenerator {
             ExprNode::Integer16(y) => match y {
                 Some(y) => {
                     for i in 0..y {
-                        result.push_str(&format!(
-                            "\tdata.write_{}::<BigEndian>(self.{}[{}]).unwrap();\n",
+                        result.push_str(&CSharpGenerator::format_array_serialization_variable(
+                            expr,
+                            i,
+                            *position,
+                            &"data".to_string(),
                             &"short".to_string(),
-                            CaseWrapper(expr.id.clone()).to_pascal_case(),
-                            i
+                            2,
                         ));
                         *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
-                    result.push_str(&format!(
-                        "\tdata.write_{}::<BigEndian>(self.{}).unwrap();\n",
+                    result.push_str(&CSharpGenerator::format_serialization_variable(
+                        expr,
+                        *position,
+                        &"data".to_string(),
                         &"short".to_string(),
-                        CaseWrapper(expr.id.clone()).to_pascal_case()
+                        2,
                     ));
                     *position += expr.expr.get_type_length_bytes();
                 }
@@ -321,20 +338,24 @@ impl CSharpGenerator {
             ExprNode::UnsignedInteger32(y) => match y {
                 Some(y) => {
                     for i in 0..y {
-                        result.push_str(&format!(
-                            "\tdata.write_{}::<BigEndian>(self.{}[{}]).unwrap();\n",
+                        result.push_str(&CSharpGenerator::format_array_serialization_variable(
+                            expr,
+                            i,
+                            *position,
+                            &"data".to_string(),
                             &"uint".to_string(),
-                            CaseWrapper(expr.id.clone()).to_pascal_case(),
-                            i
+                            4,
                         ));
                         *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
-                    result.push_str(&format!(
-                        "\tdata.write_{}::<BigEndian>(self.{}).unwrap();\n",
+                    result.push_str(&CSharpGenerator::format_serialization_variable(
+                        expr,
+                        *position,
+                        &"data".to_string(),
                         &"uint".to_string(),
-                        CaseWrapper(expr.id.clone()).to_pascal_case()
+                        4,
                     ));
                     *position += expr.expr.get_type_length_bytes();
                 }
@@ -342,20 +363,24 @@ impl CSharpGenerator {
             ExprNode::Integer32(y) => match y {
                 Some(y) => {
                     for i in 0..y {
-                        result.push_str(&format!(
-                            "\tdata.write_{}::<BigEndian>(self.{}[{}]).unwrap();\n",
+                        result.push_str(&CSharpGenerator::format_array_serialization_variable(
+                            expr,
+                            i,
+                            *position,
+                            &"data".to_string(),
                             &"int".to_string(),
-                            CaseWrapper(expr.id.clone()).to_pascal_case(),
-                            i
+                            4,
                         ));
                         *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
-                    result.push_str(&format!(
-                        "\tdata.write_{}::<BigEndian>(self.{}).unwrap();\n",
+                    result.push_str(&CSharpGenerator::format_serialization_variable(
+                        expr,
+                        *position,
+                        &"data".to_string(),
                         &"int".to_string(),
-                        CaseWrapper(expr.id.clone()).to_pascal_case()
+                        4,
                     ));
                     *position += expr.expr.get_type_length_bytes();
                 }
@@ -363,20 +388,24 @@ impl CSharpGenerator {
             ExprNode::UnsignedInteger64(y) => match y {
                 Some(y) => {
                     for i in 0..y {
-                        result.push_str(&format!(
-                            "\tdata.write_{}::<BigEndian>(self.{}[{}]).unwrap();\n",
+                        result.push_str(&CSharpGenerator::format_array_serialization_variable(
+                            expr,
+                            i,
+                            *position,
+                            &"data".to_string(),
                             &"ulong".to_string(),
-                            CaseWrapper(expr.id.clone()).to_pascal_case(),
-                            i
+                            8,
                         ));
                         *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
-                    result.push_str(&format!(
-                        "\tdata.write_{}::<BigEndian>(self.{}).unwrap();\n",
+                    result.push_str(&CSharpGenerator::format_serialization_variable(
+                        expr,
+                        *position,
+                        &"data".to_string(),
                         &"ulong".to_string(),
-                        CaseWrapper(expr.id.clone()).to_pascal_case()
+                        8,
                     ));
                     *position += expr.expr.get_type_length_bytes();
                 }
@@ -384,20 +413,24 @@ impl CSharpGenerator {
             ExprNode::Integer64(y) => match y {
                 Some(y) => {
                     for i in 0..y {
-                        result.push_str(&format!(
-                            "\tdata.write_{}::<BigEndian>(self.{}[{}]).unwrap();\n",
+                        result.push_str(&CSharpGenerator::format_array_serialization_variable(
+                            expr,
+                            i,
+                            *position,
+                            &"data".to_string(),
                             &"long".to_string(),
-                            CaseWrapper(expr.id.clone()).to_pascal_case(),
-                            i
+                            8,
                         ));
                         *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
-                    result.push_str(&format!(
-                        "\tdata.write_{}::<BigEndian>(self.{}).unwrap();\n",
+                    result.push_str(&CSharpGenerator::format_serialization_variable(
+                        expr,
+                        *position,
+                        &"data".to_string(),
                         &"long".to_string(),
-                        CaseWrapper(expr.id.clone()).to_pascal_case()
+                        8,
                     ));
                     *position += expr.expr.get_type_length_bytes();
                 }
@@ -405,20 +438,24 @@ impl CSharpGenerator {
             ExprNode::Float32(y) => match y {
                 Some(y) => {
                     for i in 0..y {
-                        result.push_str(&format!(
-                            "\tdata.write_{}::<BigEndian>(self.{}[{}]).unwrap();\n",
+                        result.push_str(&CSharpGenerator::format_array_serialization_variable(
+                            expr,
+                            i,
+                            *position,
+                            &"data".to_string(),
                             &"float".to_string(),
-                            CaseWrapper(expr.id.clone()).to_pascal_case(),
-                            i
+                            4,
                         ));
                         *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
-                    result.push_str(&format!(
-                        "\tdata.write_{}::<BigEndian>(self.{}).unwrap();\n",
+                    result.push_str(&CSharpGenerator::format_serialization_variable(
+                        expr,
+                        *position,
+                        &"data".to_string(),
                         &"float".to_string(),
-                        CaseWrapper(expr.id.clone()).to_pascal_case()
+                        4,
                     ));
                     *position += expr.expr.get_type_length_bytes();
                 }
@@ -426,20 +463,24 @@ impl CSharpGenerator {
             ExprNode::Float64(y) => match y {
                 Some(y) => {
                     for i in 0..y {
-                        result.push_str(&format!(
-                            "\tdata.write_{}::<BigEndian>(self.{}[{}]).unwrap();\n",
+                        result.push_str(&CSharpGenerator::format_array_serialization_variable(
+                            expr,
+                            i,
+                            *position,
+                            &"data".to_string(),
                             &"double".to_string(),
-                            CaseWrapper(expr.id.clone()).to_pascal_case(),
-                            i
+                            8,
                         ));
                         *position += expr.expr.get_type_length_bytes();
                     }
                 }
                 None => {
-                    result.push_str(&format!(
-                        "\tdata.write_{}::<BigEndian>(self.{}).unwrap();\n",
+                    result.push_str(&CSharpGenerator::format_serialization_variable(
+                        expr,
+                        *position,
+                        &"data".to_string(),
                         &"double".to_string(),
-                        CaseWrapper(expr.id.clone()).to_pascal_case()
+                        8,
                     ));
                     *position += expr.expr.get_type_length_bytes();
                 }
@@ -723,12 +764,7 @@ impl CSharpGenerator {
         variable_type_size: usize,
     ) -> String {
         format!(
-            "{}\n\tvar {} = {};\n",
-            CSharpGenerator::get_array_reversal_function(
-                data_variable,
-                position,
-                variable_type_size
-            ),
+            "\tvar {} = {};\n",
             CaseWrapper(expr.id.clone()).to_pascal_case(),
             CSharpGenerator::get_conversion_deserialization(
                 data_variable,
@@ -748,12 +784,7 @@ impl CSharpGenerator {
         variable_type_size: usize,
     ) -> String {
         format!(
-            "{}\n\tvar {}{} = {};\n",
-            CSharpGenerator::get_array_reversal_function(
-                data_variable,
-                position,
-                variable_type_size
-            ),
+            "\tvar {}{} = {};\n",
             CaseWrapper(expr.id.clone()).to_pascal_case(),
             i,
             CSharpGenerator::get_conversion_deserialization(
@@ -765,15 +796,67 @@ impl CSharpGenerator {
         )
     }
 
-    fn get_array_reversal_function(
-        variable: &String,
+    fn format_serialization_variable(
+        expr: &TypeExpr,
+        position: usize,
+        data_variable: &String,
+        variable_type: &String,
+        variable_type_size: usize,
+    ) -> String {
+        format!(
+            "\tvar {} = new byte[{}];\n\t{} = {};\n",
+            CaseWrapper(expr.id.clone()).to_camel_case(),
+            variable_type_size,
+            CSharpGenerator::get_conversion_serialization(
+                data_variable,
+                variable_type,
+                position,
+                variable_type_size
+            ),
+            CaseWrapper(expr.id.clone()).to_camel_case()
+        )
+    }
+
+    fn format_array_serialization_variable(
+        expr: &TypeExpr,
+        i: usize,
+        position: usize,
+        data_variable: &String,
+        variable_type: &String,
+        variable_type_size: usize,
+    ) -> String {
+        format!(
+            "\tvar {}_{} = new byte[{}];\n\t{} = {};\n",
+            CaseWrapper(expr.id.clone()).to_camel_case(),
+            i,
+            variable_type_size,
+            CSharpGenerator::get_conversion_serialization(
+                data_variable,
+                variable_type,
+                position,
+                variable_type_size
+            ),
+            CaseWrapper(expr.id.clone()).to_camel_case()
+        )
+    }
+
+    fn get_conversion_serialization(
+        data_variable: &String,
+        data_type: &String,
         position: usize,
         data_byte_size: usize,
     ) -> String {
-        format!(
-            "\tArray.Reverse({}, {}, {});",
-            variable, position, data_byte_size
-        )
+        if data_type == "byte" {
+            format!("{}[{}]", data_variable, position)
+        } else {
+            format!(
+                "BinaryPrimitives.Write{}LittleEndian({}[{}..{}])",
+                capitalize_first(data_type.clone()),
+                data_variable,
+                position,
+                position + data_byte_size
+            )
+        }
     }
 
     fn get_conversion_deserialization(
@@ -786,7 +869,7 @@ impl CSharpGenerator {
             format!("{}[{}]", data_variable, position)
         } else {
             format!(
-                "BitConverter.To{}({}[{}..{}])",
+                "BinaryPrimitives.Read{}LittleEndian({}[{}..{}])",
                 capitalize_first(data_type.clone()),
                 data_variable,
                 position,
