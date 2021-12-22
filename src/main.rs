@@ -15,6 +15,7 @@ use crate::generators::rust_generator::RustGenerator;
 use crate::generators::zig_generator::ZigGenerator;
 use crate::generators::net_generator::CSharpGenerator;
 use crate::generators::python_generator::PythonGenerator;
+use crate::generators::go_generator::GoGenerator;
 
 use std::fs;
 use std::fs::File;
@@ -26,13 +27,14 @@ fn main() -> std::io::Result<()> {
         fs::read_to_string("./test_packet.packet").expect("Something went wrong reading the file");
     let packet = parser::parse_file(&file).unwrap();
 
-    for item in vec!["c", "rust", "zig", "net", "python"] {
+    for item in vec!["c", "rust", "zig", "net", "python", "go"] {
         let packet_result = match item {
             "c" => CGenerator::generate(&packet),
             "rust" => RustGenerator::generate(&packet),
             "zig" => ZigGenerator::generate(&packet),
             "net" => CSharpGenerator::generate(&packet),
             "python" => PythonGenerator::generate(&packet),
+            "go" => GoGenerator::generate(&packet),
             _ => String::new(),
         };
         let file_extension = match item {
@@ -41,6 +43,7 @@ fn main() -> std::io::Result<()> {
             "zig" => "zig",
             "net" => "cs",
             "python" => "py",
+            "go" => "go",
             _ => "",
         };
 
