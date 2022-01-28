@@ -1,0 +1,25 @@
+package packets
+
+import ()
+
+type {{type}} struct {
+    {% for definition in definitions %}
+        {{definition.name}} {{definition.type}}
+    {% endfor %}
+}
+
+/*
+func (*{{type}}) Serialize() []byte {{
+    var data = make([]byte, {{length}})
+    
+    return data
+}}
+*/
+
+func Deserialize{{type}}(data []byte) *{{type}} {{
+    var packet = new({{type}})
+    {% for definition in definitions %}
+        {{definition.name}} {{definition.type}}
+    {% endfor %}
+    return packet
+}}

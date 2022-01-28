@@ -668,9 +668,9 @@ impl GoGenerator {
             "uint16({}[{}]) | 
                 uint16({}[{}]) << 8",
             variable,
-            position + 1,
+            position + 0,
             variable,
-            position,
+            position + 1,
         )
     }
 
@@ -681,13 +681,13 @@ impl GoGenerator {
                 uint32({}[{}]) << 16 |
                 uint32({}[{}]) << 24",
             variable,
-            position + 3,
-            variable,
-            position + 2,
+            position + 0,
             variable,
             position + 1,
             variable,
-            position
+            position + 2,
+            variable,
+            position + 3
         )
     }
 
@@ -702,21 +702,21 @@ impl GoGenerator {
                 uint64({}[{}]) << 48 |
                 uint64({}[{}]) << 56",
             variable,
-            position + 7,
-            variable,
-            position + 6,
-            variable,
-            position + 5,
-            variable,
-            position + 4,
-            variable,
-            position + 3,
-            variable,
-            position + 2,
+            position + 0,
             variable,
             position + 1,
             variable,
-            position
+            position + 2,
+            variable,
+            position + 3,
+            variable,
+            position + 4,
+            variable,
+            position + 5,
+            variable,
+            position + 6,
+            variable,
+            position + 7
         )
     }
 }
