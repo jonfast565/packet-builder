@@ -1,14 +1,14 @@
-use crate::models::parsing_models::{CalculatedField, ExprNode, PacketExpr, TypeExpr};
+use crate::models::parsing_models::{CalculatedField, ExprNode, PacketExpr, TypeExpr, PacketExprList, TypeNode};
 
 pub struct RustGenerator {}
 
 impl RustGenerator {
-    pub fn generate(expr: &Vec<PacketExpr>) -> String {
+    pub fn generate(expr: &PacketExprList) -> String {
         let mut result = String::new();
         result.push_str(&RustGenerator::create_headers());
         result.push_str(&RustGenerator::create_spacer());
         result.push_str(&RustGenerator::create_spacer());
-        for exp in expr {
+        for exp in &expr.packets {
             result.push_str(&RustGenerator::build_struct(&exp, false));
             result.push_str(&RustGenerator::create_serialization_functions(&exp));
         }
@@ -63,34 +63,34 @@ impl RustGenerator {
             .fields
             .iter()
             .map(|x| match x.expr {
-                ExprNode::UnsignedInteger8(y) => {
+                TypeNode::UnsignedInteger8(y) => {
                     format!("{}: {},", x.id, RustGenerator::get_array_bounds("u8", y))
                 }
-                ExprNode::Integer8(y) => {
+                TypeNode::Integer8(y) => {
                     format!("{}: {},", x.id, RustGenerator::get_array_bounds("i8", y))
                 }
-                ExprNode::UnsignedInteger16(y) => {
+                TypeNode::UnsignedInteger16(y) => {
                     format!("{}: {},", x.id, RustGenerator::get_array_bounds("u16", y))
                 }
-                ExprNode::Integer16(y) => {
+                TypeNode::Integer16(y) => {
                     format!("{}: {},", x.id, RustGenerator::get_array_bounds("i16", y))
                 }
-                ExprNode::UnsignedInteger32(y) => {
+                TypeNode::UnsignedInteger32(y) => {
                     format!("{}: {},", x.id, RustGenerator::get_array_bounds("u32", y))
                 }
-                ExprNode::Integer32(y) => {
+                TypeNode::Integer32(y) => {
                     format!("{}: {},", x.id, RustGenerator::get_array_bounds("i32", y))
                 }
-                ExprNode::UnsignedInteger64(y) => {
+                TypeNode::UnsignedInteger64(y) => {
                     format!("{}: {},", x.id, RustGenerator::get_array_bounds("u64", y))
                 }
-                ExprNode::Integer64(y) => {
+                TypeNode::Integer64(y) => {
                     format!("{}: {},", x.id, RustGenerator::get_array_bounds("i64", y))
                 }
-                ExprNode::Float32(y) => {
+                TypeNode::Float32(y) => {
                     format!("{}: {},", x.id, RustGenerator::get_array_bounds("f32", y))
                 }
-                ExprNode::Float64(y) => {
+                TypeNode::Float64(y) => {
                     format!("{}: {},", x.id, RustGenerator::get_array_bounds("f64", y))
                 }
                 _ => "".to_string(),
@@ -319,16 +319,16 @@ impl RustGenerator {
     fn get_field_deserializer_builder(expr: &TypeExpr) -> String {
         let mut result = String::new();
         match expr.expr {
-            ExprNode::UnsignedInteger8(y)
-            | ExprNode::Integer8(y)
-            | ExprNode::UnsignedInteger16(y)
-            | ExprNode::Integer16(y)
-            | ExprNode::UnsignedInteger32(y)
-            | ExprNode::Integer32(y)
-            | ExprNode::UnsignedInteger64(y)
-            | ExprNode::Integer64(y)
-            | ExprNode::Float32(y)
-            | ExprNode::Float64(y) => match y {
+            TypeNode::UnsignedInteger8(y)
+            | TypeNode::Integer8(y)
+            | TypeNode::UnsignedInteger16(y)
+            | TypeNode::Integer16(y)
+            | TypeNode::UnsignedInteger32(y)
+            | TypeNode::Integer32(y)
+            | TypeNode::UnsignedInteger64(y)
+            | TypeNode::Integer64(y)
+            | TypeNode::Float32(y)
+            | TypeNode::Float64(y) => match y {
                 Some(y) => {
                     let mut array = String::new();
                     for i in 0..y {
@@ -343,7 +343,7 @@ impl RustGenerator {
                     result.push_str(&format!("{}: {},\n", expr.id, expr.id).to_string());
                 }
             },
-            ExprNode::MacAddress => {}
+            TypeNode::MacAddress => {}
             _ => (),
         };
 
@@ -362,7 +362,7 @@ impl RustGenerator {
     fn get_field_serializer(expr: &TypeExpr, position: &mut usize) -> String {
         let mut result = String::new();
         match expr.expr {
-            ExprNode::UnsignedInteger8(y) => match y {
+            TypeNode::UnsignedInteger8(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -383,7 +383,7 @@ impl RustGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Integer8(y) => match y {
+            TypeNode::Integer8(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -404,7 +404,7 @@ impl RustGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::UnsignedInteger16(y) => match y {
+            TypeNode::UnsignedInteger16(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -425,7 +425,7 @@ impl RustGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Integer16(y) => match y {
+            TypeNode::Integer16(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -446,7 +446,7 @@ impl RustGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::UnsignedInteger32(y) => match y {
+            TypeNode::UnsignedInteger32(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -467,7 +467,7 @@ impl RustGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Integer32(y) => match y {
+            TypeNode::Integer32(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -488,7 +488,7 @@ impl RustGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::UnsignedInteger64(y) => match y {
+            TypeNode::UnsignedInteger64(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -509,7 +509,7 @@ impl RustGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Integer64(y) => match y {
+            TypeNode::Integer64(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -530,7 +530,7 @@ impl RustGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Float32(y) => match y {
+            TypeNode::Float32(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -551,7 +551,7 @@ impl RustGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Float64(y) => match y {
+            TypeNode::Float64(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -572,7 +572,7 @@ impl RustGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::MacAddress => {
+            TypeNode::MacAddress => {
                 result.push_str(&format!("// Not implemented {};\n", &"data".to_string()));
                 *position += expr.expr.get_type_length_bytes();
             }
@@ -584,7 +584,7 @@ impl RustGenerator {
     fn get_field_deserializer(expr: &TypeExpr, position: &mut usize) -> String {
         let mut result = String::new();
         match expr.expr {
-            ExprNode::UnsignedInteger8(y) => match y {
+            TypeNode::UnsignedInteger8(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -615,7 +615,7 @@ impl RustGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Integer8(y) => match y {
+            TypeNode::Integer8(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -646,7 +646,7 @@ impl RustGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::UnsignedInteger16(y) => match y {
+            TypeNode::UnsignedInteger16(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -677,7 +677,7 @@ impl RustGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Integer16(y) => match y {
+            TypeNode::Integer16(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -708,7 +708,7 @@ impl RustGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::UnsignedInteger32(y) => match y {
+            TypeNode::UnsignedInteger32(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -739,7 +739,7 @@ impl RustGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Integer32(y) => match y {
+            TypeNode::Integer32(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -770,7 +770,7 @@ impl RustGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::UnsignedInteger64(y) => match y {
+            TypeNode::UnsignedInteger64(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -801,7 +801,7 @@ impl RustGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Integer64(y) => match y {
+            TypeNode::Integer64(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -832,7 +832,7 @@ impl RustGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Float32(y) => match y {
+            TypeNode::Float32(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -863,7 +863,7 @@ impl RustGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Float64(y) => match y {
+            TypeNode::Float64(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -894,7 +894,7 @@ impl RustGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::MacAddress => {
+            TypeNode::MacAddress => {
                 result.push_str(&format!("// Not implemented {};\n", &"data".to_string()));
                 *position += expr.expr.get_type_length_bytes();
             }

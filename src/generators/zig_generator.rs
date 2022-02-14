@@ -1,15 +1,15 @@
-use crate::models::parsing_models::{ExprNode, PacketExpr, TypeExpr};
+use crate::models::parsing_models::{ExprNode, PacketExpr, TypeExpr, PacketExprList, TypeNode};
 
 pub struct ZigGenerator {}
 
 impl ZigGenerator {
-    pub fn generate(expr: &Vec<PacketExpr>) -> String {
+    pub fn generate(expr: &PacketExprList) -> String {
         let mut result = String::new();
         result.push_str(&ZigGenerator::create_headers());
         result.push_str(&ZigGenerator::create_spacer());
         result.push_str(&ZigGenerator::create_supporting_functions());
         result.push_str(&ZigGenerator::create_spacer());
-        for exp in expr {
+        for exp in &expr.packets {
             result.push_str(&ZigGenerator::build_struct(&exp, false));
             result.push_str(&ZigGenerator::create_serialization_functions(&exp));
         }
@@ -79,34 +79,34 @@ impl ZigGenerator {
             .fields
             .iter()
             .map(|x| match x.expr {
-                ExprNode::UnsignedInteger8(y) => {
+                TypeNode::UnsignedInteger8(y) => {
                     format!("{}: {}u8,", x.id, ZigGenerator::get_array_bounds(y))
                 }
-                ExprNode::Integer8(y) => {
+                TypeNode::Integer8(y) => {
                     format!("{}: {}i8,", x.id, ZigGenerator::get_array_bounds(y))
                 }
-                ExprNode::UnsignedInteger16(y) => {
+                TypeNode::UnsignedInteger16(y) => {
                     format!("{}: {}u16,", x.id, ZigGenerator::get_array_bounds(y))
                 }
-                ExprNode::Integer16(y) => {
+                TypeNode::Integer16(y) => {
                     format!("{}: {}i16,", x.id, ZigGenerator::get_array_bounds(y))
                 }
-                ExprNode::UnsignedInteger32(y) => {
+                TypeNode::UnsignedInteger32(y) => {
                     format!("{}: {}u32,", x.id, ZigGenerator::get_array_bounds(y))
                 }
-                ExprNode::Integer32(y) => {
+                TypeNode::Integer32(y) => {
                     format!("{}: {}i32,", x.id, ZigGenerator::get_array_bounds(y))
                 }
-                ExprNode::UnsignedInteger64(y) => {
+                TypeNode::UnsignedInteger64(y) => {
                     format!("{}: {}u64,", x.id, ZigGenerator::get_array_bounds(y))
                 }
-                ExprNode::Integer64(y) => {
+                TypeNode::Integer64(y) => {
                     format!("{}: {}i64,", x.id, ZigGenerator::get_array_bounds(y))
                 }
-                ExprNode::Float32(y) => {
+                TypeNode::Float32(y) => {
                     format!("{}: {}f32,", x.id, ZigGenerator::get_array_bounds(y))
                 }
-                ExprNode::Float64(y) => {
+                TypeNode::Float64(y) => {
                     format!("{}: {}f64;", x.id, ZigGenerator::get_array_bounds(y))
                 }
                 _ => "".to_string(),
@@ -151,7 +151,7 @@ impl ZigGenerator {
     fn get_field_serializer(expr: &TypeExpr, position: &mut usize) -> String {
         let mut result = String::new();
         match expr.expr {
-            ExprNode::UnsignedInteger8(y) => match y {
+            TypeNode::UnsignedInteger8(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -178,7 +178,7 @@ impl ZigGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Integer8(y) => match y {
+            TypeNode::Integer8(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -205,7 +205,7 @@ impl ZigGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::UnsignedInteger16(y) => match y {
+            TypeNode::UnsignedInteger16(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -232,7 +232,7 @@ impl ZigGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Integer16(y) => match y {
+            TypeNode::Integer16(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -259,7 +259,7 @@ impl ZigGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::UnsignedInteger32(y) => match y {
+            TypeNode::UnsignedInteger32(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -286,7 +286,7 @@ impl ZigGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Integer32(y) => match y {
+            TypeNode::Integer32(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -313,7 +313,7 @@ impl ZigGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::UnsignedInteger64(y) => match y {
+            TypeNode::UnsignedInteger64(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -340,61 +340,7 @@ impl ZigGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Integer64(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\t{};\n",
-                            &ZigGenerator::get_64bit_conversion_serialization_array(
-                                &"data".to_string(),
-                                &expr.id,
-                                *position,
-                                i
-                            )
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\t{};\n",
-                        &ZigGenerator::get_64bit_conversion_serialization(
-                            &"data".to_string(),
-                            &expr.id,
-                            *position,
-                        )
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            ExprNode::Float32(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\t{};\n",
-                            &ZigGenerator::get_32bit_conversion_serialization_array(
-                                &"data".to_string(),
-                                &expr.id,
-                                *position,
-                                i
-                            )
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\t{};\n",
-                        &ZigGenerator::get_32bit_conversion_serialization(
-                            &"data".to_string(),
-                            &expr.id,
-                            *position,
-                        )
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            ExprNode::Float64(y) => match y {
+            TypeNode::Integer64(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -421,7 +367,61 @@ impl ZigGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::MacAddress => {
+            TypeNode::Float32(y) => match y {
+                Some(y) => {
+                    for i in 0..y {
+                        result.push_str(&format!(
+                            "\t{};\n",
+                            &ZigGenerator::get_32bit_conversion_serialization_array(
+                                &"data".to_string(),
+                                &expr.id,
+                                *position,
+                                i
+                            )
+                        ));
+                        *position += expr.expr.get_type_length_bytes();
+                    }
+                }
+                None => {
+                    result.push_str(&format!(
+                        "\t{};\n",
+                        &ZigGenerator::get_32bit_conversion_serialization(
+                            &"data".to_string(),
+                            &expr.id,
+                            *position,
+                        )
+                    ));
+                    *position += expr.expr.get_type_length_bytes();
+                }
+            },
+            TypeNode::Float64(y) => match y {
+                Some(y) => {
+                    for i in 0..y {
+                        result.push_str(&format!(
+                            "\t{};\n",
+                            &ZigGenerator::get_64bit_conversion_serialization_array(
+                                &"data".to_string(),
+                                &expr.id,
+                                *position,
+                                i
+                            )
+                        ));
+                        *position += expr.expr.get_type_length_bytes();
+                    }
+                }
+                None => {
+                    result.push_str(&format!(
+                        "\t{};\n",
+                        &ZigGenerator::get_64bit_conversion_serialization(
+                            &"data".to_string(),
+                            &expr.id,
+                            *position,
+                        )
+                    ));
+                    *position += expr.expr.get_type_length_bytes();
+                }
+            },
+            TypeNode::MacAddress => {
                 result.push_str(&format!("// Not implemented {};\n", &"data".to_string()));
                 *position += expr.expr.get_type_length_bytes();
             }
@@ -433,7 +433,7 @@ impl ZigGenerator {
     fn get_field_deserializer(expr: &TypeExpr, position: &mut usize) -> String {
         let mut result = String::new();
         match expr.expr {
-            ExprNode::UnsignedInteger8(y) => match y {
+            TypeNode::UnsignedInteger8(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -460,7 +460,7 @@ impl ZigGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Integer8(y) => match y {
+            TypeNode::Integer8(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -487,7 +487,7 @@ impl ZigGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::UnsignedInteger16(y) => match y {
+            TypeNode::UnsignedInteger16(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -514,7 +514,7 @@ impl ZigGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Integer16(y) => match y {
+            TypeNode::Integer16(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -541,7 +541,7 @@ impl ZigGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::UnsignedInteger32(y) => match y {
+            TypeNode::UnsignedInteger32(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -568,7 +568,7 @@ impl ZigGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Integer32(y) => match y {
+            TypeNode::Integer32(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -595,7 +595,7 @@ impl ZigGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::UnsignedInteger64(y) => match y {
+            TypeNode::UnsignedInteger64(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -622,7 +622,7 @@ impl ZigGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Integer64(y) => match y {
+            TypeNode::Integer64(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -649,7 +649,7 @@ impl ZigGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Float32(y) => match y {
+            TypeNode::Float32(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -676,7 +676,7 @@ impl ZigGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Float64(y) => match y {
+            TypeNode::Float64(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -703,7 +703,7 @@ impl ZigGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::MacAddress => {
+            TypeNode::MacAddress => {
                 result.push_str(&format!("// Not implemented {};\n", &"data".to_string()));
                 *position += expr.expr.get_type_length_bytes();
             }

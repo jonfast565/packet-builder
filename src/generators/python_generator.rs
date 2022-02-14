@@ -1,11 +1,11 @@
-use crate::models::parsing_models::{ExprNode, PacketExpr, TypeExpr};
+use crate::models::parsing_models::{ExprNode, PacketExpr, TypeExpr, PacketExprList, TypeNode};
 
 pub struct PythonGenerator {}
 
 impl PythonGenerator {
-    pub fn generate(expr: &Vec<PacketExpr>) -> String {
+    pub fn generate(expr: &PacketExprList) -> String {
         let mut result = String::new();
-        for exp in expr {
+        for exp in &expr.packets {
             result.push_str(&PythonGenerator::build_struct(&exp, false));
             result.push_str(&PythonGenerator::create_serialization_functions(&exp));
         }
@@ -35,34 +35,34 @@ impl PythonGenerator {
             .fields
             .iter()
             .map(|x| match x.expr {
-                ExprNode::UnsignedInteger8(y) => {
+                TypeNode::UnsignedInteger8(y) => {
                     format!("self.{} = {}", x.id, match y { Some(_) => "[]", None => "0"})
                 }
-                ExprNode::Integer8(y) => {
+                TypeNode::Integer8(y) => {
                     format!("self.{} = {}", x.id, match y { Some(_) => "[]", None => "0"})
                 }
-                ExprNode::UnsignedInteger16(y) => {
+                TypeNode::UnsignedInteger16(y) => {
                     format!("self.{} = {}", x.id, match y { Some(_) => "[]", None => "0"})
                 }
-                ExprNode::Integer16(y) => {
+                TypeNode::Integer16(y) => {
                     format!("self.{} = {}", x.id, match y { Some(_) => "[]", None => "0"})
                 }
-                ExprNode::UnsignedInteger32(y) => {
+                TypeNode::UnsignedInteger32(y) => {
                     format!("self.{} = {}", x.id, match y { Some(_) => "[]", None => "0"})
                 }
-                ExprNode::Integer32(y) => {
+                TypeNode::Integer32(y) => {
                     format!("self.{} = {}", x.id, match y { Some(_) => "[]", None => "0"})
                 }
-                ExprNode::UnsignedInteger64(y) => {
+                TypeNode::UnsignedInteger64(y) => {
                     format!("self.{} = {}", x.id, match y { Some(_) => "[]", None => "0"})
                 }
-                ExprNode::Integer64(y) => {
+                TypeNode::Integer64(y) => {
                     format!("self.{} = {}", x.id, match y { Some(_) => "[]", None => "0"})
                 }
-                ExprNode::Float32(y) => {
+                TypeNode::Float32(y) => {
                     format!("self.{} = {}", x.id, match y { Some(_) => "[]", None => "0"})
                 }
-                ExprNode::Float64(y) => {
+                TypeNode::Float64(y) => {
                     format!("self.{} = {}", x.id, match y { Some(_) => "[]", None => "0"})
                 }
                 _ => "".to_string(),
@@ -100,7 +100,7 @@ impl PythonGenerator {
     fn get_field_serializer(expr: &TypeExpr, position: &mut usize) -> String {
         let mut result = String::new();
         match expr.expr {
-            ExprNode::UnsignedInteger8(y) => match y {
+            TypeNode::UnsignedInteger8(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -127,7 +127,7 @@ impl PythonGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Integer8(y) => match y {
+            TypeNode::Integer8(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -154,7 +154,7 @@ impl PythonGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::UnsignedInteger16(y) => match y {
+            TypeNode::UnsignedInteger16(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -181,7 +181,7 @@ impl PythonGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Integer16(y) => match y {
+            TypeNode::Integer16(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -208,7 +208,7 @@ impl PythonGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::UnsignedInteger32(y) => match y {
+            TypeNode::UnsignedInteger32(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -235,7 +235,7 @@ impl PythonGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Integer32(y) => match y {
+            TypeNode::Integer32(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -262,7 +262,7 @@ impl PythonGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::UnsignedInteger64(y) => match y {
+            TypeNode::UnsignedInteger64(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -289,61 +289,7 @@ impl PythonGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Integer64(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\t{};\n",
-                            &PythonGenerator::get_64bit_conversion_serialization_array(
-                                &"data".to_string(),
-                                &expr.id,
-                                *position,
-                                i
-                            )
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\t{};\n",
-                        &PythonGenerator::get_64bit_conversion_serialization(
-                            &"data".to_string(),
-                            &expr.id,
-                            *position,
-                        )
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            ExprNode::Float32(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\t{};\n",
-                            &PythonGenerator::get_32bit_conversion_serialization_array(
-                                &"data".to_string(),
-                                &expr.id,
-                                *position,
-                                i
-                            )
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\t{};\n",
-                        &PythonGenerator::get_32bit_conversion_serialization(
-                            &"data".to_string(),
-                            &expr.id,
-                            *position,
-                        )
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            ExprNode::Float64(y) => match y {
+            TypeNode::Integer64(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -370,7 +316,61 @@ impl PythonGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::MacAddress => {
+            TypeNode::Float32(y) => match y {
+                Some(y) => {
+                    for i in 0..y {
+                        result.push_str(&format!(
+                            "\t{};\n",
+                            &PythonGenerator::get_32bit_conversion_serialization_array(
+                                &"data".to_string(),
+                                &expr.id,
+                                *position,
+                                i
+                            )
+                        ));
+                        *position += expr.expr.get_type_length_bytes();
+                    }
+                }
+                None => {
+                    result.push_str(&format!(
+                        "\t{};\n",
+                        &PythonGenerator::get_32bit_conversion_serialization(
+                            &"data".to_string(),
+                            &expr.id,
+                            *position,
+                        )
+                    ));
+                    *position += expr.expr.get_type_length_bytes();
+                }
+            },
+            TypeNode::Float64(y) => match y {
+                Some(y) => {
+                    for i in 0..y {
+                        result.push_str(&format!(
+                            "\t{};\n",
+                            &PythonGenerator::get_64bit_conversion_serialization_array(
+                                &"data".to_string(),
+                                &expr.id,
+                                *position,
+                                i
+                            )
+                        ));
+                        *position += expr.expr.get_type_length_bytes();
+                    }
+                }
+                None => {
+                    result.push_str(&format!(
+                        "\t{};\n",
+                        &PythonGenerator::get_64bit_conversion_serialization(
+                            &"data".to_string(),
+                            &expr.id,
+                            *position,
+                        )
+                    ));
+                    *position += expr.expr.get_type_length_bytes();
+                }
+            },
+            TypeNode::MacAddress => {
                 result.push_str(&format!("// Not implemented {};\n", &"data".to_string()));
                 *position += expr.expr.get_type_length_bytes();
             }
@@ -382,7 +382,7 @@ impl PythonGenerator {
     fn get_field_deserializer(expr: &TypeExpr, position: &mut usize) -> String {
         let mut result = String::new();
         match expr.expr {
-            ExprNode::UnsignedInteger8(y) => match y {
+            TypeNode::UnsignedInteger8(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -409,7 +409,7 @@ impl PythonGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Integer8(y) => match y {
+            TypeNode::Integer8(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -436,7 +436,7 @@ impl PythonGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::UnsignedInteger16(y) => match y {
+            TypeNode::UnsignedInteger16(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -463,7 +463,7 @@ impl PythonGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Integer16(y) => match y {
+            TypeNode::Integer16(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -490,7 +490,7 @@ impl PythonGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::UnsignedInteger32(y) => match y {
+            TypeNode::UnsignedInteger32(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -517,7 +517,7 @@ impl PythonGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Integer32(y) => match y {
+            TypeNode::Integer32(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -544,7 +544,7 @@ impl PythonGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::UnsignedInteger64(y) => match y {
+            TypeNode::UnsignedInteger64(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -571,7 +571,7 @@ impl PythonGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Integer64(y) => match y {
+            TypeNode::Integer64(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -598,7 +598,7 @@ impl PythonGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Float32(y) => match y {
+            TypeNode::Float32(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -625,7 +625,7 @@ impl PythonGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Float64(y) => match y {
+            TypeNode::Float64(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -652,7 +652,7 @@ impl PythonGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::MacAddress => {
+            TypeNode::MacAddress => {
                 result.push_str(&format!("// Not implemented {};\n", &"data".to_string()));
                 *position += expr.expr.get_type_length_bytes();
             }

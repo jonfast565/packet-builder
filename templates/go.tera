@@ -2,24 +2,27 @@ package packets
 
 import ()
 
-type {{type}} struct {
-    {% for definition in definitions %}
-        {{definition.name}} {{definition.type}}
+{% for packet in packets %}
+
+type {{packet.name}} struct {
+    {% for field in packet.fields %} 
+        {% if field.expr.%}
+        {{field.id}} {{field.expr.type}}
     {% endfor %}
 }
 
 /*
-func (*{{type}}) Serialize() []byte {{
-    var data = make([]byte, {{length}})
-    
+func (*{{packet.name}}) Serialize() []byte {
+    var data = make([]byte, 0)
     return data
-}}
+}
 */
 
-func Deserialize{{type}}(data []byte) *{{type}} {{
-    var packet = new({{type}})
-    {% for definition in definitions %}
-        {{definition.name}} {{definition.type}}
+func Deserialize{{packet.name}}(data []byte) *{{packet.name}} {
+    var packet = new({{packet.name}})
+    {% for field in packet.fields %} {{field.id}} {{field.expr.type}}
     {% endfor %}
     return packet
-}}
+}
+
+{% endfor %}

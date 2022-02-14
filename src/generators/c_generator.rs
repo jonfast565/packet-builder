@@ -1,15 +1,15 @@
-use crate::models::parsing_models::{ExprNode, PacketExpr, TypeExpr};
+use crate::models::parsing_models::{ExprNode, PacketExpr, TypeExpr, PacketExprList, TypeNode};
 
 pub struct CGenerator {}
 
 impl CGenerator {
-    pub fn generate(expr: &Vec<PacketExpr>) -> String {
+    pub fn generate(expr: &PacketExprList) -> String {
         let mut result = String::new();
         result.push_str(&CGenerator::create_headers());
         result.push_str(&CGenerator::create_spacer());
         result.push_str(&CGenerator::create_supporting_functions());
         result.push_str(&CGenerator::create_spacer());
-        for exp in expr {
+        for exp in &expr.packets {
             result.push_str(&CGenerator::build_struct(&exp, false));
             result.push_str(&CGenerator::create_serialization_functions(&exp));
         }
@@ -76,34 +76,34 @@ impl CGenerator {
             .fields
             .iter()
             .map(|x| match x.expr {
-                ExprNode::UnsignedInteger8(y) => {
+                TypeNode::UnsignedInteger8(y) => {
                     format!("uint8_t {}{};", x.id, CGenerator::get_array_bounds(y))
                 }
-                ExprNode::Integer8(y) => {
+                TypeNode::Integer8(y) => {
                     format!("int8_t {}{};", x.id, CGenerator::get_array_bounds(y))
                 }
-                ExprNode::UnsignedInteger16(y) => {
+                TypeNode::UnsignedInteger16(y) => {
                     format!("uint16_t {}{};", x.id, CGenerator::get_array_bounds(y))
                 }
-                ExprNode::Integer16(y) => {
+                TypeNode::Integer16(y) => {
                     format!("int16_t {}{};", x.id, CGenerator::get_array_bounds(y))
                 }
-                ExprNode::UnsignedInteger32(y) => {
+                TypeNode::UnsignedInteger32(y) => {
                     format!("uint32_t {}{};", x.id, CGenerator::get_array_bounds(y))
                 }
-                ExprNode::Integer32(y) => {
+                TypeNode::Integer32(y) => {
                     format!("int32_t {}{};", x.id, CGenerator::get_array_bounds(y))
                 }
-                ExprNode::UnsignedInteger64(y) => {
+                TypeNode::UnsignedInteger64(y) => {
                     format!("uint64_t {}{};", x.id, CGenerator::get_array_bounds(y))
                 }
-                ExprNode::Integer64(y) => {
+                TypeNode::Integer64(y) => {
                     format!("int64_t {}{};", x.id, CGenerator::get_array_bounds(y))
                 }
-                ExprNode::Float32(y) => {
+                TypeNode::Float32(y) => {
                     format!("float {}{};", x.id, CGenerator::get_array_bounds(y))
                 }
-                ExprNode::Float64(y) => {
+                TypeNode::Float64(y) => {
                     format!("double {}{};", x.id, CGenerator::get_array_bounds(y))
                 }
                 _ => "".to_string(),
@@ -148,7 +148,7 @@ impl CGenerator {
     fn get_field_serializer(expr: &TypeExpr, position: &mut usize) -> String {
         let mut result = String::new();
         match expr.expr {
-            ExprNode::UnsignedInteger8(y) => match y {
+            TypeNode::UnsignedInteger8(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -171,7 +171,7 @@ impl CGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Integer8(y) => match y {
+            TypeNode::Integer8(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -194,7 +194,7 @@ impl CGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::UnsignedInteger16(y) => match y {
+            TypeNode::UnsignedInteger16(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -217,7 +217,7 @@ impl CGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Integer16(y) => match y {
+            TypeNode::Integer16(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -240,7 +240,7 @@ impl CGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::UnsignedInteger32(y) => match y {
+            TypeNode::UnsignedInteger32(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -263,7 +263,7 @@ impl CGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Integer32(y) => match y {
+            TypeNode::Integer32(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -286,7 +286,7 @@ impl CGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::UnsignedInteger64(y) => match y {
+            TypeNode::UnsignedInteger64(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -309,7 +309,7 @@ impl CGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Integer64(y) => match y {
+            TypeNode::Integer64(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -332,7 +332,7 @@ impl CGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Float32(y) => match y {
+            TypeNode::Float32(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -355,7 +355,7 @@ impl CGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Float64(y) => match y {
+            TypeNode::Float64(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -378,7 +378,7 @@ impl CGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::MacAddress => {
+            TypeNode::MacAddress => {
                 result.push_str(&format!("// Not implemented {};\n", &"data".to_string()));
                 *position += expr.expr.get_type_length_bytes();
             }
@@ -390,7 +390,7 @@ impl CGenerator {
     fn get_field_deserializer(expr: &TypeExpr, position: &mut usize) -> String {
         let mut result = String::new();
         match expr.expr {
-            ExprNode::UnsignedInteger8(y) => match y {
+            TypeNode::UnsignedInteger8(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -417,7 +417,7 @@ impl CGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Integer8(y) => match y {
+            TypeNode::Integer8(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -444,7 +444,7 @@ impl CGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::UnsignedInteger16(y) => match y {
+            TypeNode::UnsignedInteger16(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -471,7 +471,7 @@ impl CGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Integer16(y) => match y {
+            TypeNode::Integer16(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -498,7 +498,7 @@ impl CGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::UnsignedInteger32(y) => match y {
+            TypeNode::UnsignedInteger32(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -525,7 +525,7 @@ impl CGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Integer32(y) => match y {
+            TypeNode::Integer32(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -552,7 +552,7 @@ impl CGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::UnsignedInteger64(y) => match y {
+            TypeNode::UnsignedInteger64(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -579,7 +579,7 @@ impl CGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Integer64(y) => match y {
+            TypeNode::Integer64(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -606,7 +606,7 @@ impl CGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Float32(y) => match y {
+            TypeNode::Float32(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -633,7 +633,7 @@ impl CGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Float64(y) => match y {
+            TypeNode::Float64(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&format!(
@@ -660,7 +660,7 @@ impl CGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::MacAddress => {
+            TypeNode::MacAddress => {
                 result.push_str(&format!("// Not implemented {};\n", &"data".to_string()));
                 *position += expr.expr.get_type_length_bytes();
             }

@@ -1,4 +1,4 @@
-use crate::models::parsing_models::{CalculatedField, ExprNode, PacketExpr, TypeExpr};
+use crate::models::parsing_models::{CalculatedField, ExprNode, PacketExpr, TypeExpr, PacketExprList, TypeNode};
 use pest::error::Error;
 use pest::Parser;
 
@@ -6,10 +6,10 @@ use pest::Parser;
 #[grammar = "../grammar.pest"]
 pub struct PacketParser2;
 
-pub fn parse_file(input: &String) -> Result<Vec<PacketExpr>, Error<Rule>> {
+pub fn parse_file(input: &String) -> Result<PacketExprList, Error<Rule>> {
     let packets = PacketParser2::parse(Rule::packets, input)?.next().unwrap();
     let results = parse_packets(packets);
-    Ok(results)
+    Ok(PacketExprList { packets: results })
 }
 
 fn parse_packets(packets: pest::iterators::Pair<Rule>) -> Vec<PacketExpr> {
@@ -396,18 +396,18 @@ fn parse_guard_expression(parser_rule: pest::iterators::Pair<Rule>) -> ExprNode 
     )
 }
 
-fn expr_from_type_name(type_name: String, array_length: Option<String>) -> ExprNode {
+fn expr_from_type_name(type_name: String, array_length: Option<String>) -> TypeNode {
     match type_name.as_str() {
-        "int8" => ExprNode::Integer8(match_array_length(array_length)),
-        "uint8" => ExprNode::UnsignedInteger8(match_array_length(array_length)),
-        "int16" => ExprNode::Integer16(match_array_length(array_length)),
-        "uint16" => ExprNode::UnsignedInteger16(match_array_length(array_length)),
-        "int32" => ExprNode::Integer32(match_array_length(array_length)),
-        "uint32" => ExprNode::UnsignedInteger32(match_array_length(array_length)),
-        "int64" => ExprNode::Integer64(match_array_length(array_length)),
-        "uint64" => ExprNode::UnsignedInteger64(match_array_length(array_length)),
-        "float32" => ExprNode::Float32(match_array_length(array_length)),
-        "float64" => ExprNode::Float64(match_array_length(array_length)),
+        "int8" => TypeNode::Integer8(match_array_length(array_length)),
+        "uint8" => TypeNode::UnsignedInteger8(match_array_length(array_length)),
+        "int16" => TypeNode::Integer16(match_array_length(array_length)),
+        "uint16" => TypeNode::UnsignedInteger16(match_array_length(array_length)),
+        "int32" => TypeNode::Integer32(match_array_length(array_length)),
+        "uint32" => TypeNode::UnsignedInteger32(match_array_length(array_length)),
+        "int64" => TypeNode::Integer64(match_array_length(array_length)),
+        "uint64" => TypeNode::UnsignedInteger64(match_array_length(array_length)),
+        "float32" => TypeNode::Float32(match_array_length(array_length)),
+        "float64" => TypeNode::Float64(match_array_length(array_length)),
         _ => panic!("Not a type"),
     }
 }

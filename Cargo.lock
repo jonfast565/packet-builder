@@ -284,9 +284,11 @@ checksum = "2839e79665f131bdb5782e51f2c6c9599c133c6098982a54c794358bf432529c"
 name = "packet_builder"
 version = "0.1.0"
 dependencies = [
+ "lazy_static",
  "pest",
  "pest_derive",
  "serde",
+ "serde_json",
  "tera",
 ]
 

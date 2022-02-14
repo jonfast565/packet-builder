@@ -67,8 +67,11 @@ float32 = @{"float32"}
 float64 = @{"float64"}
 macaddress = @{"macaddress"}
 datetime = @{"datetime"}
+little_endian = @{ "le" }
+big_endian = @ { "be" }
 type_name = @{ int8 | uint8 | int16 | uint16 | int32 | uint32 | int64 | uint64 | float32 | float64 | macaddress | datetime }
 intrinsic_function = @{ sqrt | min | max }
+endianness = @ { little_endian | big_endian }
 
 // packet keywords
 packet_keyword = @{"packet"}
@@ -86,14 +89,14 @@ value = { guard_expression | numeric_constant | intrinsic_function_clause | aggr
 intrinsic_function_clause = { intrinsic_function ~ parameter_list }
 
 // declaring and accessing variables
-declaration = { identifier ~ type_name ~ array_specifier? }
+declaration = { identifier ~ type_name ~ array_specifier? ~ endianness? }
 direct_value_accessor = { identifier ~ array_specifier? }
 aggregate_accessor = { (sumof | productof) ~ identifier ~ !array_specifier }
 array_specifier = { larray ~ numeric_constant ~ rarray }
 
 // packet body
 packets = { SOI ~ packet+ ~ EOI }
-packet = { packet_keyword ~ identifier ~ lbracket ~ rule_list ~ rbracket }
+packet = { packet_keyword ~ identifier ~ endianness? ~ lbracket ~ rule_list ~ rbracket }
 rule_list = { rule ~ (listsep ~ rule)* }
 rule = { declaration | calculated_field }
 calculated_field = { calculated_keyword ~ identifier ~ type_name ~ assign ~ expr }

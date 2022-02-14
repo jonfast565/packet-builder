@@ -1,15 +1,15 @@
-use crate::models::parsing_models::{ExprNode, PacketExpr, TypeExpr};
+use crate::models::parsing_models::{ExprNode, PacketExpr, TypeExpr, PacketExprList, TypeNode};
 use crate::utilities::{capitalize_first, CaseWrapper, Casing};
 
 pub struct CSharpGenerator {}
 
 impl CSharpGenerator {
-    pub fn generate(expr: &Vec<PacketExpr>) -> String {
+    pub fn generate(expr: &PacketExprList) -> String {
         let mut result = String::new();
         result.push_str(&CSharpGenerator::create_headers());
         result.push_str(&CSharpGenerator::create_spacer());
         result.push_str(&CSharpGenerator::create_spacer());
-        for exp in expr {
+        for exp in &expr.packets {
             result.push_str(&CSharpGenerator::build_class(&exp, false));
         }
         result
@@ -59,70 +59,70 @@ impl CSharpGenerator {
             .fields
             .iter()
             .map(|x| match x.expr {
-                ExprNode::UnsignedInteger8(y) => {
+                TypeNode::UnsignedInteger8(y) => {
                     format!(
                         "public {} {} {{ get; set; }}",
                         CSharpGenerator::get_array_bounds("byte", y),
                         CaseWrapper(x.id.clone()).to_pascal_case()
                     )
                 }
-                ExprNode::Integer8(y) => {
+                TypeNode::Integer8(y) => {
                     format!(
                         "public {} {} {{ get; set; }}",
                         CSharpGenerator::get_array_bounds("sbyte", y),
                         CaseWrapper(x.id.clone()).to_pascal_case()
                     )
                 }
-                ExprNode::UnsignedInteger16(y) => {
+                TypeNode::UnsignedInteger16(y) => {
                     format!(
                         "public {} {} {{ get; set; }}",
                         CSharpGenerator::get_array_bounds("ushort", y),
                         CaseWrapper(x.id.clone()).to_pascal_case()
                     )
                 }
-                ExprNode::Integer16(y) => {
+                TypeNode::Integer16(y) => {
                     format!(
                         "public {} {} {{ get; set; }}",
                         CSharpGenerator::get_array_bounds("short", y),
                         CaseWrapper(x.id.clone()).to_pascal_case()
                     )
                 }
-                ExprNode::UnsignedInteger32(y) => {
+                TypeNode::UnsignedInteger32(y) => {
                     format!(
                         "public {} {} {{ get; set; }}",
                         CSharpGenerator::get_array_bounds("uint", y),
                         CaseWrapper(x.id.clone()).to_pascal_case()
                     )
                 }
-                ExprNode::Integer32(y) => {
+                TypeNode::Integer32(y) => {
                     format!(
                         "public {} {} {{ get; set; }}",
                         CSharpGenerator::get_array_bounds("int", y),
                         CaseWrapper(x.id.clone()).to_pascal_case()
                     )
                 }
-                ExprNode::UnsignedInteger64(y) => {
+                TypeNode::UnsignedInteger64(y) => {
                     format!(
                         "public {} {} {{ get; set; }}",
                         CSharpGenerator::get_array_bounds("ulong", y),
                         CaseWrapper(x.id.clone()).to_pascal_case()
                     )
                 }
-                ExprNode::Integer64(y) => {
+                TypeNode::Integer64(y) => {
                     format!(
                         "public {} {} {{ get; set; }}",
                         CSharpGenerator::get_array_bounds("long", y),
                         CaseWrapper(x.id.clone()).to_pascal_case()
                     )
                 }
-                ExprNode::Float32(y) => {
+                TypeNode::Float32(y) => {
                     format!(
                         "public {} {} {{ get; set; }}",
                         CSharpGenerator::get_array_bounds("float", y),
                         CaseWrapper(x.id.clone()).to_pascal_case()
                     )
                 }
-                ExprNode::Float64(y) => {
+                TypeNode::Float64(y) => {
                     format!(
                         "public {} {} {{ get; set; }}",
                         CSharpGenerator::get_array_bounds("double", y),
@@ -175,16 +175,16 @@ impl CSharpGenerator {
     fn get_field_serializer_builder(expr: &TypeExpr) -> String {
         let mut result = String::new();
         match expr.expr {
-            ExprNode::UnsignedInteger8(y)
-            | ExprNode::Integer8(y)
-            | ExprNode::UnsignedInteger16(y)
-            | ExprNode::Integer16(y)
-            | ExprNode::UnsignedInteger32(y)
-            | ExprNode::Integer32(y)
-            | ExprNode::UnsignedInteger64(y)
-            | ExprNode::Integer64(y)
-            | ExprNode::Float32(y)
-            | ExprNode::Float64(y) => match y {
+            TypeNode::UnsignedInteger8(y)
+            | TypeNode::Integer8(y)
+            | TypeNode::UnsignedInteger16(y)
+            | TypeNode::Integer16(y)
+            | TypeNode::UnsignedInteger32(y)
+            | TypeNode::Integer32(y)
+            | TypeNode::UnsignedInteger64(y)
+            | TypeNode::Integer64(y)
+            | TypeNode::Float32(y)
+            | TypeNode::Float64(y) => match y {
                 Some(y) => {
                     let mut array = String::new();
                     for i in 0..y {
@@ -216,7 +216,7 @@ impl CSharpGenerator {
                     );
                 }
             },
-            ExprNode::MacAddress => {}
+            TypeNode::MacAddress => {}
             _ => (),
         };
 
@@ -235,7 +235,7 @@ impl CSharpGenerator {
     fn get_field_serializer(expr: &TypeExpr, position: &mut usize) -> String {
         let mut result = String::new();
         match expr.expr {
-            ExprNode::UnsignedInteger8(y) => match y {
+            TypeNode::UnsignedInteger8(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&CSharpGenerator::format_array_serialization_variable(
@@ -260,7 +260,7 @@ impl CSharpGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Integer8(y) => match y {
+            TypeNode::Integer8(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&CSharpGenerator::format_array_serialization_variable(
@@ -285,7 +285,7 @@ impl CSharpGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::UnsignedInteger16(y) => match y {
+            TypeNode::UnsignedInteger16(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&CSharpGenerator::format_array_serialization_variable(
@@ -310,7 +310,7 @@ impl CSharpGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Integer16(y) => match y {
+            TypeNode::Integer16(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&CSharpGenerator::format_array_serialization_variable(
@@ -335,7 +335,7 @@ impl CSharpGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::UnsignedInteger32(y) => match y {
+            TypeNode::UnsignedInteger32(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&CSharpGenerator::format_array_serialization_variable(
@@ -360,7 +360,7 @@ impl CSharpGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Integer32(y) => match y {
+            TypeNode::Integer32(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&CSharpGenerator::format_array_serialization_variable(
@@ -385,7 +385,7 @@ impl CSharpGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::UnsignedInteger64(y) => match y {
+            TypeNode::UnsignedInteger64(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&CSharpGenerator::format_array_serialization_variable(
@@ -410,7 +410,7 @@ impl CSharpGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Integer64(y) => match y {
+            TypeNode::Integer64(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&CSharpGenerator::format_array_serialization_variable(
@@ -435,7 +435,7 @@ impl CSharpGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Float32(y) => match y {
+            TypeNode::Float32(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&CSharpGenerator::format_array_serialization_variable(
@@ -460,7 +460,7 @@ impl CSharpGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Float64(y) => match y {
+            TypeNode::Float64(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&CSharpGenerator::format_array_serialization_variable(
@@ -485,7 +485,7 @@ impl CSharpGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::MacAddress => {
+            TypeNode::MacAddress => {
                 result.push_str(&format!("// Not implemented {};\n", &"data".to_string()));
                 *position += expr.expr.get_type_length_bytes();
             }
@@ -497,7 +497,7 @@ impl CSharpGenerator {
     fn get_field_deserializer(expr: &TypeExpr, position: &mut usize) -> String {
         let mut result = String::new();
         match expr.expr {
-            ExprNode::UnsignedInteger8(y) => match y {
+            TypeNode::UnsignedInteger8(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&CSharpGenerator::format_array_deserialization_variable(
@@ -522,7 +522,7 @@ impl CSharpGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Integer8(y) => match y {
+            TypeNode::Integer8(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&CSharpGenerator::format_array_deserialization_variable(
@@ -547,7 +547,7 @@ impl CSharpGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::UnsignedInteger16(y) => match y {
+            TypeNode::UnsignedInteger16(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&CSharpGenerator::format_array_deserialization_variable(
@@ -572,7 +572,7 @@ impl CSharpGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Integer16(y) => match y {
+            TypeNode::Integer16(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&CSharpGenerator::format_array_deserialization_variable(
@@ -597,7 +597,7 @@ impl CSharpGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::UnsignedInteger32(y) => match y {
+            TypeNode::UnsignedInteger32(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&CSharpGenerator::format_array_deserialization_variable(
@@ -622,7 +622,7 @@ impl CSharpGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Integer32(y) => match y {
+            TypeNode::Integer32(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&CSharpGenerator::format_array_deserialization_variable(
@@ -647,7 +647,7 @@ impl CSharpGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::UnsignedInteger64(y) => match y {
+            TypeNode::UnsignedInteger64(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&CSharpGenerator::format_array_deserialization_variable(
@@ -672,7 +672,7 @@ impl CSharpGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Integer64(y) => match y {
+            TypeNode::Integer64(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&CSharpGenerator::format_array_deserialization_variable(
@@ -697,7 +697,7 @@ impl CSharpGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Float32(y) => match y {
+            TypeNode::Float32(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&CSharpGenerator::format_array_deserialization_variable(
@@ -722,7 +722,7 @@ impl CSharpGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::Float64(y) => match y {
+            TypeNode::Float64(y) => match y {
                 Some(y) => {
                     for i in 0..y {
                         result.push_str(&CSharpGenerator::format_array_deserialization_variable(
@@ -747,7 +747,7 @@ impl CSharpGenerator {
                     *position += expr.expr.get_type_length_bytes();
                 }
             },
-            ExprNode::MacAddress => {
+            TypeNode::MacAddress => {
                 result.push_str(&format!("// Not implemented {};\n", &"data".to_string()));
                 *position += expr.expr.get_type_length_bytes();
             }
