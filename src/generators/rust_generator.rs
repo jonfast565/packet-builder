@@ -1,18 +1,22 @@
-use crate::models::parsing_models::{CalculatedField, ExprNode, PacketExpr, TypeExpr, PacketExprList, TypeNode};
-
+use crate::models::parsing_models::{
+    Endianness, ExprNode, PacketExpr, PacketExprList, TypeNode,
+};
+use std::fmt::Write as _;
 pub struct RustGenerator {}
 
 impl RustGenerator {
-    pub fn generate(expr: &PacketExprList) -> String {
-        let mut result = String::new();
-        result.push_str(&RustGenerator::create_headers());
-        result.push_str(&RustGenerator::create_spacer());
-        result.push_str(&RustGenerator::create_spacer());
-        for exp in &expr.packets {
-            result.push_str(&RustGenerator::build_struct(&exp, false));
-            result.push_str(&RustGenerator::create_serialization_functions(&exp));
+    pub fn generate(model: &PacketExprList) -> String {
+        let mut out = String::new();
+        out.push_str(&Self::create_headers());
+        out.push_str(&Self::create_spacer());
+
+        for pkt in &model.packets {
+            out.push_str(&Self::build_struct(pkt));
+            out.push_str(&Self::create_serialization_impl(pkt));
+            out.push_str(&Self::create_spacer());
         }
-        result
+
+        out
     }
 
     fn create_spacer() -> String {
@@ -20,913 +24,496 @@ impl RustGenerator {
     }
 
     fn create_headers() -> String {
-        "\t
-        use std::io::Cursor;
-        use byteorder::{ByteOrder, LittleEndian, BigEndian, ReadBytesExt, WriteBytesExt};
-        use serde::{Serialize, Deserialize};
-        "
+        r#"use std::io::{Cursor, Read, Write};
+use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
+use serde::{Serialize, Deserialize};
+
+"#
         .to_string()
     }
 
-    fn create_serialization_functions(expr: &PacketExpr) -> String {
+    /* =========================
+     * Struct + impl emission
+     * ========================= */
+
+    fn build_struct(pkt: &PacketExpr) -> String {
+        let mut fields = String::new();
+
+        for f in &pkt.fields {
+            let ty = rust_field_type(&f.expr);
+            let _ = writeln!(&mut fields, "    pub {}: {},", f.id, ty);
+        }
+
+        for cf in &pkt.calculated_fields {
+            let ty = rust_type_from_type_name(&cf.data_type);
+            let _ = writeln!(&mut fields, "    pub {}: {},", cf.name, ty);
+        }
+
         format!(
-            "
-        impl {} {{
-        pub fn serialize(&self) -> Vec<u8> {{
-            let mut data: Vec<u8> = vec![];
-            {}
-            data
-        }}
+            r#"#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct {name} {{
+{fields}
+}}
 
-        pub fn deserialize(data: &[u8]) -> {} {{
-            {}
-            {} {{
-                {}
-            }}
-        }}
-
-
-        }}
-        ",
-            expr.name,
-            &RustGenerator::create_serializers(expr),
-            expr.name,
-            &RustGenerator::create_deserializers(expr),
-            expr.name,
-            &RustGenerator::create_deserializer_builders(expr)
-        )
-        .to_string()
-    }
-
-    fn build_struct(expr: &PacketExpr, just_fields: bool) -> String {
-        let field_aggregation = expr
-            .fields
-            .iter()
-            .map(|x| match x.expr {
-                TypeNode::UnsignedInteger8(y) => {
-                    format!("{}: {},", x.id, RustGenerator::get_array_bounds("u8", y))
-                }
-                TypeNode::Integer8(y) => {
-                    format!("{}: {},", x.id, RustGenerator::get_array_bounds("i8", y))
-                }
-                TypeNode::UnsignedInteger16(y) => {
-                    format!("{}: {},", x.id, RustGenerator::get_array_bounds("u16", y))
-                }
-                TypeNode::Integer16(y) => {
-                    format!("{}: {},", x.id, RustGenerator::get_array_bounds("i16", y))
-                }
-                TypeNode::UnsignedInteger32(y) => {
-                    format!("{}: {},", x.id, RustGenerator::get_array_bounds("u32", y))
-                }
-                TypeNode::Integer32(y) => {
-                    format!("{}: {},", x.id, RustGenerator::get_array_bounds("i32", y))
-                }
-                TypeNode::UnsignedInteger64(y) => {
-                    format!("{}: {},", x.id, RustGenerator::get_array_bounds("u64", y))
-                }
-                TypeNode::Integer64(y) => {
-                    format!("{}: {},", x.id, RustGenerator::get_array_bounds("i64", y))
-                }
-                TypeNode::Float32(y) => {
-                    format!("{}: {},", x.id, RustGenerator::get_array_bounds("f32", y))
-                }
-                TypeNode::Float64(y) => {
-                    format!("{}: {},", x.id, RustGenerator::get_array_bounds("f64", y))
-                }
-                _ => "".to_string(),
-            })
-            .fold(String::new(), |acc, v| format!("{}\t    {}\n", acc, v));
-
-        let calc_field_aggregation = expr
-            .calculated_fields
-            .iter()
-            .map(|x| {
-                format!(
-                    "{}: {},",
-                    x.name,
-                    RustGenerator::datatype_to_rust_type(x.data_type.clone())
-                )
-            })
-            .fold(String::new(), |acc, v| format!("{}\t    {}\n", acc, v));
-
-        if !just_fields {
-            format!(
-                "\t#[derive(Debug, Serialize, Deserialize)]
-                pub struct {} {{\n {} {}\n\t}}\n\n",
-                expr.name, field_aggregation, calc_field_aggregation
-            )
-        } else {
-            format!("{}", field_aggregation)
-        }
-    }
-
-    fn get_array_bounds(data_type: &str, expr: Option<usize>) -> String {
-        match expr {
-            Some(x) => format!("[{}; {}]", data_type, x.to_string()),
-            None => format!("{}", data_type.to_string()),
-        }
-    }
-
-    fn create_deserializers(expr: &PacketExpr) -> String {
-        let mut result = String::new();
-        let mut counter = 0;
-        for field in &expr.fields {
-            result.push_str(&RustGenerator::get_field_deserializer(field, &mut counter));
-        }
-        for field in &expr.calculated_fields {
-            result.push_str(&RustGenerator::get_calculated_field_deserializer(field));
-        }
-        result
-    }
-
-    fn create_deserializer_builders(expr: &PacketExpr) -> String {
-        let mut result = String::new();
-        for field in &expr.fields {
-            result.push_str(&RustGenerator::get_field_deserializer_builder(field));
-        }
-        for field in &expr.calculated_fields {
-            result.push_str(&RustGenerator::get_calculated_field_deserializer_builder(
-                field,
-            ));
-        }
-        result
-    }
-
-    fn get_calculated_field_deserializer(expr: &CalculatedField) -> String {
-        format!(
-            "\tlet {} = {};\n",
-            expr.name,
-            RustGenerator::get_expr_builder(*expr.expr.clone())
+"#,
+            name = pkt.name,
+            fields = fields
         )
     }
 
-    fn get_calculated_field_deserializer_builder(expr: &CalculatedField) -> String {
-        format!("\t{}: {},\n", expr.name, expr.name)
-    }
+    fn create_serialization_impl(pkt: &PacketExpr) -> String {
+        let mut ser_body = String::new();
+        for f in &pkt.fields {
+            let endian = f.endianness.as_ref().or(pkt.endianness.as_ref()).unwrap_or(&Endianness::Le);
+            ser_body.push_str(&emit_field_serialize(&f.id, &f.expr, endian.clone()));
+        }
 
-    fn get_expr_builder(expr: ExprNode) -> String {
-        let mut string_vec = Vec::new();
-        match expr {
-            ExprNode::UnsignedInteger64Value(value) => {
-                string_vec.push(format!("({} as f64)", value.to_string()));
-            }
-            ExprNode::Integer64Value(value) => {
-                string_vec.push(format!("({} as f64)", value.to_string()));
-            }
-            ExprNode::Float64Value(value) => {
-                string_vec.push(value.to_string());
-            }
-            ExprNode::ValueReference(ident, optional_array_size) => match optional_array_size {
-                Some(x) => string_vec.push(format!("({}_{} as f64)", ident, x)),
-                None => string_vec.push(format!("({} as f64)", ident.to_string())),
-            },
-            ExprNode::ParenthesizedExpr(lexpr) => {
-                string_vec.push(
-                    "(".to_string() + &RustGenerator::get_expr_builder(*lexpr) + &")".to_string(),
-                );
-            }
-            ExprNode::Plus(lexpr, rexpr) => {
-                string_vec.push(
-                    RustGenerator::get_expr_builder(*lexpr)
-                        + &" + ".to_string()
-                        + &RustGenerator::get_expr_builder(*rexpr),
-                );
-            }
-            ExprNode::Minus(lexpr, rexpr) => {
-                string_vec.push(
-                    RustGenerator::get_expr_builder(*lexpr)
-                        + &" - ".to_string()
-                        + &RustGenerator::get_expr_builder(*rexpr),
-                );
-            }
-            ExprNode::Mult(lexpr, rexpr) => {
-                string_vec.push(
-                    RustGenerator::get_expr_builder(*lexpr)
-                        + &" * ".to_string()
-                        + &RustGenerator::get_expr_builder(*rexpr),
-                );
-            }
-            ExprNode::Div(lexpr, rexpr) => {
-                string_vec.push(
-                    RustGenerator::get_expr_builder(*lexpr)
-                        + &" / ".to_string()
-                        + &RustGenerator::get_expr_builder(*rexpr),
-                );
-            }
-            ExprNode::Pow(lexpr, rexpr) => {
-                string_vec.push(
-                    RustGenerator::get_expr_builder(*lexpr)
-                        + &" ^ ".to_string()
-                        + &RustGenerator::get_expr_builder(*rexpr),
-                );
-            }
-            ExprNode::Gt(lexpr, rexpr) => {
-                string_vec.push(
-                    RustGenerator::get_expr_builder(*lexpr)
-                        + &" > ".to_string()
-                        + &RustGenerator::get_expr_builder(*rexpr),
-                );
-            }
-            ExprNode::Lt(lexpr, rexpr) => {
-                string_vec.push(
-                    RustGenerator::get_expr_builder(*lexpr)
-                        + &" < ".to_string()
-                        + &RustGenerator::get_expr_builder(*rexpr),
-                );
-            }
-            ExprNode::Gte(lexpr, rexpr) => {
-                string_vec.push(
-                    RustGenerator::get_expr_builder(*lexpr)
-                        + &" >= ".to_string()
-                        + &RustGenerator::get_expr_builder(*rexpr),
-                );
-            }
-            ExprNode::Lte(lexpr, rexpr) => {
-                string_vec.push(
-                    RustGenerator::get_expr_builder(*lexpr)
-                        + &" <= ".to_string()
-                        + &RustGenerator::get_expr_builder(*rexpr),
-                );
-            }
-            ExprNode::Equals(lexpr, rexpr) => {
-                string_vec.push(
-                    RustGenerator::get_expr_builder(*lexpr)
-                        + &" == ".to_string()
-                        + &RustGenerator::get_expr_builder(*rexpr),
-                );
-            }
-            ExprNode::NotEquals(lexpr, rexpr) => {
-                string_vec.push(
-                    RustGenerator::get_expr_builder(*lexpr)
-                        + &" != ".to_string()
-                        + &RustGenerator::get_expr_builder(*rexpr),
-                );
-            }
-            ExprNode::And(lexpr, rexpr) => {
-                string_vec.push(
-                    RustGenerator::get_expr_builder(*lexpr)
-                        + &" && ".to_string()
-                        + &RustGenerator::get_expr_builder(*rexpr),
-                );
-            }
-            ExprNode::Or(lexpr, rexpr) => {
-                string_vec.push(
-                    RustGenerator::get_expr_builder(*lexpr)
-                        + &" || ".to_string()
-                        + &RustGenerator::get_expr_builder(*rexpr),
-                );
-            }
-            ExprNode::GuardExpression(bexpr, texpr, oexpr) => {
-                string_vec.push(format!(
-                    "if {} {{ {} }} else {{ {} }}",
-                    RustGenerator::get_expr_builder(*bexpr),
-                    RustGenerator::get_expr_builder(*texpr),
-                    RustGenerator::get_expr_builder(*oexpr)
-                ));
-            }
-            ExprNode::SumOf(lexpr) => {
-                panic!("Aggregate expressions not implemented")
-            }
-            ExprNode::ProductOf(lexpr) => {
-                panic!("Aggregate expressions not implemented")
-            }
-            ExprNode::ActivationRecord(function_name, parameters) => {
-                if function_name == "sqrt" {
-                    string_vec.push(
-                        "(".to_string()
-                            + &RustGenerator::get_expr_builder(parameters[0].clone())
-                            + " as f64).sqrt()",
-                    )
-                } else if function_name == "min" || function_name == "max" {
-                    string_vec.push(
-                        "(".to_string()
-                            + &RustGenerator::get_expr_builder(parameters[0].clone())
-                            + "."
-                            + &function_name
-                            + "("
-                            + &RustGenerator::get_expr_builder(parameters[1].clone())
-                            + "))",
-                    )
-                }
-            }
-            _ => {
-                panic!("Unsupported statement type")
+        let mut de_body = String::new();
+        for (i, f) in pkt.fields.iter().enumerate() {
+            let endian = f.endianness.as_ref().or(pkt.endianness.as_ref()).unwrap_or(&Endianness::Le);
+            let last = i + 1 == pkt.fields.len();
+            de_body.push_str(&emit_field_deserialize(&f.id, &f.expr, endian.clone(), last));
+        }
+
+        // calculated fields
+        let mut calc_lets = String::new();
+        for cf in &pkt.calculated_fields {
+            let expr = emit_rust_numeric_expr(&cf.expr, /*root*/ "");
+            let cast = rust_type_from_type_name(&cf.data_type);
+            let _ = writeln!(
+                &mut calc_lets,
+                "        let {name}: {ty} = ({expr}) as {ty};",
+                name = cf.name,
+                ty = cast,
+                expr = expr
+            );
+        }
+
+        let mut build_fields = String::new();
+        for f in &pkt.fields {
+            let _ = writeln!(&mut build_fields, "            {name},", name = f.id);
+        }
+        for cf in &pkt.calculated_fields {
+            let _ = writeln!(&mut build_fields, "            {name},", name = cf.name);
+        }
+
+        format!(
+            r#"impl {name} {{
+    pub fn serialize(&self) -> Vec<u8> {{
+        let mut data: Vec<u8> = Vec::new();
+{ser_body}
+        data
+    }}
+
+    pub fn deserialize(data: &[u8]) -> {name} {{
+        let mut cur = Cursor::new(data);
+
+{de_body}{calc_lets}
+        {name} {{
+{build_fields}        }}
+    }}
+}}
+
+"#,
+            name = pkt.name,
+            ser_body = indent(&ser_body, 2),
+            de_body = indent(&de_body, 2),
+            calc_lets = calc_lets,
+            build_fields = build_fields
+        )
+    }
+}
+
+/* =====================================
+ * Type mapping helpers
+ * ===================================== */
+
+fn rust_field_type(t: &TypeNode) -> String {
+    use TypeNode::*;
+    match t {
+        // numeric families → scalar or Vec
+        UnsignedInteger8(len) => if len.is_some() { "Vec<u8>".into() } else { "u8".into() },
+        Integer8(len)         => if len.is_some() { "Vec<i8>".into() } else { "i8".into() },
+        UnsignedInteger16(len)=> if len.is_some() { "Vec<u16>".into() } else { "u16".into() },
+        Integer16(len)        => if len.is_some() { "Vec<i16>".into() } else { "i16".into() },
+        UnsignedInteger32(len)=> if len.is_some() { "Vec<u32>".into() } else { "u32".into() },
+        Integer32(len)        => if len.is_some() { "Vec<i32>".into() } else { "i32".into() },
+        UnsignedInteger64(len)=> if len.is_some() { "Vec<u64>".into() } else { "u64".into() },
+        Integer64(len)        => if len.is_some() { "Vec<i64>".into() } else { "i64".into() },
+        Float32(len)          => if len.is_some() { "Vec<f32>".into() } else { "f32".into() },
+        Float64(len)          => if len.is_some() { "Vec<f64>".into() } else { "f64".into() },
+        DateTime(len)         => if len.is_some() { "Vec<i64>".into() } else { "i64".into() },
+
+        Bytes(_len)           => "Vec<u8>".into(),
+        MacAddress(len)       => if len.is_some() { "Vec<u8>".into() } else { "[u8; 6]".into() },
+    }
+}
+
+fn rust_type_from_type_name(name: &str) -> &'static str {
+    match name {
+        "int8" => "i8",
+        "uint8" => "u8",
+        "int16" => "i16",
+        "uint16" => "u16",
+        "int32" => "i32",
+        "uint32" => "u32",
+        "int64" => "i64",
+        "uint64" => "u64",
+        "float32" => "f32",
+        "float64" => "f64",
+        "datetime" => "i64",
+        "bytes" => "Vec<u8>",
+        "macaddress" => "[u8; 6]",
+        _ => "f64", // safe numeric fallback for calculated fields
+    }
+}
+
+fn endian_ident(e: Endianness) -> &'static str {
+    match e {
+        Endianness::Le => "LittleEndian",
+        Endianness::Be => "BigEndian",
+    }
+}
+
+fn elem_size_bytes(t: &TypeNode) -> usize {
+    use TypeNode::*;
+    match t {
+        UnsignedInteger8(_) | Integer8(_) => 1,
+        UnsignedInteger16(_) | Integer16(_) => 2,
+        UnsignedInteger32(_) | Integer32(_) | Float32(_) => 4,
+        UnsignedInteger64(_) | Integer64(_) | Float64(_) | DateTime(_) => 8,
+        Bytes(_) | MacAddress(_) => 1,
+    }
+}
+
+/* =====================================
+ * Field (de)serialization emitters
+ * ===================================== */
+
+fn emit_field_serialize(name: &str, t: &TypeNode, e: Endianness) -> String {
+    let mut s = String::new();
+    let ee = endian_ident(e);
+
+    match t {
+        // raw byte blobs
+        TypeNode::Bytes(_) => {
+            let _ = writeln!(&mut s, "(&mut data).write_all(&self.{name}).unwrap();");
+        }
+        TypeNode::MacAddress(len) => {
+            if len.is_some() {
+                let _ = writeln!(&mut s, "(&mut data).write_all(&self.{name}).unwrap();");
+            } else {
+                let _ = writeln!(&mut s, "(&mut data).write_all(&self.{name}).unwrap(); // 6 bytes");
             }
         }
-        string_vec.join(" ")
-    }
 
-    fn get_field_deserializer_builder(expr: &TypeExpr) -> String {
-        let mut result = String::new();
-        match expr.expr {
-            TypeNode::UnsignedInteger8(y)
-            | TypeNode::Integer8(y)
-            | TypeNode::UnsignedInteger16(y)
-            | TypeNode::Integer16(y)
-            | TypeNode::UnsignedInteger32(y)
-            | TypeNode::Integer32(y)
-            | TypeNode::UnsignedInteger64(y)
-            | TypeNode::Integer64(y)
-            | TypeNode::Float32(y)
-            | TypeNode::Float64(y) => match y {
-                Some(y) => {
-                    let mut array = String::new();
-                    for i in 0..y {
-                        array.push_str(&format!("{}_{}", expr.id, i).to_string());
-                        if i < y - 1 {
-                            array.push_str(", ");
-                        }
+        // numeric families
+        _ => {
+            let write_scalar = |dst: &mut String, expr: String, t: &TypeNode| {
+                match t {
+                    TypeNode::UnsignedInteger8(_) => {
+                        let _ = writeln!(dst, "(&mut data).write_u8({expr}).unwrap();");
                     }
-                    result.push_str(&format!("{}: [{}],\n", expr.id, array).to_string());
+                    TypeNode::Integer8(_) => {
+                        let _ = writeln!(dst, "(&mut data).write_i8({expr}).unwrap();");
+                    }
+                    TypeNode::UnsignedInteger16(_) => {
+                        let _ = writeln!(dst, "(&mut data).write_u16::<{ee}>({expr}).unwrap();");
+                    }
+                    TypeNode::Integer16(_) => {
+                        let _ = writeln!(dst, "(&mut data).write_i16::<{ee}>({expr}).unwrap();");
+                    }
+                    TypeNode::UnsignedInteger32(_) => {
+                        let _ = writeln!(dst, "(&mut data).write_u32::<{ee}>({expr}).unwrap();");
+                    }
+                    TypeNode::Integer32(_) => {
+                        let _ = writeln!(dst, "(&mut data).write_i32::<{ee}>({expr}).unwrap();");
+                    }
+                    TypeNode::UnsignedInteger64(_) => {
+                        let _ = writeln!(dst, "(&mut data).write_u64::<{ee}>({expr}).unwrap();");
+                    }
+                    TypeNode::Integer64(_) | TypeNode::DateTime(_) => {
+                        let _ = writeln!(dst, "(&mut data).write_i64::<{ee}>({expr}).unwrap();");
+                    }
+                    TypeNode::Float32(_) => {
+                        let _ = writeln!(dst, "(&mut data).write_f32::<{ee}>({expr}).unwrap();");
+                    }
+                    TypeNode::Float64(_) => {
+                        let _ = writeln!(dst, "(&mut data).write_f64::<{ee}>({expr}).unwrap();");
+                    }
+                    _ => {}
                 }
-                None => {
-                    result.push_str(&format!("{}: {},\n", expr.id, expr.id).to_string());
-                }
-            },
-            TypeNode::MacAddress => {}
-            _ => (),
-        };
+            };
 
-        result
-    }
-
-    fn create_serializers(expr: &PacketExpr) -> String {
-        let mut result = String::new();
-        let mut counter = 0;
-        for field in &expr.fields {
-            result.push_str(&RustGenerator::get_field_serializer(field, &mut counter));
-        }
-        result
-    }
-
-    fn get_field_serializer(expr: &TypeExpr, position: &mut usize) -> String {
-        let mut result = String::new();
-        match expr.expr {
-            TypeNode::UnsignedInteger8(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\tdata.write_{}(self.{}[{}]).unwrap();\n",
-                            &"u8".to_string(),
-                            expr.id,
-                            i
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\tdata.write_{}(self.{}).unwrap();\n",
-                        &"u8".to_string(),
-                        expr.id
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::Integer8(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\tdata.write_{}::<BigEndian>(self.{}[{}]).unwrap();\n",
-                            &"i8".to_string(),
-                            expr.id,
-                            i
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\tdata.write_{}::<BigEndian>(self.{}).unwrap();\n",
-                        &"i8".to_string(),
-                        expr.id
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::UnsignedInteger16(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\tdata.write_{}::<BigEndian>(self.{}[{}]).unwrap();\n",
-                            &"u16".to_string(),
-                            expr.id,
-                            i
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\tdata.write_{}::<BigEndian>(self.{}).unwrap();\n",
-                        &"u16".to_string(),
-                        expr.id
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::Integer16(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\tdata.write_{}::<BigEndian>(self.{}[{}]).unwrap();\n",
-                            &"i16".to_string(),
-                            expr.id,
-                            i
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\tdata.write_{}::<BigEndian>(self.{}).unwrap();\n",
-                        &"i16".to_string(),
-                        expr.id
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::UnsignedInteger32(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\tdata.write_{}::<BigEndian>(self.{}[{}]).unwrap();\n",
-                            &"u32".to_string(),
-                            expr.id,
-                            i
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\tdata.write_{}::<BigEndian>(self.{}).unwrap();\n",
-                        &"u32".to_string(),
-                        expr.id
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::Integer32(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\tdata.write_{}::<BigEndian>(self.{}[{}]).unwrap();\n",
-                            &"i32".to_string(),
-                            expr.id,
-                            i
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\tdata.write_{}::<BigEndian>(self.{}).unwrap();\n",
-                        &"i32".to_string(),
-                        expr.id
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::UnsignedInteger64(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\tdata.write_{}::<BigEndian>(self.{}[{}]).unwrap();\n",
-                            &"u64".to_string(),
-                            expr.id,
-                            i
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\tdata.write_{}::<BigEndian>(self.{}).unwrap();\n",
-                        &"u64".to_string(),
-                        expr.id
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::Integer64(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\tdata.write_{}::<BigEndian>(self.{}[{}]).unwrap();\n",
-                            &"i64".to_string(),
-                            expr.id,
-                            i
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\tdata.write_{}::<BigEndian>(self.{}).unwrap();\n",
-                        &"i64".to_string(),
-                        expr.id
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::Float32(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\tdata.write_{}::<BigEndian>(self.{}[{}]).unwrap();\n",
-                            &"f32".to_string(),
-                            expr.id,
-                            i
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\tdata.write_{}::<BigEndian>(self.{}).unwrap();\n",
-                        &"f32".to_string(),
-                        expr.id
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::Float64(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\tdata.write_{}::<BigEndian>(self.{}[{}]).unwrap();\n",
-                            &"f64".to_string(),
-                            expr.id,
-                            i
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\tdata.write_{}::<BigEndian>(self.{}).unwrap();\n",
-                        &"f64".to_string(),
-                        expr.id
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::MacAddress => {
-                result.push_str(&format!("// Not implemented {};\n", &"data".to_string()));
-                *position += expr.expr.get_type_length_bytes();
+            if is_array_like(t) {
+                let _ = writeln!(&mut s, "for v in &self.{name} {{");
+                write_scalar(&mut s, " *v".into(), t);
+                let _ = writeln!(&mut s, "}}");
+            } else {
+                write_scalar(&mut s, format!("self.{name}"), t);
             }
-            _ => (),
-        }
-        result
-    }
-
-    fn get_field_deserializer(expr: &TypeExpr, position: &mut usize) -> String {
-        let mut result = String::new();
-        match expr.expr {
-            TypeNode::UnsignedInteger8(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\tlet {}_{} = {};\n",
-                            expr.id,
-                            i,
-                            RustGenerator::get_conversion_deserialization(
-                                &"data".to_string(),
-                                &"u8".to_string(),
-                                *position,
-                                1
-                            )
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\tlet {} = {};\n",
-                        expr.id,
-                        RustGenerator::get_conversion_deserialization(
-                            &"data".to_string(),
-                            &"u8".to_string(),
-                            *position,
-                            1
-                        )
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::Integer8(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\tlet {}_{} = {};\n",
-                            expr.id,
-                            i,
-                            RustGenerator::get_conversion_deserialization(
-                                &"data".to_string(),
-                                &"i8".to_string(),
-                                *position,
-                                1
-                            )
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\tlet {} = {};\n",
-                        expr.id,
-                        RustGenerator::get_conversion_deserialization(
-                            &"data".to_string(),
-                            &"i8".to_string(),
-                            *position,
-                            1
-                        )
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::UnsignedInteger16(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\tlet {}_{} = {};\n",
-                            expr.id,
-                            i,
-                            RustGenerator::get_conversion_deserialization(
-                                &"data".to_string(),
-                                &"u16".to_string(),
-                                *position,
-                                2
-                            )
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\tlet {} = {};\n",
-                        expr.id,
-                        RustGenerator::get_conversion_deserialization(
-                            &"data".to_string(),
-                            &"u16".to_string(),
-                            *position,
-                            2
-                        )
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::Integer16(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\tlet {}_{} = {};\n",
-                            expr.id,
-                            i,
-                            RustGenerator::get_conversion_deserialization(
-                                &"data".to_string(),
-                                &"i16".to_string(),
-                                *position,
-                                2
-                            )
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\tlet {} = {};\n",
-                        expr.id,
-                        RustGenerator::get_conversion_deserialization(
-                            &"data".to_string(),
-                            &"i16".to_string(),
-                            *position,
-                            2
-                        )
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::UnsignedInteger32(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\tlet {}_{} = {};\n",
-                            expr.id,
-                            i,
-                            RustGenerator::get_conversion_deserialization(
-                                &"data".to_string(),
-                                &"u32".to_string(),
-                                *position,
-                                4
-                            )
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\tlet {} = {};\n",
-                        expr.id,
-                        RustGenerator::get_conversion_deserialization(
-                            &"data".to_string(),
-                            &"u32".to_string(),
-                            *position,
-                            4
-                        )
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::Integer32(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\tlet {}_{} = {};\n",
-                            expr.id,
-                            i,
-                            RustGenerator::get_conversion_deserialization(
-                                &"data".to_string(),
-                                &"i32".to_string(),
-                                *position,
-                                4
-                            )
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\tlet {} = {};\n",
-                        expr.id,
-                        RustGenerator::get_conversion_deserialization(
-                            &"data".to_string(),
-                            &"i32".to_string(),
-                            *position,
-                            4
-                        )
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::UnsignedInteger64(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\tlet {}_{} = {};\n",
-                            expr.id,
-                            i,
-                            RustGenerator::get_conversion_deserialization(
-                                &"data".to_string(),
-                                &"u64".to_string(),
-                                *position,
-                                8
-                            )
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\tlet {} = {};\n",
-                        expr.id,
-                        RustGenerator::get_conversion_deserialization(
-                            &"data".to_string(),
-                            &"u64".to_string(),
-                            *position,
-                            8
-                        )
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::Integer64(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\tlet {}_{} = {};\n",
-                            expr.id,
-                            i,
-                            RustGenerator::get_conversion_deserialization(
-                                &"data".to_string(),
-                                &"i64".to_string(),
-                                *position,
-                                8
-                            )
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\tlet {} = {};\n",
-                        expr.id,
-                        RustGenerator::get_conversion_deserialization(
-                            &"data".to_string(),
-                            &"i64".to_string(),
-                            *position,
-                            8
-                        )
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::Float32(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\tlet {}_{} = {};\n",
-                            expr.id,
-                            i,
-                            RustGenerator::get_conversion_deserialization(
-                                &"data".to_string(),
-                                &"f32".to_string(),
-                                *position,
-                                4
-                            )
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\tlet {} = {};\n",
-                        expr.id,
-                        RustGenerator::get_conversion_deserialization(
-                            &"data".to_string(),
-                            &"f32".to_string(),
-                            *position,
-                            4
-                        )
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::Float64(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\tlet {}_{} = {};\n",
-                            expr.id,
-                            i,
-                            RustGenerator::get_conversion_deserialization(
-                                &"data".to_string(),
-                                &"f64".to_string(),
-                                *position,
-                                8
-                            )
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\tlet {} = {};\n",
-                        expr.id,
-                        RustGenerator::get_conversion_deserialization(
-                            &"data".to_string(),
-                            &"f64".to_string(),
-                            *position,
-                            8
-                        )
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::MacAddress => {
-                result.push_str(&format!("// Not implemented {};\n", &"data".to_string()));
-                *position += expr.expr.get_type_length_bytes();
-            }
-            _ => (),
-        }
-        result
-    }
-
-    fn get_conversion_deserialization(
-        variable: &String,
-        data_type: &String,
-        position: usize,
-        data_byte_size: usize,
-    ) -> String {
-        if data_type == "u8" {
-            format!("{}[{}]", variable, position)
-        } else {
-            format!(
-                "LittleEndian::read_{}(&{}[{}..{}])",
-                data_type,
-                variable,
-                position,
-                position + data_byte_size
-            )
         }
     }
 
-    fn datatype_to_rust_type(data_type: String) -> String {
-        match data_type.as_str() {
-            "float64" => "f64",
-            _ => "unknown",
+    s
+}
+
+fn emit_field_deserialize(name: &str, t: &TypeNode, e: Endianness, is_last: bool) -> String {
+    let mut s = String::new();
+    let ee = endian_ident(e);
+    let w = elem_size_bytes(t);
+
+    match t {
+        // byte blobs
+        TypeNode::Bytes(len_opt) => {
+            if let Some(expr) = len_opt {
+                let expr_s = emit_rust_len_expr(expr);
+                let _ = writeln!(
+                    &mut s,
+                    "let mut {name}: Vec<u8> = vec![0u8; ({expr}) as usize]; cur.read_exact(&mut {name}).unwrap();",
+                    expr = expr_s
+                );
+            } else if is_last {
+                let _ = writeln!(
+                    &mut s,
+                    "let mut {name}: Vec<u8> = Vec::new(); cur.read_to_end(&mut {name}).unwrap();"
+                );
+            } else {
+                let _ = writeln!(
+                    &mut s,
+                    r#"let {name}: Vec<u8> = Vec::new(); // WARNING: open-ended bytes not at end"#,
+                );
+            }
         }
-        .to_string()
+        TypeNode::MacAddress(len_opt) => {
+            if let Some(expr) = len_opt {
+                let expr_s = emit_rust_len_expr(expr);
+                let _ = writeln!(
+                    &mut s,
+                    "let mut {name}: Vec<u8> = vec![0u8; ({expr}) as usize]; cur.read_exact(&mut {name}).unwrap();",
+                    expr = expr_s
+                );
+            } else {
+                let _ = writeln!(
+                    &mut s,
+                    "let mut {name}: [u8; 6] = [0u8; 6]; cur.read_exact(&mut {name}).unwrap();"
+                );
+            }
+        }
+
+        // numeric families
+        _ => {
+            let read_scalar = |dst: &mut String, lhs: String, t: &TypeNode| {
+                match t {
+                    TypeNode::UnsignedInteger8(_) => {
+                        let _ = writeln!(dst, "let {lhs} = cur.read_u8().unwrap();");
+                    }
+                    TypeNode::Integer8(_) => {
+                        let _ = writeln!(dst, "let {lhs} = cur.read_i8().unwrap();");
+                    }
+                    TypeNode::UnsignedInteger16(_) => {
+                        let _ = writeln!(dst, "let {lhs} = cur.read_u16::<{ee}>().unwrap();");
+                    }
+                    TypeNode::Integer16(_) => {
+                        let _ = writeln!(dst, "let {lhs} = cur.read_i16::<{ee}>().unwrap();");
+                    }
+                    TypeNode::UnsignedInteger32(_) => {
+                        let _ = writeln!(dst, "let {lhs} = cur.read_u32::<{ee}>().unwrap();");
+                    }
+                    TypeNode::Integer32(_) => {
+                        let _ = writeln!(dst, "let {lhs} = cur.read_i32::<{ee}>().unwrap();");
+                    }
+                    TypeNode::UnsignedInteger64(_) => {
+                        let _ = writeln!(dst, "let {lhs} = cur.read_u64::<{ee}>().unwrap();");
+                    }
+                    TypeNode::Integer64(_) | TypeNode::DateTime(_) => {
+                        let _ = writeln!(dst, "let {lhs} = cur.read_i64::<{ee}>().unwrap();");
+                    }
+                    TypeNode::Float32(_) => {
+                        let _ = writeln!(dst, "let {lhs} = cur.read_f32::<{ee}>().unwrap();");
+                    }
+                    TypeNode::Float64(_) => {
+                        let _ = writeln!(dst, "let {lhs} = cur.read_f64::<{ee}>().unwrap();");
+                    }
+                    _ => {}
+                }
+            };
+
+            if is_array_like(t) {
+                if let Some(expr) = type_len_expr(t) {
+                    let expr_s = emit_rust_len_expr(expr);
+                    let rust_ty = base_scalar_rust(t);
+                    let _ = writeln!(
+                        &mut s,
+                        "let mut {name}: Vec<{ty}> = Vec::with_capacity(({expr}) as usize);",
+                        ty = rust_ty,
+                        expr = expr_s
+                    );
+                    let _ = writeln!(&mut s, "for _ in 0..(({expr}) as usize) {{", expr = expr_s);
+                    read_scalar(&mut s, "_tmp".into(), t);
+                    let _ = writeln!(&mut s, "    {name}.push(_tmp);");
+                    let _ = writeln!(&mut s, "}}");
+                } else if is_last {
+                    let rust_ty = base_scalar_rust(t);
+                    let _ = writeln!(
+                        &mut s,
+                        "let remain = (cur.get_ref().len() as u64 - cur.position()) as usize;"
+                    );
+                    let _ = writeln!(
+                        &mut s,
+                        "let count = remain / {w}; let mut {name}: Vec<{ty}> = Vec::with_capacity(count);",
+                        ty = rust_ty
+                    );
+                    let _ = writeln!(&mut s, "for _ in 0..count {{");
+                    read_scalar(&mut s, "_tmp".into(), t);
+                    let _ = writeln!(&mut s, "    {name}.push(_tmp);");
+                    let _ = writeln!(&mut s, "}}");
+                } else {
+                    let rust_ty = base_scalar_rust(t);
+                    let _ = writeln!(
+                        &mut s,
+                        "let {name}: Vec<{ty}> = Vec::new(); // WARNING: dynamic length without expr and not last",
+                        ty = rust_ty
+                    );
+                }
+            } else {
+                read_scalar(&mut s, format!("{name}"), t);
+            }
+        }
     }
+
+    s
+}
+
+/* =====================================
+ * Expr emitters (for counts & calculated)
+ * ===================================== */
+
+fn emit_rust_len_expr(e: &ExprNode) -> String {
+    // Produce a numeric Rust expression usable in `as usize` contexts.
+    // We primarily emit as f64 math and cast to usize at use sites.
+    emit_rust_numeric_expr(e, "")
+}
+
+fn emit_rust_numeric_expr(e: &ExprNode, _root: &str) -> String {
+    use ExprNode::*;
+    match e {
+        UnsignedInteger64Value(u) => format!("({}f64)", *u as f64),
+        Integer64Value(i) => format!("({}f64)", *i as f64),
+        Float64Value(f) => format!("({})", f),
+
+        StringValue(_) => "0.0".into(), // not expected in sizes
+
+        ValueReference(name, idx) => {
+            if let Some(ix) = idx {
+                format!("({name}[({ix}) as usize] as f64)", ix = emit_rust_numeric_expr(ix, ""))
+            } else {
+                format!("({name} as f64)")
+            }
+        }
+
+        ParenthesizedExpr(x) => format!("({})", emit_rust_numeric_expr(x, "")),
+
+        Plus(a, b) => format!("({} + {})", emit_rust_numeric_expr(a, ""), emit_rust_numeric_expr(b, "")),
+        Minus(a, b) => format!("({} - {})", emit_rust_numeric_expr(a, ""), emit_rust_numeric_expr(b, "")),
+        Mult(a, b) => format!("({} * {})", emit_rust_numeric_expr(a, ""), emit_rust_numeric_expr(b, "")),
+        Div(a, b) => format!("({} / {})", emit_rust_numeric_expr(a, ""), emit_rust_numeric_expr(b, "")),
+        Pow(a, b) => format!("({}).powf({})", emit_rust_numeric_expr(a, ""), emit_rust_numeric_expr(b, "")),
+
+        // comparisons/logic → booleans; map to 1.0/0.0 to keep expression numeric
+        Gt(a, b) => format!("(if {} > {} {{ 1.0 }} else {{ 0.0 }})", emit_rust_numeric_expr(a, ""), emit_rust_numeric_expr(b, "")),
+        Gte(a, b)=> format!("(if {} >= {} {{ 1.0 }} else {{ 0.0 }})", emit_rust_numeric_expr(a, ""), emit_rust_numeric_expr(b, "")),
+        Lt(a, b) => format!("(if {} < {} {{ 1.0 }} else {{ 0.0 }})", emit_rust_numeric_expr(a, ""), emit_rust_numeric_expr(b, "")),
+        Lte(a, b)=> format!("(if {} <= {} {{ 1.0 }} else {{ 0.0 }})", emit_rust_numeric_expr(a, ""), emit_rust_numeric_expr(b, "")),
+        Equals(a,b)=> format!("(if ({} - {}).abs() < 1e-9 {{ 1.0 }} else {{ 0.0 }})", emit_rust_numeric_expr(a, ""), emit_rust_numeric_expr(b, "")),
+        NotEquals(a,b)=> format!("(if ({} - {}).abs() >= 1e-9 {{ 1.0 }} else {{ 0.0 }})", emit_rust_numeric_expr(a, ""), emit_rust_numeric_expr(b, "")),
+        And(a, b) => format!("(if ({} != 0.0) && ({} != 0.0) {{ 1.0 }} else {{ 0.0 }})", emit_rust_numeric_expr(a, ""), emit_rust_numeric_expr(b, "")),
+        Or(a, b)  => format!("(if ({} != 0.0) || ({} != 0.0) {{ 1.0 }} else {{ 0.0 }})", emit_rust_numeric_expr(a, ""), emit_rust_numeric_expr(b, "")),
+
+        ActivationRecord(name, args) => {
+            let args_s: Vec<String> = args.iter().map(|a| emit_rust_numeric_expr(a, "")).collect();
+            match name.as_str() {
+                "sqrt" => format!("({}).sqrt()", args_s[0]),
+                "min"  => format!("{}.min({})", args_s[0], args_s[1]),
+                "max"  => format!("{}.max({})", args_s[0], args_s[1]),
+                _ => "0.0".into(),
+            }
+        }
+
+        GuardExpression(c, t, f) => format!(
+            "(if {} != 0.0 {{ {} }} else {{ {} }})",
+            emit_rust_numeric_expr(c, ""),
+            emit_rust_numeric_expr(t, ""),
+            emit_rust_numeric_expr(f, "")
+        ),
+
+        AggregateSum(_)
+        | AggregateProduct(_) => "0.0".into(),
+
+        NoExpr => "0.0".into(),
+    }
+}
+
+/* =====================================
+ * Utility predicates & helpers
+ * ===================================== */
+
+fn is_array_like(t: &TypeNode) -> bool {
+    use TypeNode::*;
+    match t {
+        Bytes(_) | MacAddress(_) => true,
+        UnsignedInteger8(e)
+        | Integer8(e)
+        | UnsignedInteger16(e)
+        | Integer16(e)
+        | UnsignedInteger32(e)
+        | Integer32(e)
+        | UnsignedInteger64(e)
+        | Integer64(e)
+        | Float32(e)
+        | Float64(e)
+        | DateTime(e) => e.is_some(),
+    }
+}
+
+fn base_scalar_rust(t: &TypeNode) -> &'static str {
+    use TypeNode::*;
+    match t {
+        UnsignedInteger8(_) => "u8",
+        Integer8(_) => "i8",
+        UnsignedInteger16(_) => "u16",
+        Integer16(_) => "i16",
+        UnsignedInteger32(_) => "u32",
+        Integer32(_) => "i32",
+        UnsignedInteger64(_) => "u64",
+        Integer64(_) | DateTime(_) => "i64",
+        Float32(_) => "f32",
+        Float64(_) => "f64",
+        Bytes(_) | MacAddress(_) => "u8",
+    }
+}
+
+fn type_len_expr<'a>(t: &'a TypeNode) -> Option<&'a ExprNode> {
+    use TypeNode::*;
+    match t {
+        Bytes(e) | MacAddress(e) => e.as_ref(),
+        UnsignedInteger8(e)
+        | Integer8(e)
+        | UnsignedInteger16(e)
+        | Integer16(e)
+        | UnsignedInteger32(e)
+        | Integer32(e)
+        | UnsignedInteger64(e)
+        | Integer64(e)
+        | Float32(e)
+        | Float64(e)
+        | DateTime(e) => e.as_ref(),
+    }
+}
+
+fn indent(s: &str, tabs: usize) -> String {
+    let pad = "    ".repeat(tabs);
+    s.lines()
+        .map(|l| if l.is_empty() { "\n".to_string() } else { format!("{pad}{l}\n") })
+        .collect()
 }

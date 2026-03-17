@@ -1,103 +1,180 @@
-// whitespace 
-WHITESPACE = _{ " " | "\n" | "\r\n" | "\t" }
+// ===============================
+// Lexical conveniences
+// ===============================
+WHITESPACE = _{ " " | "\t" | "\n" | "\r\n" }
+COMMENT    = _{ "//" ~ (!"\n" ~ ANY)* }
 
-// tokens
-alpha = @{ 'a'..'z' | 'A'..'Z' }
-digit = @{ '0'..'9' }
-plus = @{ "+" }
-minus = @{ "-" }
-mult = @{ "*" }
-div = @{ "/" }
-pw = @{ "^" }
+// Basic character classes
+alpha  = @{ 'a'..'z' | 'A'..'Z' }
+digit  = @{ '0'..'9' }
+bindig = @{ '0'..'1' }
+hexdig = @{ '0'..'9' | 'a'..'f' | 'A'..'F' }
+alnum  = @{ alpha | digit }
+underscore = @{ "_" }
+
+// ===============================
+// Operators & punctuation (prefer longest-first)
+// ===============================
+plus   = @{ "+" }
+minus  = @{ "-" }
+mult   = @{ "*" }
+div    = @{ "/" }
+pw     = @{ "^" }
+
 lparen = @{ "(" }
 rparen = @{ ")" }
-underscore = @{ "_" }
 lbracket = @{ "{" }
 rbracket = @{ "}" }
-listsep = @{ "," }
 larray = @{ "[" }
 rarray = @{ "]" }
-sumof = @ { "sumof" }
-productof = @ { "productof" }
-assign = @ { "=" }
-when = @ { "when" }
-then = @ { "then" }
-otherwise = @ { "otherwise" }
-greater_than = @ { ">" }
-greater_than_equal = @ { ">=" }
-less_than = @ { "<" }
-less_than_equal = @ { "<= "}
-equals = @{ "==" }
-not_equals = @ { "!=" | "<>" }
-and_expr = @{ "and" }
-or_expr = @ { "or" }
-comma = @ { "," }
+comma  = @{ "," }
+assign = @{ "=" }          
 
-// identifiers and constants
-identifier = @{ (underscore | alpha){1} ~ (alpha | digit | underscore)* }
-numeric_constant = @{ digit+ ~ ("." ~ digit*)? }
+gt   = @{ ">" }
+gte  = @{ ">=" }
+lt   = @{ "<" }
+lte  = @{ "<=" }          
+eq   = @{ "==" }
+neq  = @{ "!=" | "<>" }
 
-// strings (fucking complicated)
-string = ${ "\"" ~ inner ~ "\"" }
-inner = @{ char* }
-char = {
-    !("\"" | "\\") ~ ANY
-    | "\\" ~ ("\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t")
-    | "\\" ~ ("u" ~ ASCII_HEX_DIGIT{4})
+// Logical
+and_kw = @{ "and" }
+or_kw  = @{ "or" }
+
+// Aggregates / control
+sumof_kw      = @{ "sumof" }
+productof_kw  = @{ "productof" }
+when_kw       = @{ "when" }
+then_kw       = @{ "then" }
+otherwise_kw  = @{ "otherwise" }
+
+// Packet keywords
+packet_kw     = @{ "packet" }
+calc_kw       = @{ "calc" }
+
+// Intrinsics
+sqrt_kw = @{ "sqrt" }
+min_kw  = @{ "min" }
+max_kw  = @{ "max" }
+
+// Endianness
+le_kw = @{ "le" }
+be_kw = @{ "be" }
+
+// ===============================
+// Keyword reservation
+// ===============================
+keyword = _{
+    packet_kw | calc_kw
+  | when_kw | then_kw | otherwise_kw
+  | sumof_kw | productof_kw
+  | and_kw | or_kw
+  | sqrt_kw | min_kw | max_kw
+  | le_kw | be_kw
+  // types are also reserved (see below)
 }
 
-// parameter list (should fix this to terminate with rparen)
-parameter_list = { lparen ~ (expr ~ comma*)* ~ rparen }
+// ===============================
+// Identifiers & numbers
+// ===============================
+// Disallow keywords as identifiers:
+identifier = @{
+    !(keyword ~ !(alnum | underscore))
+    ~ (alpha | underscore)
+    ~ (alnum | underscore)*
+}
 
-// intrinsic functions
-sqrt = @{"sqrt"}
-min = @{"min"}
-max = @{"max"}
+// Numbers: decimal, hex (0x...), and binary (0b...)
+numeric_constant = @{
+      ("0x" ~ hexdig+)
+    | ("0b" ~ bindig+)
+    | (digit+ ~ ("." ~ digit+)?)
+}
 
-// types
-int8 = @{"int8"}
-uint8 = @{"uint8"}
-int16 = @{"int16"}
-uint16 = @{"uint16"}
-int32 = @{"int32"}
-uint32 = @{"uint32"}
-int64 = @{"int64"}
-uint64 = @{"uint64"}
-float32 = @{"float32"}
-float64 = @{"float64"}
-macaddress = @{"macaddress"}
-datetime = @{"datetime"}
-little_endian = @{ "le" }
-big_endian = @ { "be" }
-type_name = @{ int8 | uint8 | int16 | uint16 | int32 | uint32 | int64 | uint64 | float32 | float64 | macaddress | datetime }
-intrinsic_function = @{ sqrt | min | max }
-endianness = @ { little_endian | big_endian }
+// ===============================
+// Strings (JSON-style escapes)
+// ===============================
+string = ${ "\"" ~ inner ~ "\"" }
+inner  = @{ char* }
+char   = {
+      !("\"" | "\\") ~ ANY
+    | "\\" ~ ("\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t")
+    | "\\" ~ ("u" ~ hexdig{4})
+}
 
-// packet keywords
-packet_keyword = @{"packet"}
-calculated_keyword = @{"calc"}
+// ===============================
+// Types
+// ===============================
+int8    = @{ "int8" }
+uint8   = @{ "uint8" }
+int16   = @{ "int16" }
+uint16  = @{ "uint16" }
+int32   = @{ "int32" }
+uint32  = @{ "uint32" }
+int64   = @{ "int64" }
+uint64  = @{ "uint64" }
+float32 = @{ "float32" }
+float64 = @{ "float64" }
+macaddr = @{ "macaddress" }
+datetime= @{ "datetime" }
+bytes_t = @{ "bytes" }     // NEW: raw byte blob
 
-// expressions
-expr = { bool_and_or_expr }
-bool_and_or_expr = { bool_comp_expr ~ ((and_expr | or_expr) ~ bool_comp_expr)* }
-bool_comp_expr = { sum ~ ((greater_than | greater_than_equal | less_than | less_than_equal | equals | not_equals) ~ sum)* }
-sum = { product ~ ((plus | minus) ~ product)* }
-product = { power ~ ((mult | div) ~ power)* }
-power = { value ~ (pw ~ value)? }
-inner_expr = { lparen ~ expr ~ rparen }
-value = { guard_expression | numeric_constant | intrinsic_function_clause | aggregate_accessor | direct_value_accessor | inner_expr }
-intrinsic_function_clause = { intrinsic_function ~ parameter_list }
+type_name = @{
+    int8 | uint8 | int16 | uint16 | int32 | uint32 | int64 | uint64
+  | float32 | float64 | macaddr | datetime | bytes_t
+}
 
-// declaring and accessing variables
+// Keep types reserved:
+keyword_or_type = _{ keyword | type_name }
+
+// Endianness specifier (optional per packet/field)
+endianness = @{ le_kw | be_kw }
+
+// ===============================
+// Expressions (precedence: or < and < comparison < +,- < *,/ < ^ < primary)
+// ===============================
+expr            = { bool_or }
+bool_or         = { bool_and ~ (or_kw  ~ bool_and )* }
+bool_and        = { cmp      ~ (and_kw ~ cmp      )* }
+cmp             = { sum ~ ((gte|lte|gt|lt|eq|neq) ~ sum)* }
+sum             = { product ~ ((plus | minus) ~ product)* }
+product         = { power   ~ ((mult | div)  ~ power  )* }
+power           = { primary ~ (pw ~ primary)? }
+
+primary         = { guard_expression | literal | function_call | accessor | inner_expr }
+
+inner_expr      = { lparen ~ expr ~ rparen }
+literal         = { numeric_constant | string }
+
+// Function calls
+intrinsic_function = @{ sqrt_kw | min_kw | max_kw }
+parameter_list = { lparen ~ (expr ~ (comma ~ expr)*)? ~ comma? ~ rparen } // allows trailing comma
+function_call = { intrinsic_function ~ parameter_list }
+
+// Accessors & declarations
 declaration = { identifier ~ type_name ~ array_specifier? ~ endianness? }
-direct_value_accessor = { identifier ~ array_specifier? }
-aggregate_accessor = { (sumof | productof) ~ identifier ~ !array_specifier }
-array_specifier = { larray ~ numeric_constant ~ rarray }
+accessor    = { aggregate_accessor | direct_value_accessor }
 
-// packet body
+direct_value_accessor = { identifier ~ array_specifier? }
+aggregate_accessor    = { (sumof_kw | productof_kw) ~ identifier ~ !larray }
+
+// Arrays: allow dynamic length via full expr, not just numeric constant
+array_specifier = { larray ~ expr ~ rarray }
+
+// Guarded (ternary-like) expression usable anywhere an expr is allowed
+guard_expression = { when_kw ~ expr ~ then_kw ~ expr ~ otherwise_kw ~ expr }
+
+// ===============================
+// Packets
+// ===============================
 packets = { SOI ~ packet+ ~ EOI }
-packet = { packet_keyword ~ identifier ~ endianness? ~ lbracket ~ rule_list ~ rbracket }
-rule_list = { rule ~ (listsep ~ rule)* }
+
+packet  = {
+  packet_kw ~ identifier ~ endianness? ~ lbracket ~ rule_list? ~ rbracket
+}
+
+rule_list = { rule ~ (comma ~ rule)* ~ comma? }
+
 rule = { declaration | calculated_field }
-calculated_field = { calculated_keyword ~ identifier ~ type_name ~ assign ~ expr }
-guard_expression = { when ~ expr ~ then ~ expr ~ otherwise ~ expr }
+
+calculated_field = { calc_kw ~ identifier ~ type_name ~ assign ~ expr }

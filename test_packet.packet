@@ -1,6 +1,170 @@
-packet Test {
-    test1 uint8[10],
-    test2 int16,
-    test3 float32,
-    test4 float64
+// =====================================================
+// OSCAR protocol (AIM/ICQ) – packet definitions for your DSL
+// Big-endian network byte order
+// =====================================================
+
+// -----------------------------
+// FLAP (Frame Layer Protocol)
+// -----------------------------
+// Common FLAP header: '*' 0x2a, channel, seq, len, then payload[len].
+packet Flap be {
+  start uint8,                
+  channel uint8,             
+  sequence uint16,
+  length uint16,
+  payload bytes[length],
+  calc magic_ok uint8 = when (start == 0x2a) then 1 otherwise 0
 }
+
+// Channel 0x05 (keep-alive) is usually empty (len = 0)
+packet FlapKeepAlive be {
+  start uint8,
+  channel uint8,
+  sequence uint16,
+  length uint16,
+  payload bytes[length],
+  calc magic_ok uint8 = when (start == 0x2a) then 1 otherwise 0
+}
+
+// Channel 0x02 carries SNACs. This variant inlines SNAC header so you
+// can parse a complete “FLAP+SNAC” frame in one pass.
+packet FlapSnac be {
+  start uint8,
+  channel uint8,
+  sequence uint16,
+  length uint16,              // total SNAC bytes below
+
+  // SNAC envelope (10 bytes)
+  family uint16,              // SNAC service family
+  subtype uint16,             // SNAC subtype
+  flags uint16,               // flags; bitfield
+  request_id uint32,          // request/transaction id
+
+  // Remaining SNAC body
+  body bytes[length - 10],
+
+  calc magic_ok uint8 = when (start == 0x2a) then 1 otherwise 0
+}
+
+// If you want to parse SNAC out of an already extracted FLAP payload:
+packet Snac be {
+  family uint16,
+  subtype uint16,
+  flags uint16,
+  request_id uint32,
+  body bytes[body_len],
+  // You’ll pass body_len from the outside (FLAP.len - 10) if you embed this.
+  // This standalone form is mainly for tooling/tests.
+}
+
+// -----------------------------
+// TLV (Type-Length-Value)
+// -----------------------------
+// OSCAR TLV: 2-byte type, 2-byte length, then length bytes of data.
+packet TLV be {
+  t uint16,
+  l uint16,
+  v bytes[l]
+}
+
+// A compact TLV container you can reuse inside SNAC bodies when the
+// body is known to be exactly a stream of TLVs of size `n`.
+packet TLVStream be {
+  n uint16,              // number of TLVs (when explicitly provided)
+  data bytes[tlv_bytes], // the raw region containing TLVs
+  // If there is no explicit count, compute tlv_bytes from an outer context
+  // and pass it down. Here we show a neutral default:
+  calc tlv_bytes uint16 = n * 4  // (header-only; override as needed)
+}
+
+// =====================================================
+// "Typed" SNAC shells (most common families)
+// These parse the fixed header + the well-known fixed fields,
+// and leave variable data as TLVs/raw bytes. Grow as needed.
+// =====================================================
+
+// Family 0x01: Generic Service (handshake/rate/versions)
+// Subtype usage varies by era; we offer a generic TLV-bearing form.
+packet SNAC_01_GenericTLVs be {
+  // header duplicated so this can be parsed standalone (or use FlapSnac)
+  family uint16,
+  subtype uint16,
+  flags uint16,
+  request_id uint32,
+  tlv_block bytes[tlv_len],
+  // Provide tlv_len from the wrapper (FLAP length - 10). When embedded inside
+  // FlapSnac, use: tlv_len == outer.length - 10.
+}
+
+// Family 0x03: Buddy (Add/Remove/On/Off events)
+// Typical notif includes UIN/screenname fields and TLVs.
+// Keep body raw; most fields are TLVs and short integers.
+packet SNAC_03_BuddyEvent be {
+  family uint16, subtype uint16, flags uint16, request_id uint32,
+  body bytes[body_len],
+  calc body_len uint16 = 0  // override when embedded
+}
+
+// Family 0x04: ICBM (Instant messages)
+// OSCAR ICBM payload starts with an 8-byte cookie and a 2-byte channel.
+// The rest tends to be TLVs to the end of SNAC body.
+packet SNAC_04_ICBM be {
+  family uint16, subtype uint16, flags uint16, request_id uint32,
+  cookie bytes[8],
+  icbm_channel uint16,
+  rest bytes[rest_len],
+  // If this is embedded inside FlapSnac, set rest_len = (flap.length - 10 - 8 - 2)
+  calc rest_len uint16 = 0
+}
+
+// Family 0x06: SSI (Server Stored Information; roster/permit/deny)
+// Payload is a sequence of “items” (name, group, type, TLVs).
+// We keep it raw; in practice this is TLV-rich and variable across servers.
+packet SNAC_06_SSI be {
+  family uint16, subtype uint16, flags uint16, request_id uint32,
+  ssi bytes[ssi_len],
+  calc ssi_len uint16 = 0
+}
+
+// Family 0x09: BOS (Basic OSCAR Service)
+// Often TLVs with service stats/config.
+packet SNAC_09_BOS be {
+  family uint16, subtype uint16, flags uint16, request_id uint32,
+  body bytes[body_len],
+  calc body_len uint16 = 0
+}
+
+// =====================================================
+// Channel-1 negotiation (Login/Redirect style frames)
+// Historically: channel 0x01 carries negotiation and redirect info.
+// It’s usually a TLV list in the payload.
+// =====================================================
+
+packet FlapNegotiate be {
+  start uint8,
+  channel uint8,   // 0x01
+  sequence uint16,
+  length uint16,
+  payload bytes[length], // frequently a series of TLVs in practice
+  calc magic_ok uint8 = when (start == 0x2a) then 1 otherwise 0
+}
+
+// =====================================================
+// Small helpers / examples for TLVs commonly seen in OSCAR
+// (All are just TLV containers; you’ll branch by TLV.t in code.)
+// =====================================================
+
+// TLV wrapper with explicit type guard
+packet TLV_Type0001 be {
+  // Example: TLV t=0x0001 (screen name) data is raw bytes (often ASCII).
+  t uint16, l uint16, v bytes[l],
+  calc is_0001 uint8 = when (t == 0x0001) then 1 otherwise 0
+}
+
+packet TLV_Type0005 be {
+  t uint16, l uint16, v bytes[l],
+  calc is_0005 uint8 = when (t == 0x0005) then 1 otherwise 0
+}
+
+// Add more wrappers as you formalize TLV maps for your deployment.
+// E.g. auth cookie, server host/port, capability blocks, encoding info, etc.

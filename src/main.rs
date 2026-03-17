@@ -14,6 +14,7 @@ mod generators;
 mod models;
 mod parser;
 mod utilities;
+mod errors;
 
 use crate::generators::c_generator::CGenerator;
 use crate::generators::rust_generator::RustGenerator;

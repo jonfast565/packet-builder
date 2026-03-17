@@ -1,169 +1,229 @@
 use crate::models::codegen_models::TwoStringValue;
-use crate::models::parsing_models::{ExprNode, PacketExpr, PacketExprList, TypeExpr, TypeNode};
-use crate::utilities::{capitalize_first, CaseWrapper, Casing};
+use crate::models::parsing_models::{Endianness, ExprNode, PacketExpr, PacketExprList, TypeNode};
+use crate::utilities::capitalize_first;
+use serde::{Deserialize, Serialize};
 use tera::{Context, Tera};
-
-lazy_static! {
-    pub static ref STATIC_TEMPLATES: Tera = {
-        let tera = match Tera::new("templates/**/*") {
-            Ok(t) => t,
-            Err(e) => {
-                println!("Parsing error(s): {}", e);
-                ::std::process::exit(1);
-            }
-        };
-        tera
-    };
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GoPacketValue {
-    pub name: String,
-    pub endian: String,
-    pub types: Vec<TwoStringValue>,
+    pub name: String,                // Struct name (already exported/capitalized at template time)
+    pub endian: String,              // "binary.LittleEndian" | "binary.BigEndian" | ""
+    pub types: Vec<TwoStringValue>,  // value1 = FieldName (Exported), value2 = Go type string
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GoPacketRenderContext {
-    pub packets: Vec<GoPacketValue>
+    pub package_name: String,
+    pub uses_time: bool,
+    pub packets: Vec<GoPacketValue>,
 }
 
-pub struct GoGenerator {}
+pub struct GoGenerator;
 
 impl GoGenerator {
     pub fn generate(packet_list: &PacketExprList) -> String {
+        // Prepare Tera with inline template
+        let mut tera = Tera::default();
+        tera.add_raw_template("go_root", GO_TEMPLATE).expect("add template");
+
+        // Build render context
         let rendered = GoGenerator::expr_list_to_rendered(packet_list);
-        match STATIC_TEMPLATES.render("go.tera", &Context::from_serialize(&rendered).unwrap()) {
-            Ok(compiled) => return compiled,
+
+        // Render
+        match tera.render("go_root", &Context::from_serialize(&rendered).unwrap()) {
+            Ok(compiled) => compiled,
             Err(err) => panic!("{}", err),
-        };
+        }
     }
 
     pub fn expr_list_to_rendered(packet_list: &PacketExprList) -> GoPacketRenderContext {
         let mut value_vec = Vec::<GoPacketValue>::new();
+        let mut uses_time_any = false;
+
         for packet in &packet_list.packets {
+            let (types, uses_time) = GoGenerator::get_go_types(packet);
+            uses_time_any |= uses_time;
+
             value_vec.push(GoPacketValue {
-                name: packet.name.clone(),
-                endian: String::from("little"),
-                types: GoGenerator::get_go_types(&packet)
+                name: capitalize_first(packet.name.clone()),
+                endian: match packet.endianness {
+                    Some(Endianness::Le) => "binary.LittleEndian".to_string(),
+                    Some(Endianness::Be) => "binary.BigEndian".to_string(),
+                    None => "".to_string(),
+                },
+                types,
             });
         }
+
         GoPacketRenderContext {
-            packets: value_vec
+            package_name: "packets".to_string(), // change if you want a different package name
+            uses_time: uses_time_any,
+            packets: value_vec,
         }
     }
 
-    pub fn get_go_types(packet_expr: &PacketExpr) -> Vec<TwoStringValue> {
+    /// Returns (Vec<TwoStringValue>, uses_time)
+    pub fn get_go_types(packet_expr: &PacketExpr) -> (Vec<TwoStringValue>, bool) {
         let mut str_vec = Vec::<TwoStringValue>::new();
+        let mut uses_time = false;
+
         for field in &packet_expr.fields {
-            let result = match field.expr {
-                TypeNode::UnsignedInteger8(y) => {
-                    format!(
-                        "{}{}",
-                        match y {
-                            Some(_) => "[]",
-                            None => "",
-                        },
-                        "uint8"
-                    )
-                }
-                TypeNode::Integer8(y) => {
-                    format!(
-                        "{}{}",
-                        match y {
-                            Some(_) => "[]",
-                            None => "",
-                        },
-                        "int8"
-                    )
-                }
-                TypeNode::UnsignedInteger16(y) => {
-                    format!(
-                        "{}{}",
-                        match y {
-                            Some(_) => "[]",
-                            None => "",
-                        },
-                        "uint16"
-                    )
-                }
-                TypeNode::Integer16(y) => {
-                    format!(
-                        "{}{}",
-                        match y {
-                            Some(_) => "[]",
-                            None => "",
-                        },
-                        "int16"
-                    )
-                }
-                TypeNode::UnsignedInteger32(y) => {
-                    format!(
-                        "{}{}",
-                        match y {
-                            Some(_) => "[]",
-                            None => "",
-                        },
-                        "uint32"
-                    )
-                }
-                TypeNode::Integer32(y) => {
-                    format!(
-                        "{}{}",
-                        match y {
-                            Some(_) => "[]",
-                            None => "",
-                        },
-                        "int32"
-                    )
-                }
-                TypeNode::UnsignedInteger64(y) => {
-                    format!(
-                        "{}{}",
-                        match y {
-                            Some(_) => "[]",
-                            None => "",
-                        },
-                        "uint64"
-                    )
-                }
-                TypeNode::Integer64(y) => {
-                    format!(
-                        "{}{}",
-                        match y {
-                            Some(_) => "[]",
-                            None => "",
-                        },
-                        "int64"
-                    )
-                }
-                TypeNode::Float32(y) => {
-                    format!(
-                        "{}{}",
-                        match y {
-                            Some(_) => "[]",
-                            None => "",
-                        },
-                        "float32"
-                    )
-                }
-                TypeNode::Float64(y) => {
-                    format!(
-                        "{}{}",
-                        match y {
-                            Some(_) => "[]",
-                            None => "",
-                        },
-                        "float64"
-                    )
-                }
-                _ => "".to_string(),
-            };
+            let (go_type, field_uses_time) = map_type_node_to_go(&field.expr);
+            uses_time |= field_uses_time;
 
             let name = capitalize_first(field.id.clone());
-            let value = TwoStringValue { value1: name, value2: result };
+            let value = TwoStringValue { value1: name, value2: go_type };
             str_vec.push(value);
         }
-        str_vec
+
+        (str_vec, uses_time)
     }
+}
+
+// ===================================================
+// Template
+// ===================================================
+
+const GO_TEMPLATE: &str = r#"
+// Code generated by GoGenerator. DO NOT EDIT.
+
+package {{ package_name }}
+
+import (
+    "encoding/binary"
+    {%- if uses_time %}
+    "time"
+    {%- endif %}
+)
+
+{#- Emit one struct per packet -#}
+{%- for p in packets %}
+
+// {{ p.name }} (endianness: {{- if p.endian != "" -}} {{ p.endian }} {{- else -}} unspecified {{- endif -}})
+type {{ p.name }} struct {
+{%- for t in p.types %}
+    {{ t.value1 }} {{ t.value2 }}
+{%- endfor %}
+}
+
+{%- endfor %}
+"#;
+
+// ===================================================
+// Mapping helpers
+// ===================================================
+
+fn map_type_node_to_go(t: &TypeNode) -> (String, bool) {
+    use TypeNode::*;
+
+    // Helper: format array/slice depending on length expr
+    let array_or_slice = |elem: &str, len: &Option<ExprNode>| -> String {
+        match len {
+            None => elem.to_string(),
+            Some(expr) => {
+                if let Some(n) = eval_len_const(expr) {
+                    format!("[{}]{}", n, elem)
+                } else {
+                    format!("[]{}", elem)
+                }
+            }
+        }
+    };
+
+    match t {
+        UnsignedInteger8(len)  => (array_or_slice("uint8", len), false),
+        Integer8(len)          => (array_or_slice("int8", len), false),
+        UnsignedInteger16(len) => (array_or_slice("uint16", len), false),
+        Integer16(len)         => (array_or_slice("int16", len), false),
+        UnsignedInteger32(len) => (array_or_slice("uint32", len), false),
+        Integer32(len)         => (array_or_slice("int32", len), false),
+        UnsignedInteger64(len) => (array_or_slice("uint64", len), false),
+        Integer64(len)         => (array_or_slice("int64", len), false),
+        Float32(len)           => (array_or_slice("float32", len), false),
+        Float64(len)           => (array_or_slice("float64", len), false),
+
+        // Represent datetime in Go as time.Time
+        DateTime(len)          => (array_or_slice("time.Time", len), true),
+
+        // MacAddress defaults to [6]byte if no length; else [N]byte or []byte
+        MacAddress(len_opt) => {
+            match len_opt {
+                None => ("[6]byte".to_string(), false),
+                Some(expr) => {
+                    if let Some(n) = eval_len_const(expr) {
+                        (format!("[{}]byte", n), false)
+                    } else {
+                        ("[]byte".to_string(), false)
+                    }
+                }
+            }
+        }
+
+        // bytes -> [N]byte if const N, else []byte
+        Bytes(len_opt) => {
+            match len_opt {
+                None => ("[]byte".to_string(), false),
+                Some(expr) => {
+                    if let Some(n) = eval_len_const(expr) {
+                        (format!("[{}]byte", n), false)
+                    } else {
+                        ("[]byte".to_string(), false)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ===================================================
+// Constant-expression evaluator (reused from C generator style)
+// ===================================================
+
+fn eval_len_const(expr: &ExprNode) -> Option<usize> {
+    eval_i128(expr).and_then(|n| if n >= 0 { Some(n as usize) } else { None })
+}
+
+fn eval_i128(e: &ExprNode) -> Option<i128> {
+    use ExprNode::*;
+    match e {
+        UnsignedInteger64Value(u) => Some(*u as i128),
+        Integer64Value(i)         => Some(*i as i128),
+        Float64Value(f)           => Some(*f as i128), // truncation OK for size constants
+        StringValue(_)            => None,
+        ParenthesizedExpr(inner)  => eval_i128(inner),
+        Plus(a,b)  => Some(eval_i128(a)? + eval_i128(b)?),
+        Minus(a,b) => Some(eval_i128(a)? - eval_i128(b)?),
+        Mult(a,b)  => Some(eval_i128(a)? * eval_i128(b)?),
+        Div(a,b)   => {
+            let d = eval_i128(b)?;
+            if d == 0 { None } else { Some(eval_i128(a)? / d) }
+        }
+        Pow(a,b)   => {
+            let base = eval_i128(a)?;
+            let exp  = eval_i128(b)?;
+            if exp < 0 { return None; }
+            Some(ipow_i128(base, exp as u32)?)
+        }
+
+        // Treat conditionals/booleans as non-const by default (could be extended)
+        GuardExpression(_,_,_) => None,
+        Gt(_,_) | Gte(_,_) | Lt(_,_) | Lte(_,_) | Equals(_,_) | NotEquals(_,_) | And(_,_) | Or(_,_) => None,
+
+        // Not constant without runtime context:
+        ValueReference(_, _) | ActivationRecord(_, _) | AggregateSum(_) | AggregateProduct(_) | NoExpr => None,
+    }
+}
+
+fn ipow_i128(mut base: i128, mut exp: u32) -> Option<i128> {
+    let mut acc: i128 = 1;
+    while exp > 0 {
+        if exp & 1 == 1 {
+            acc = acc.checked_mul(base)?;
+        }
+        exp >>= 1;
+        if exp > 0 {
+            base = base.checked_mul(base)?;
+        }
+    }
+    Some(acc)
 }

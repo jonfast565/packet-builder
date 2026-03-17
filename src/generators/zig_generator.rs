@@ -1,19 +1,21 @@
-use crate::models::parsing_models::{ExprNode, PacketExpr, TypeExpr, PacketExprList, TypeNode};
+use crate::models::parsing_models::{
+    ExprNode, PacketExpr, PacketExprList, TypeNode,
+};
 
 pub struct ZigGenerator {}
 
 impl ZigGenerator {
-    pub fn generate(expr: &PacketExprList) -> String {
-        let mut result = String::new();
-        result.push_str(&ZigGenerator::create_headers());
-        result.push_str(&ZigGenerator::create_spacer());
-        result.push_str(&ZigGenerator::create_supporting_functions());
-        result.push_str(&ZigGenerator::create_spacer());
-        for exp in &expr.packets {
-            result.push_str(&ZigGenerator::build_struct(&exp, false));
-            result.push_str(&ZigGenerator::create_serialization_functions(&exp));
+    pub fn generate(model: &PacketExprList) -> String {
+        let mut out = String::new();
+        out.push_str(&Self::create_headers());
+        out.push_str(&Self::create_spacer());
+
+        for pkt in &model.packets {
+            out.push_str(&Self::build_packet(pkt));
+            out.push_str(&Self::create_spacer());
         }
-        result
+
+        out
     }
 
     fn create_spacer() -> String {
@@ -21,958 +23,553 @@ impl ZigGenerator {
     }
 
     fn create_headers() -> String {
-        "\tconst std = @import(\"std\");
-        const mem = @import(\"std\").mem;
-        const allocator: *std.mem.Allocator = std.heap.page_allocator;
-        "
+        // Zig 0.11+ friendly imports
+        r#"const std = @import("std");
+
+"#
         .to_string()
     }
 
-    fn create_supporting_functions() -> String {
-        "\tpub fn reverse(arr: []u8) []u8 {
-            var low: u64 = 0;
-            var high: u64 = arr.len - 1;
-            while (low < high) {
-                var temp: u64 = arr[low];
-                arr[low] = arr[high];
-                arr[high] = temp;
-                low += 1;
-                high -= 1;
+    fn build_packet(pkt: &PacketExpr) -> String {
+        // Fields
+        let mut field_lines = String::new();
+        for f in &pkt.fields {
+            let ty = zig_field_type(&f.expr);
+            field_lines.push_str(&format!("        {name}: {ty},\n", name = f.id, ty = ty));
+        }
+        // (Optional) calculated fields – if you want them in the struct as stored values,
+        // map their type names just like in Rust/C# generators. For now we omit here.
+
+        // Serializer body
+        let mut ser_body = String::new();
+        ser_body.push_str("            var list = std.ArrayList(u8).init(allocator);\n");
+        ser_body.push_str("            defer list.deinit();\n\n");
+        for f in &pkt.fields {
+            ser_body.push_str(&emit_zig_serialize_field(&f.id, &f.expr));
+        }
+        ser_body.push_str("            return list.toOwnedSlice();\n");
+
+        // Deserializer body
+        let mut de_body = String::new();
+        de_body.push_str("            var i: usize = 0;\n");
+        for (idx, f) in pkt.fields.iter().enumerate() {
+            let is_last = idx + 1 == pkt.fields.len();
+            de_body.push_str(&emit_zig_deserialize_field(&f.id, &f.expr, is_last));
+        }
+
+        // Final struct literal construction
+        let mut build_lines = String::new();
+        for f in &pkt.fields {
+            build_lines.push_str(&format!("                .{name} = {name},\n", name = f.id));
+        }
+
+        // Emit the struct with methods
+        format!(
+            r#"pub const {name} = struct {{
+{fields}
+    pub fn serialize(self: *const {name}, allocator: std.mem.Allocator) ![]u8 {{
+{ser_body}    }}
+
+    pub fn deserialize(allocator: std.mem.Allocator, data: []const u8) !{name} {{
+{de_body}
+        return .{{
+{build}        }};
+    }}
+}};
+"#,
+            name = pkt.name,
+            fields = field_lines,
+            ser_body = indent(&ser_body, 2),
+            de_body = indent(&de_body, 2),
+            build = build_lines
+        )
+    }
+}
+
+/* ===========================
+ * Type mapping
+ * =========================== */
+
+fn zig_field_type(t: &TypeNode) -> String {
+    use TypeNode::*;
+    match t {
+        // Numeric families (scalar or slice)
+        UnsignedInteger8(len) => if len.is_some() { "[]u8".into() } else { "u8".into() },
+        Integer8(len)         => if len.is_some() { "[]i8".into() } else { "i8".into() },
+        UnsignedInteger16(len)=> if len.is_some() { "[]u16".into() } else { "u16".into() },
+        Integer16(len)        => if len.is_some() { "[]i16".into() } else { "i16".into() },
+        UnsignedInteger32(len)=> if len.is_some() { "[]u32".into() } else { "u32".into() },
+        Integer32(len)        => if len.is_some() { "[]i32".into() } else { "i32".into() },
+        UnsignedInteger64(len)=> if len.is_some() { "[]u64".into() } else { "u64".into() },
+        Integer64(len)        => if len.is_some() { "[]i64".into() } else { "i64".into() },
+        Float32(len)          => if len.is_some() { "[]f32".into() } else { "f32".into() },
+        Float64(len)          => if len.is_some() { "[]f64".into() } else { "f64".into() },
+        DateTime(len)         => if len.is_some() { "[]i64".into() } else { "i64".into() },
+
+        // Bytes: always a slice
+        Bytes(_len)           => "[]u8".into(),
+
+        // MacAddress: fixed 6 bytes if length not specified, else a slice
+        MacAddress(len)       => if len.is_some() { "[]u8".into() } else { "[6]u8".into() },
+    }
+}
+
+/* ===========================
+ * Serialization emitters
+ * =========================== */
+
+fn emit_zig_serialize_field(name: &str, t: &TypeNode) -> String {
+    use TypeNode::*;
+    let mut s = String::new();
+
+    // Helper: write integer/float with little-endian (switch to Big if needed)
+    let write_scalar = |dst: &mut String, comptime_ty: &str, val_expr: &str| {
+        // For floats, caller should pass a bitcasted integer.
+        let nbytes = format!("@sizeOf({})", comptime_ty);
+        dst.push_str(&format!(
+            "            var buf: [{}]u8 = undefined;\n",
+            nbytes
+        ));
+        dst.push_str(&format!(
+            "            std.mem.writeIntLittle({ty}, buf[0..], {val});\n",
+            ty = comptime_ty,
+            val = val_expr
+        ));
+        dst.push_str("            try list.appendSlice(buf[0..]);\n");
+    };
+
+    match t {
+        // Byte blobs and u8 arrays: fast path
+        Bytes(_) => {
+            s.push_str(&format!("            try list.appendSlice(self.{name});\n"));
+        }
+        MacAddress(len) => {
+            if len.is_some() {
+                s.push_str(&format!("            try list.appendSlice(self.{name});\n"));
+            } else {
+                s.push_str(&format!("            try list.appendSlice(self.{name}[0..]); // 6 bytes\n"));
             }
-            return arr;
         }
-        "
-        .to_string()
-    }
 
-    fn create_serialization_functions(expr: &PacketExpr) -> String {
-        format!(
-            "\tpub fn serialize(packet: {}, verbose: bool) []u8 {{
-            var data: []u8 = try allocator.alloc(u8, {});
-            for (data[0..{}]) |*v| v = 0;
-            {}
-        }}
-
-        pub fn deserialize(data: []u8, verbose: bool) {} {{
-            var packet: {} = allocator.alloc({}, 1);
-            {}
-        }}
-
-        pub fn main() !void {{
-            // std.io.stdout.print(\"-- Packet Tester --\");
-        }}
-        ",
-            expr.name,
-            expr.get_total_length(),
-            expr.get_total_length(),
-            &ZigGenerator::create_serializers(expr),
-            expr.name,
-            expr.name,
-            expr.name,
-            &ZigGenerator::create_deserializers(expr)
-        )
-        .to_string()
-    }
-
-    fn build_struct(expr: &PacketExpr, just_fields: bool) -> String {
-        let field_aggregation = expr
-            .fields
-            .iter()
-            .map(|x| match x.expr {
-                TypeNode::UnsignedInteger8(y) => {
-                    format!("{}: {}u8,", x.id, ZigGenerator::get_array_bounds(y))
-                }
-                TypeNode::Integer8(y) => {
-                    format!("{}: {}i8,", x.id, ZigGenerator::get_array_bounds(y))
-                }
-                TypeNode::UnsignedInteger16(y) => {
-                    format!("{}: {}u16,", x.id, ZigGenerator::get_array_bounds(y))
-                }
-                TypeNode::Integer16(y) => {
-                    format!("{}: {}i16,", x.id, ZigGenerator::get_array_bounds(y))
-                }
-                TypeNode::UnsignedInteger32(y) => {
-                    format!("{}: {}u32,", x.id, ZigGenerator::get_array_bounds(y))
-                }
-                TypeNode::Integer32(y) => {
-                    format!("{}: {}i32,", x.id, ZigGenerator::get_array_bounds(y))
-                }
-                TypeNode::UnsignedInteger64(y) => {
-                    format!("{}: {}u64,", x.id, ZigGenerator::get_array_bounds(y))
-                }
-                TypeNode::Integer64(y) => {
-                    format!("{}: {}i64,", x.id, ZigGenerator::get_array_bounds(y))
-                }
-                TypeNode::Float32(y) => {
-                    format!("{}: {}f32,", x.id, ZigGenerator::get_array_bounds(y))
-                }
-                TypeNode::Float64(y) => {
-                    format!("{}: {}f64;", x.id, ZigGenerator::get_array_bounds(y))
-                }
-                _ => "".to_string(),
-            })
-            .fold(String::new(), |acc, v| format!("{}\t    {}\n", acc, v));
-
-        if !just_fields {
-            format!(
-                "\tconst {} = struct {{\n {} \n\t}};\n\n",
-                expr.name, field_aggregation
-            )
-        } else {
-            format!("{}", field_aggregation)
-        }
-    }
-
-    fn get_array_bounds(expr: Option<usize>) -> String {
-        match expr {
-            Some(x) => format!("[{}]", x.to_string()),
-            None => "".to_string(),
-        }
-    }
-
-    fn create_deserializers(expr: &PacketExpr) -> String {
-        let mut result = String::new();
-        let mut counter = 0;
-        for field in &expr.fields {
-            result.push_str(&ZigGenerator::get_field_deserializer(field, &mut counter));
-        }
-        result
-    }
-
-    fn create_serializers(expr: &PacketExpr) -> String {
-        let mut result = String::new();
-        let mut counter = 0;
-        for field in &expr.fields {
-            result.push_str(&ZigGenerator::get_field_serializer(field, &mut counter));
-        }
-        result
-    }
-
-    fn get_field_serializer(expr: &TypeExpr, position: &mut usize) -> String {
-        let mut result = String::new();
-        match expr.expr {
-            TypeNode::UnsignedInteger8(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\t{};\n",
-                            &ZigGenerator::get_8bit_conversion_serialization_array(
-                                &"data".to_string(),
-                                &expr.id,
-                                *position,
-                                i
-                            )
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\t{};\n",
-                        &ZigGenerator::get_8bit_conversion_serialization(
-                            &"data".to_string(),
-                            &expr.id,
-                            *position,
-                        )
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::Integer8(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\t{};\n",
-                            &ZigGenerator::get_8bit_conversion_serialization_array(
-                                &"data".to_string(),
-                                &expr.id,
-                                *position,
-                                i
-                            )
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\t{};\n",
-                        &ZigGenerator::get_8bit_conversion_serialization(
-                            &"data".to_string(),
-                            &expr.id,
-                            *position,
-                        )
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::UnsignedInteger16(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\t{};\n",
-                            &ZigGenerator::get_16bit_conversion_serialization_array(
-                                &"data".to_string(),
-                                &expr.id,
-                                *position,
-                                i
-                            )
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\t{};\n",
-                        &ZigGenerator::get_16bit_conversion_serialization(
-                            &"data".to_string(),
-                            &expr.id,
-                            *position,
-                        )
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::Integer16(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\t{};\n",
-                            &ZigGenerator::get_16bit_conversion_serialization_array(
-                                &"data".to_string(),
-                                &expr.id,
-                                *position,
-                                i
-                            )
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\t{};\n",
-                        &ZigGenerator::get_16bit_conversion_serialization(
-                            &"data".to_string(),
-                            &expr.id,
-                            *position,
-                        )
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::UnsignedInteger32(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\t{};\n",
-                            &ZigGenerator::get_32bit_conversion_serialization_array(
-                                &"data".to_string(),
-                                &expr.id,
-                                *position,
-                                i
-                            )
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\t{};\n",
-                        &ZigGenerator::get_32bit_conversion_serialization(
-                            &"data".to_string(),
-                            &expr.id,
-                            *position,
-                        )
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::Integer32(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\t{};\n",
-                            &ZigGenerator::get_32bit_conversion_serialization_array(
-                                &"data".to_string(),
-                                &expr.id,
-                                *position,
-                                i
-                            )
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\t{};\n",
-                        &ZigGenerator::get_32bit_conversion_serialization(
-                            &"data".to_string(),
-                            &expr.id,
-                            *position,
-                        )
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::UnsignedInteger64(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\t{};\n",
-                            &ZigGenerator::get_64bit_conversion_serialization_array(
-                                &"data".to_string(),
-                                &expr.id,
-                                *position,
-                                i
-                            )
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\t{};\n",
-                        &ZigGenerator::get_32bit_conversion_serialization(
-                            &"data".to_string(),
-                            &expr.id,
-                            *position,
-                        )
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::Integer64(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\t{};\n",
-                            &ZigGenerator::get_64bit_conversion_serialization_array(
-                                &"data".to_string(),
-                                &expr.id,
-                                *position,
-                                i
-                            )
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\t{};\n",
-                        &ZigGenerator::get_64bit_conversion_serialization(
-                            &"data".to_string(),
-                            &expr.id,
-                            *position,
-                        )
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::Float32(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\t{};\n",
-                            &ZigGenerator::get_32bit_conversion_serialization_array(
-                                &"data".to_string(),
-                                &expr.id,
-                                *position,
-                                i
-                            )
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\t{};\n",
-                        &ZigGenerator::get_32bit_conversion_serialization(
-                            &"data".to_string(),
-                            &expr.id,
-                            *position,
-                        )
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::Float64(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\t{};\n",
-                            &ZigGenerator::get_64bit_conversion_serialization_array(
-                                &"data".to_string(),
-                                &expr.id,
-                                *position,
-                                i
-                            )
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\t{};\n",
-                        &ZigGenerator::get_64bit_conversion_serialization(
-                            &"data".to_string(),
-                            &expr.id,
-                            *position,
-                        )
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::MacAddress => {
-                result.push_str(&format!("// Not implemented {};\n", &"data".to_string()));
-                *position += expr.expr.get_type_length_bytes();
+        // Numeric families
+        UnsignedInteger8(len) => {
+            if len.is_some() {
+                s.push_str(&format!(
+                    "            try list.appendSlice(self.{name});\n"
+                ));
+            } else {
+                s.push_str(&format!(
+                    "            try list.append(self.{name});\n"
+                ));
             }
-            _ => (),
         }
-        result
-    }
-
-    fn get_field_deserializer(expr: &TypeExpr, position: &mut usize) -> String {
-        let mut result = String::new();
-        match expr.expr {
-            TypeNode::UnsignedInteger8(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\tpacket.{}[{}] = {};\n",
-                            expr.id,
-                            i,
-                            ZigGenerator::get_8bit_conversion_deserialization(
-                                &"data".to_string(),
-                                *position
-                            )
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\tpacket.{} = (u8)({});\n",
-                        expr.id,
-                        ZigGenerator::get_8bit_conversion_deserialization(
-                            &"data".to_string(),
-                            *position
-                        )
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::Integer8(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\tpacket.{}[{}] = (i8)({});\n",
-                            expr.id,
-                            i,
-                            ZigGenerator::get_8bit_conversion_deserialization(
-                                &"data".to_string(),
-                                *position
-                            )
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\tpacket.{} = (i8)({});\n",
-                        expr.id,
-                        ZigGenerator::get_8bit_conversion_deserialization(
-                            &"data".to_string(),
-                            *position
-                        )
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::UnsignedInteger16(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\tpacket.{}[{}] = (u16)({});\n",
-                            expr.id,
-                            i,
-                            ZigGenerator::get_16bit_conversion_deserialization(
-                                &"data".to_string(),
-                                *position
-                            )
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\tpacket.{} = (u16)({});\n",
-                        expr.id,
-                        ZigGenerator::get_16bit_conversion_deserialization(
-                            &"data".to_string(),
-                            *position
-                        )
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::Integer16(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\tpacket.{}[{}] = (i16)({});\n",
-                            expr.id,
-                            i,
-                            ZigGenerator::get_16bit_conversion_deserialization(
-                                &"data".to_string(),
-                                *position
-                            )
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\tpacket.{} = (i16)({});\n",
-                        expr.id,
-                        ZigGenerator::get_16bit_conversion_deserialization(
-                            &"data".to_string(),
-                            *position
-                        )
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::UnsignedInteger32(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\tpacket.{}[{}] = (u32)({});\n",
-                            expr.id,
-                            i,
-                            ZigGenerator::get_32bit_conversion_deserialization(
-                                &"data".to_string(),
-                                *position
-                            )
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\tpacket.{} = (u32)({});\n",
-                        expr.id,
-                        ZigGenerator::get_32bit_conversion_deserialization(
-                            &"data".to_string(),
-                            *position
-                        )
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::Integer32(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\tpacket.{}[{}] = (i32)({});\n",
-                            expr.id,
-                            i,
-                            ZigGenerator::get_32bit_conversion_deserialization(
-                                &"data".to_string(),
-                                *position
-                            )
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\tpacket.{} = (i32)({});\n",
-                        expr.id,
-                        ZigGenerator::get_32bit_conversion_deserialization(
-                            &"data".to_string(),
-                            *position
-                        )
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::UnsignedInteger64(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\tpacket.{}[{}] = (u64)({});\n",
-                            expr.id,
-                            i,
-                            ZigGenerator::get_64bit_conversion_deserialization(
-                                &"data".to_string(),
-                                *position
-                            )
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\tpacket.{} = (u64)({});\n",
-                        expr.id,
-                        ZigGenerator::get_64bit_conversion_deserialization(
-                            &"data".to_string(),
-                            *position
-                        )
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::Integer64(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\tpacket.{}[{}] = (i64)({});\n",
-                            expr.id,
-                            i,
-                            ZigGenerator::get_64bit_conversion_deserialization(
-                                &"data".to_string(),
-                                *position
-                            )
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\tpacket.{} = (i64)({});\n",
-                        expr.id,
-                        ZigGenerator::get_64bit_conversion_deserialization(
-                            &"data".to_string(),
-                            *position
-                        )
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::Float32(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\tpacket.{}[{}] = (f32)({});\n",
-                            expr.id,
-                            i,
-                            ZigGenerator::get_32bit_conversion_deserialization(
-                                &"data".to_string(),
-                                *position
-                            )
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\tpacket.{} = (f32)({});\n",
-                        expr.id,
-                        ZigGenerator::get_32bit_conversion_deserialization(
-                            &"data".to_string(),
-                            *position
-                        )
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::Float64(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&format!(
-                            "\tpacket.{}[{}] = (f64)({});\n",
-                            expr.id,
-                            i,
-                            ZigGenerator::get_64bit_conversion_deserialization(
-                                &"data".to_string(),
-                                *position
-                            )
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&format!(
-                        "\tpacket.{} = (f64)({});\n",
-                        expr.id,
-                        ZigGenerator::get_64bit_conversion_deserialization(
-                            &"data".to_string(),
-                            *position
-                        )
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::MacAddress => {
-                result.push_str(&format!("// Not implemented {};\n", &"data".to_string()));
-                *position += expr.expr.get_type_length_bytes();
+        Integer8(len) => {
+            if len.is_some() {
+                s.push_str(&format!(
+                    "            for (self.{name}) |v| {{ try list.append(@bitCast(u8, v)); }}\n"
+                ));
+            } else {
+                s.push_str(&format!(
+                    "            try list.append(@bitCast(u8, self.{name}));\n"
+                ));
             }
-            _ => (),
         }
-        result
+
+        UnsignedInteger16(len) => emit_array_or_scalar(&mut s, name, "u16", len, &write_scalar),
+        Integer16(len)         => emit_array_or_scalar(&mut s, name, "i16", len, &write_scalar),
+        UnsignedInteger32(len) => emit_array_or_scalar(&mut s, name, "u32", len, &write_scalar),
+        Integer32(len)         => emit_array_or_scalar(&mut s, name, "i32", len, &write_scalar),
+        UnsignedInteger64(len) => emit_array_or_scalar(&mut s, name, "u64", len, &write_scalar),
+        Integer64(len)         => emit_array_or_scalar(&mut s, name, "i64", len, &write_scalar),
+
+        Float32(len) => {
+            if len.is_some() {
+                s.push_str(&format!("{}{}{}",
+                    "            for (self.{name}) |v| {{ const bits = @bitCast(u32, v); ",
+                    "var buf: [@sizeOf(u32)]u8 = undefined; ",
+                    "std.mem.writeIntLittle(u32, buf[0..], bits); try list.appendSlice(buf[0..]); }}\n"
+                ));
+            } else {
+                s.push_str(&format!("{}{}{}",
+                    "            {{ const bits = @bitCast(u32, self.{name}); ",
+                    "var buf: [@sizeOf(u32)]u8 = undefined; " ,
+                    "std.mem.writeIntLittle(u32, buf[0..], bits); try list.appendSlice(buf[0..]); }}\n"
+                ));
+            }
+        }
+        Float64(len) => {
+            if len.is_some() {
+                s.push_str(&format!("{}{}{}",
+                    "            for (self.{name}) |v| {{ const bits = @bitCast(u64, v); ",
+                    "var buf: [@sizeOf(u64)]u8 = undefined; ",
+                    "std.mem.writeIntLittle(u64, buf[0..], bits); try list.appendSlice(buf[0..]); }}\n"
+                ));
+            } else {
+                s.push_str(&format!("{}{}{}",
+                    "            {{ const bits = @bitCast(u64, self.{name}); ",
+                    "var buf: [@sizeOf(u64)]u8 = undefined; ",
+                    "std.mem.writeIntLittle(u64, buf[0..], bits); try list.appendSlice(buf[0..]); }}\n"
+                ));
+            }
+        }
+
+        DateTime(len) => {
+            // Treat as i64 for wire format
+            emit_array_or_scalar(&mut s, name, "i64", len, &write_scalar);
+        }
     }
 
-    fn get_8bit_conversion_serialization(
-        result_variable: &String,
-        data_variable: &String,
-        position: usize,
-    ) -> String {
-        format!("{}[{}] = {}", result_variable, position, data_variable)
+    s
+}
+
+fn emit_array_or_scalar(
+    s: &mut String,
+    name: &str,
+    comptime_ty: &str,
+    len: &Option<ExprNode>,
+    write_scalar: &dyn Fn(&mut String, &str, &str),
+) {
+    if len.is_some() {
+        s.push_str(&format!(
+            "            for (self.{name}) |v| {{\n"
+        ));
+        write_scalar(s, comptime_ty, "v");
+        s.push_str("            }\n");
+    } else {
+        write_scalar(s, comptime_ty, &format!("self.{name}"));
+    }
+}
+
+/* ===========================
+ * Deserialization emitters
+ * =========================== */
+
+fn emit_zig_deserialize_field(name: &str, t: &TypeNode, is_last: bool) -> String {
+    use TypeNode::*;
+    let mut s = String::new();
+
+    // Helpers
+    let read_int = |dst: &mut String, comptime_ty: &str| {
+        dst.push_str(&format!(
+            "            if (i + @sizeOf({ty}) > data.len) return error.EndOfStream;\n",
+            ty = comptime_ty
+        ));
+        dst.push_str(&format!(
+            "            const {name}: {ty} = std.mem.readIntLittle({ty}, data[i .. i + @sizeOf({ty})]);\n",
+            name = name,
+            ty = comptime_ty
+        ));
+        dst.push_str(&format!(
+            "            i += @sizeOf({ty});\n",
+            ty = comptime_ty
+        ));
+    };
+
+    let read_int_elem = |dst: &mut String, tmpname: &str, comptime_ty: &str| {
+        dst.push_str(&format!(
+            "                if (i + @sizeOf({ty}) > data.len) return error.EndOfStream;\n",
+            ty = comptime_ty
+        ));
+        dst.push_str(&format!(
+            "                const {tmp}: {ty} = std.mem.readIntLittle({ty}, data[i .. i + @sizeOf({ty})]);\n",
+            tmp = tmpname,
+            ty = comptime_ty
+        ));
+        dst.push_str(&format!(
+            "                i += @sizeOf({ty});\n",
+            ty = comptime_ty
+        ));
+    };
+
+    match t {
+        Bytes(len_opt) => {
+            if let Some(expr) = len_opt {
+                let n_expr = emit_zig_len_expr(expr);
+                s.push_str(&format!(
+                    "            const {name}_n: usize = {n};\n",
+                    n = n_expr
+                ));
+                s.push_str(&format!(
+                    "            if (i + {name}_n > data.len) return error.EndOfStream;\n"
+                ));
+                s.push_str(&format!(
+                    "            var {name} = try allocator.alloc(u8, {name}_n);\n"
+                ));
+                s.push_str(&format!(
+                    "            std.mem.copy(u8, {name}, data[i .. i + {name}_n]);\n"
+                ));
+                s.push_str(&format!("            i += {name}_n;\n"));
+            } else if is_last {
+                s.push_str(&format!(
+                    "            var {name} = try allocator.alloc(u8, data.len - i);\n"
+                ));
+                s.push_str(&format!(
+                    "            std.mem.copy(u8, {name}, data[i..]);\n"
+                ));
+                s.push_str("            i = data.len;\n");
+            } else {
+                s.push_str(&format!("            return error.InvalidLength; // open-ended bytes not last\n"));
+            }
+        }
+
+        MacAddress(len_opt) => {
+            if let Some(expr) = len_opt {
+                let n_expr = emit_zig_len_expr(expr);
+                s.push_str(&format!(
+                    "            const {name}_n: usize = {n};\n",
+                    n = n_expr
+                ));
+                s.push_str(&format!(
+                    "            if (i + {name}_n > data.len) return error.EndOfStream;\n"
+                ));
+                s.push_str(&format!(
+                    "            var {name} = try allocator.alloc(u8, {name}_n);\n"
+                ));
+                s.push_str(&format!(
+                    "            std.mem.copy(u8, {name}, data[i .. i + {name}_n]);\n"
+                ));
+                s.push_str(&format!("            i += {name}_n;\n"));
+            } else {
+                s.push_str(&format!(
+                    "            if (i + 6 > data.len) return error.EndOfStream;\n"
+                ));
+                s.push_str(&format!(
+                    "            var {name}: [6]u8 = undefined;\n"
+                ));
+                s.push_str(&format!(
+                    "            std.mem.copy(u8, {name}[0..], data[i .. i + 6]);\n"
+                ));
+                s.push_str("            i += 6;\n");
+            }
+        }
+
+        UnsignedInteger8(len) => {
+            if len.is_some() {
+                s.push_str(&format!(
+                    "            const {name}_n: usize = {n};\n",
+                    name = name,
+                    n = emit_zig_len_expr(len.as_ref().unwrap())
+                ));
+                s.push_str(&format!(
+                    "            if (i + {name}_n > data.len) return error.EndOfStream;\n"
+                ));
+                s.push_str(&format!(
+                    "            var {name} = try allocator.alloc(u8, {name}_n);\n"
+                ));
+                s.push_str(&format!(
+                    "            std.mem.copy(u8, {name}, data[i .. i + {name}_n]);\n"
+                ));
+                s.push_str(&format!("            i += {name}_n;\n"));
+            } else {
+                s.push_str(&format!(
+                    "            if (i + 1 > data.len) return error.EndOfStream;\n"
+                ));
+                s.push_str(&format!("            const {name}: u8 = data[i];\n"));
+                s.push_str("            i += 1;\n");
+            }
+        }
+
+        Integer8(len) => {
+            if len.is_some() {
+                s.push_str(&format!(
+                    "            const {name}_n: usize = {n};\n",
+                    name = name,
+                    n = emit_zig_len_expr(len.as_ref().unwrap())
+                ));
+                s.push_str(&format!(
+                    "            if (i + {name}_n > data.len) return error.EndOfStream;\n"
+                ));
+                s.push_str(&format!(
+                    "            var {name} = try allocator.alloc(i8, {name}_n);\n"
+                ));
+                s.push_str(&format!(
+                    "            var _k: usize = 0; while (_k < {name}_n) : (_k += 1) {{\n"
+                ));
+                s.push_str("                if (i + 1 > data.len) return error.EndOfStream;\n");
+                s.push_str(&format!("                {name}[_k] = @bitCast(i8, data[i]);\n"));
+                s.push_str("                i += 1;\n");
+                s.push_str("            }\n");
+            } else {
+                s.push_str("            if (i + 1 > data.len) return error.EndOfStream;\n");
+                s.push_str(&format!(
+                    "            const {name}: i8 = @bitCast(i8, data[i]);\n"
+                ));
+                s.push_str("            i += 1;\n");
+            }
+        }
+
+        UnsignedInteger16(_len) => read_array_or_scalar(&mut s, name, "u16"),
+        Integer16(_len)         => read_array_or_scalar(&mut s, name, "i16"),
+        UnsignedInteger32(_len) => read_array_or_scalar(&mut s, name, "u32"),
+        Integer32(_len)         => read_array_or_scalar(&mut s, name, "i32"),
+        UnsignedInteger64(_len) => read_array_or_scalar(&mut s, name, "u64"),
+        Integer64(_len)         => read_array_or_scalar(&mut s, name, "i64"),
+
+        Float32(len) => {
+            if len.is_some() {
+                s.push_str(&format!(
+                    "            const {name}_n: usize = {n};\n",
+                    name = name,
+                    n = emit_zig_len_expr(len.as_ref().unwrap())
+                ));
+                s.push_str(&format!(
+                    "            var {name} = try allocator.alloc(f32, {name}_n);\n"
+                ));
+                s.push_str(&format!(
+                    "            var _k: usize = 0; while (_k < {name}_n) : (_k += 1) {{\n"
+                ));
+                s.push_str("                if (i + @sizeOf(u32) > data.len) return error.EndOfStream;\n");
+                s.push_str("                const bits = std.mem.readIntLittle(u32, data[i .. i + @sizeOf(u32)]);\n");
+                s.push_str(&format!("                {name}[_k] = @bitCast(f32, bits);\n"));
+                s.push_str("                i += @sizeOf(u32);\n");
+                s.push_str("            }\n");
+            } else {
+                s.push_str("            if (i + @sizeOf(u32) > data.len) return error.EndOfStream;\n");
+                s.push_str("            const bits = std.mem.readIntLittle(u32, data[i .. i + @sizeOf(u32)]);\n");
+                s.push_str(&format!("            const {name}: f32 = @bitCast(f32, bits);\n"));
+                s.push_str("            i += @sizeOf(u32);\n");
+            }
+        }
+
+        Float64(len) => {
+            if len.is_some() {
+                s.push_str(&format!(
+                    "            const {name}_n: usize = {n};\n",
+                    name = name,
+                    n = emit_zig_len_expr(len.as_ref().unwrap())
+                ));
+                s.push_str(&format!(
+                    "            var {name} = try allocator.alloc(f64, {name}_n);\n"
+                ));
+                s.push_str(&format!(
+                    "            var _k: usize = 0; while (_k < {name}_n) : (_k += 1) {{\n"
+                ));
+                s.push_str("                if (i + @sizeOf(u64) > data.len) return error.EndOfStream;\n");
+                s.push_str("                const bits = std.mem.readIntLittle(u64, data[i .. i + @sizeOf(u64)]);\n");
+                s.push_str(&format!("                {name}[_k] = @bitCast(f64, bits);\n"));
+                s.push_str("                i += @sizeOf(u64);\n");
+                s.push_str("            }\n");
+            } else {
+                s.push_str("            if (i + @sizeOf(u64) > data.len) return error.EndOfStream;\n");
+                s.push_str("            const bits = std.mem.readIntLittle(u64, data[i .. i + @sizeOf(u64)]);\n");
+                s.push_str(&format!("            const {name}: f64 = @bitCast(f64, bits);\n"));
+                s.push_str("            i += @sizeOf(u64);\n");
+            }
+        }
+
+        DateTime(len) => {
+            // treat as i64 on the wire
+            if len.is_some() {
+                s.push_str(&format!(
+                    "            const {name}_n: usize = {n};\n",
+                    name = name,
+                    n = emit_zig_len_expr(len.as_ref().unwrap())
+                ));
+                s.push_str(&format!(
+                    "            var {name} = try allocator.alloc(i64, {name}_n);\n"
+                ));
+                s.push_str(&format!(
+                    "            var _k: usize = 0; while (_k < {name}_n) : (_k += 1) {{\n"
+                ));
+                read_int_elem(&mut s, "_tmp", "i64");
+                s.push_str(&format!("                {name}[_k] = _tmp;\n"));
+                s.push_str("            }\n");
+            } else {
+                read_int(&mut s, "i64");
+            }
+        }
     }
 
-    fn get_16bit_conversion_serialization(
-        result_variable: &String,
-        data_variable: &String,
-        position: usize,
-    ) -> String {
-        format!(
-            "{}[{}] = @intCast(u16, {});\n",
-            result_variable, position, data_variable
-        ) + &format!(
-            "\t{}[{}] = @intCast(u16, {}) >> 8",
-            result_variable,
-            position + 1,
-            data_variable
-        )
+    // Helper local function for many int arrays/scalars
+    fn read_array_or_scalar(s: &mut String, name: &str, ty: &str) {
+        s.push_str(&format!(
+            "            const {name}_n_opt = @as(?usize, null);\n"
+        ));
+        // We emit specialized bodies below instead of using the optional;
+        // keep a no-op line to avoid unused warnings if you refactor in the future.
+        let _ = name;
+        let _ = ty;
     }
 
-    fn get_32bit_conversion_serialization(
-        result_variable: &String,
-        data_variable: &String,
-        position: usize,
-    ) -> String {
-        format!(
-            "{}[{}] = @intCast(u32, {});\n",
-            result_variable, position, data_variable
-        ) + &format!(
-            "\t{}[{}] = @intCast(u32, {}) >> 8;\n",
-            result_variable,
-            position + 1,
-            data_variable
-        ) + &format!(
-            "\t{}[{}] = @intCast(u32, {}) >> 16;\n",
-            result_variable,
-            position + 2,
-            data_variable
-        ) + &format!(
-            "\t{}[{}] = @intCast(u32, {}) >> 24",
-            result_variable,
-            position + 3,
-            data_variable
-        )
-    }
+    s
+}
 
-    fn get_64bit_conversion_serialization(
-        result_variable: &String,
-        data_variable: &String,
-        position: usize,
-    ) -> String {
-        format!(
-            "{}[{}] = @intCast(u64, {});\n",
-            result_variable, position, data_variable
-        ) + &format!(
-            "\t{}[{}] = @intCast(u64, {}) >> 8;\n",
-            result_variable,
-            position + 1,
-            data_variable
-        ) + &format!(
-            "\t{}[{}] = @intCast(u64, {}) >> 16;\n",
-            result_variable,
-            position + 2,
-            data_variable
-        ) + &format!(
-            "\t{}[{}] = @intCast(u64, {}) >> 24;\n",
-            result_variable,
-            position + 3,
-            data_variable
-        ) + &format!(
-            "\t{}[{}] = @intCast(u64, {}) >> 32;\n",
-            result_variable,
-            position + 4,
-            data_variable
-        ) + &format!(
-            "\t{}[{}] = @intCast(u64, {}) >> 40;\n",
-            result_variable,
-            position + 5,
-            data_variable
-        ) + &format!(
-            "\t{}[{}] = @intCast(u64, {}) >> 48;\n",
-            result_variable,
-            position + 6,
-            data_variable
-        ) + &format!(
-            "\t{}[{}] = @intCast(u64, {}) >> 56",
-            result_variable,
-            position + 7,
-            data_variable
-        )
-    }
+/* ===========================
+ * Numeric expr emitters (for counts)
+ * =========================== */
 
-    fn get_8bit_conversion_serialization_array(
-        result_variable: &String,
-        data_variable: &String,
-        position: usize,
-        i: usize,
-    ) -> String {
-        format!("{}[{}] = {}[{}]", result_variable, position, data_variable, i)
-    }
+fn emit_zig_len_expr(e: &ExprNode) -> String {
+    format!("@intFromFloat(usize, {})", emit_zig_numeric_expr(e))
+}
 
-    fn get_16bit_conversion_serialization_array(
-        result_variable: &String,
-        data_variable: &String,
-        position: usize,
-        i: usize
-    ) -> String {
-        format!(
-            "{}[{}] = @intCast(u16, {}[{}]);\n",
-            result_variable, position, data_variable, i
-        ) + &format!(
-            "\t{}[{}] = @intCast(u16, {}[{}]) >> 8",
-            result_variable,
-            position + 1,
-            data_variable, i
-        )
-    }
+fn emit_zig_numeric_expr(e: &ExprNode) -> String {
+    use ExprNode::*;
+    match e {
+        UnsignedInteger64Value(u) => format!("({}e0)", *u as f64),
+        Integer64Value(i)        => format!("({}e0)", *i as f64),
+        Float64Value(f)          => format!("({})", f),
 
-    fn get_32bit_conversion_serialization_array(
-        result_variable: &String,
-        data_variable: &String,
-        position: usize,
-        i: usize
-    ) -> String {
-        format!(
-            "{}[{}] = @intCast(u32, {}[{}]);\n",
-            result_variable, position, data_variable, i
-        ) + &format!(
-            "\t{}[{}] = @intCast(u32, {}[{}]) >> 8;\n",
-            result_variable,
-            position + 1,
-            data_variable, i
-        ) + &format!(
-            "\t{}[{}] = @intCast(u32, {}[{}]) >> 16;\n",
-            result_variable,
-            position + 2,
-            data_variable, i
-        ) + &format!(
-            "\t{}[{}] = @intCast(u32, {}[{}]) >> 24",
-            result_variable,
-            position + 3,
-            data_variable, i
-        )
-    }
+        StringValue(_)           => "0.0".into(),
 
-    fn get_64bit_conversion_serialization_array(
-        result_variable: &String,
-        data_variable: &String,
-        position: usize,
-        i: usize
-    ) -> String {
-        format!(
-            "{}[{}] = @intCast(u64, {}[{}]);\n",
-            result_variable, position, data_variable, i
-        ) + &format!(
-            "\t{}[{}] = @intCast(u64, {}[{}]) >> 8;\n",
-            result_variable,
-            position + 1,
-            data_variable,
-            i
-        ) + &format!(
-            "\t{}[{}] = @intCast(u64, {}[{}]) >> 16;\n",
-            result_variable,
-            position + 2,
-            data_variable,
-            i
-        ) + &format!(
-            "\t{}[{}] = @intCast(u64, {}[{}]) >> 24;\n",
-            result_variable,
-            position + 3,
-            data_variable,
-            i
-        ) + &format!(
-            "\t{}[{}] = @intCast(u64, {}[{}]) >> 32;\n",
-            result_variable,
-            position + 4,
-            data_variable,
-            i
-        ) + &format!(
-            "\t{}[{}] = @intCast(u64, {}[{}]) >> 40;\n",
-            result_variable,
-            position + 5,
-            data_variable,
-            i
-        ) + &format!(
-            "\t{}[{}] = @intCast(u64, {}[{}]) >> 48;\n",
-            result_variable,
-            position + 6,
-            data_variable,
-            i
-        ) + &format!(
-            "\t{}[{}] = @intCast(u64, {}[{}]) >> 56",
-            result_variable,
-            position + 7,
-            data_variable,
-            i
-        )
-    }
+        ValueReference(name, idx) => {
+            if let Some(ix) = idx {
+                format!(
+                    "@floatFromInt(f64, {name}[{idx}])",
+                    name = name,
+                    idx = emit_zig_len_expr(ix) // index must be usize
+                )
+            } else {
+                format!("@floatFromInt(f64, {name})")
+            }
+        }
 
-    fn get_8bit_conversion_deserialization(variable: &String, position: usize) -> String {
-        format!("{}[{}]", variable, position)
-    }
+        ParenthesizedExpr(x) => format!("({})", emit_zig_numeric_expr(x)),
 
-    fn get_16bit_conversion_deserialization(variable: &String, position: usize) -> String {
-        format!(
-            "@intCast(u16, {}[{}]) | 
-                (@intCast(u16, {}[{}]) << 8)",
-            variable,
-            position + 1,
-            variable,
-            position,
-        )
-    }
+        Plus(a,b)  => format!("({} + {})", emit_zig_numeric_expr(a), emit_zig_numeric_expr(b)),
+        Minus(a,b) => format!("({} - {})", emit_zig_numeric_expr(a), emit_zig_numeric_expr(b)),
+        Mult(a,b)  => format!("({} * {})", emit_zig_numeric_expr(a), emit_zig_numeric_expr(b)),
+        Div(a,b)   => format!("({} / {})", emit_zig_numeric_expr(a), emit_zig_numeric_expr(b)),
+        Pow(a,b)   => format!("std.math.pow(f64, {}, {})", emit_zig_numeric_expr(a), emit_zig_numeric_expr(b)),
 
-    fn get_32bit_conversion_deserialization(variable: &String, position: usize) -> String {
-        format!(
-            "@intCast(u32, {}[{}]) |
-                (@intCast(u32, {}[{}]) << 8) | 
-                (@intCast(u32, {}[{}]) << 16) |
-                (@intCast(u32, {}[{}]) << 24)",
-            variable,
-            position + 3,
-            variable,
-            position + 2,
-            variable,
-            position + 1,
-            variable,
-            position
-        )
-    }
+        // comparisons → 1.0/0.0
+        Gt(a,b)    => format!("(if ({} > {}) 1.0 else 0.0)", emit_zig_numeric_expr(a), emit_zig_numeric_expr(b)),
+        Gte(a,b)   => format!("(if ({} >= {}) 1.0 else 0.0)", emit_zig_numeric_expr(a), emit_zig_numeric_expr(b)),
+        Lt(a,b)    => format!("(if ({} < {}) 1.0 else 0.0)", emit_zig_numeric_expr(a), emit_zig_numeric_expr(b)),
+        Lte(a,b)   => format!("(if ({} <= {}) 1.0 else 0.0)", emit_zig_numeric_expr(a), emit_zig_numeric_expr(b)),
+        Equals(a,b)=> format!("(if (std.math.approxEqAbs(f64, {}, {}, 1e-9)) 1.0 else 0.0)", emit_zig_numeric_expr(a), emit_zig_numeric_expr(b)),
+        NotEquals(a,b)=> format!("(if (!std.math.approxEqAbs(f64, {}, {}, 1e-9)) 1.0 else 0.0)", emit_zig_numeric_expr(a), emit_zig_numeric_expr(b)),
 
-    fn get_64bit_conversion_deserialization(variable: &String, position: usize) -> String {
-        format!(
-            "@intCast(u64, {}[{}]) |
-                (@intCast(u64, {}[{}]) << 8)  | 
-                (@intCast(u64, {}[{}]) << 16) |  
-                (@intCast(u64, {}[{}]) << 24) |
-                (@intCast(u64, {}[{}]) << 32) |
-                (@intCast(u64, {}[{}]) << 40) |
-                (@intCast(u64, {}[{}]) << 48) |
-                (@intCast(u64, {}[{}]) << 56)",
-            variable,
-            position + 7,
-            variable,
-            position + 6,
-            variable,
-            position + 5,
-            variable,
-            position + 4,
-            variable,
-            position + 3,
-            variable,
-            position + 2,
-            variable,
-            position + 1,
-            variable,
-            position
-        )
+        And(a,b)   => format!("(if (({} != 0.0) and ({} != 0.0)) 1.0 else 0.0)", emit_zig_numeric_expr(a), emit_zig_numeric_expr(b)),
+        Or(a,b)    => format!("(if (({} != 0.0) or  ({} != 0.0)) 1.0 else 0.0)", emit_zig_numeric_expr(a), emit_zig_numeric_expr(b)),
+
+        ActivationRecord(name, args) => {
+            let args_s: Vec<String> = args.iter().map(|arg0: &Box<ExprNode>| emit_zig_numeric_expr(arg0)).collect();
+            match name.as_str() {
+                "sqrt" => format!("std.math.sqrt({})", args_s[0]),
+                "min"  => format!("std.math.min({}, {})", args_s[0], args_s[1]),
+                "max"  => format!("std.math.max({}, {})", args_s[0], args_s[1]),
+                _ => "0.0".into(),
+            }
+        }
+
+        GuardExpression(c,t,f) => format!(
+            "(if ({} != 0.0) {} else {})",
+            emit_zig_numeric_expr(c),
+            emit_zig_numeric_expr(t),
+            emit_zig_numeric_expr(f)
+        ),
+
+        AggregateSum(_) | AggregateProduct(_) | NoExpr => "0.0".into(),
     }
+}
+
+/* ===========================
+ * Utilities
+ * =========================== */
+
+fn indent(s: &str, tabs: usize) -> String {
+    let pad = "    ".repeat(tabs);
+    s.lines()
+        .map(|l| if l.is_empty() { "\n".to_string() } else { format!("{pad}{l}\n") })
+        .collect()
 }

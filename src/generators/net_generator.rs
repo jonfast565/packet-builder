@@ -1,18 +1,21 @@
-use crate::models::parsing_models::{ExprNode, PacketExpr, TypeExpr, PacketExprList, TypeNode};
-use crate::utilities::{capitalize_first, CaseWrapper, Casing};
-
+use crate::models::parsing_models::{
+    Endianness, ExprNode, PacketExpr, PacketExprList, TypeNode,
+};
+use crate::utilities::{CaseWrapper, Casing};
+use std::fmt::Write as _;
 pub struct CSharpGenerator {}
 
 impl CSharpGenerator {
-    pub fn generate(expr: &PacketExprList) -> String {
-        let mut result = String::new();
-        result.push_str(&CSharpGenerator::create_headers());
-        result.push_str(&CSharpGenerator::create_spacer());
-        result.push_str(&CSharpGenerator::create_spacer());
-        for exp in &expr.packets {
-            result.push_str(&CSharpGenerator::build_class(&exp, false));
+    pub fn generate(model: &PacketExprList) -> String {
+        let mut out = String::new();
+        out.push_str(&Self::create_headers());
+        out.push_str(&Self::create_spacer());
+
+        for pkt in &model.packets {
+            out.push_str(&Self::build_class(pkt));
+            out.push_str(&Self::create_spacer());
         }
-        result
+        out
     }
 
     fn create_spacer() -> String {
@@ -20,861 +23,602 @@ impl CSharpGenerator {
     }
 
     fn create_headers() -> String {
-        "\t
-        using System;
-        using System.Buffers.Binary;
-        "
+        // We keep it minimal; consumers can add namespaces/partials as desired.
+        // Uses BinaryPrimitives + BitConverter + Buffer.BlockCopy.
+        "\
+using System;
+using System.Buffers.Binary;
+
+"
         .to_string()
     }
 
-    fn create_serialization_functions(expr: &PacketExpr) -> String {
+    fn build_class(pkt: &PacketExpr) -> String {
+        let class_name = CaseWrapper(pkt.name.clone()).to_pascal_case();
+
+        // 1) properties
+        let mut props = String::new();
+        for f in &pkt.fields {
+            let prop_ty = cs_field_type(&f.expr);
+            let prop_name = CaseWrapper(f.id.clone()).to_pascal_case();
+            let _ = writeln!(
+                &mut props,
+                "    public {} {} {{ get; set; }}",
+                prop_ty, prop_name
+            );
+        }
+
+        // 2) Serialize method
+        let mut size_code = String::new();
+        let mut ser_body = String::new();
+        for f in &pkt.fields {
+            let prop_name = CaseWrapper(f.id.clone()).to_pascal_case();
+            let endian = f
+                .endianness
+                .as_ref()
+                .or(pkt.endianness.as_ref())
+                .unwrap_or(&Endianness::Le);
+            size_code.push_str(&size_calc_snippet(&f.expr, &prop_name));
+            ser_body.push_str(&serialize_snippet(&f.expr, &prop_name, endian.clone()));
+        }
+
+        // 3) Deserialize method
+        let mut de_body = String::new();
+        let n = pkt.fields.len();
+        for (i, f) in pkt.fields.iter().enumerate() {
+            let last = i + 1 == n;
+            let prop_name = CaseWrapper(f.id.clone()).to_pascal_case();
+            let endian = f.endianness.as_ref().or(pkt.endianness.as_ref()).unwrap_or(&Endianness::Le);
+            de_body.push_str(&deserialize_snippet(&f.expr, &prop_name, endian.clone(), last));
+        }
+
         format!(
-            "
-        public byte[] Serialize() {{
-            var data = new byte[{}] {{}};
-            {}
-            return data;
-        }}
+            r#"public class {class_name}
+{{
+{props}
+    public byte[] Serialize()
+    {{
+        // compute total size
+        int total = 0;
+{size_code}
+        var data = new byte[total];
+        int pos = 0;
 
-        public static {} Deserialize(byte[] data) {{
-            {}
-            var result = new {} {{
-                {}
-            }};
-            return result;
-        }}
-        ",
-            expr.get_total_length(),
-            &CSharpGenerator::create_serializers(expr),
-            expr.name,
-            &CSharpGenerator::create_deserializers(expr),
-            expr.name,
-            &CSharpGenerator::create_deserializer_builders(expr)
+{ser_body}
+        return data;
+    }}
+
+    public static {class_name} Deserialize(byte[] data)
+    {{
+        var result = new {class_name}();
+        int pos = 0;
+
+{de_body}
+        return result;
+    }}
+}}
+"#,
+            class_name = class_name,
+            props = props,
+            size_code = indent(&size_code, 2),
+            ser_body = indent(&ser_body, 2),
+            de_body = indent(&de_body, 2),
         )
-        .to_string()
     }
+}
 
-    fn build_class(expr: &PacketExpr, just_fields: bool) -> String {
-        let field_aggregation = expr
-            .fields
-            .iter()
-            .map(|x| match x.expr {
-                TypeNode::UnsignedInteger8(y) => {
-                    format!(
-                        "public {} {} {{ get; set; }}",
-                        CSharpGenerator::get_array_bounds("byte", y),
-                        CaseWrapper(x.id.clone()).to_pascal_case()
-                    )
-                }
-                TypeNode::Integer8(y) => {
-                    format!(
-                        "public {} {} {{ get; set; }}",
-                        CSharpGenerator::get_array_bounds("sbyte", y),
-                        CaseWrapper(x.id.clone()).to_pascal_case()
-                    )
-                }
-                TypeNode::UnsignedInteger16(y) => {
-                    format!(
-                        "public {} {} {{ get; set; }}",
-                        CSharpGenerator::get_array_bounds("ushort", y),
-                        CaseWrapper(x.id.clone()).to_pascal_case()
-                    )
-                }
-                TypeNode::Integer16(y) => {
-                    format!(
-                        "public {} {} {{ get; set; }}",
-                        CSharpGenerator::get_array_bounds("short", y),
-                        CaseWrapper(x.id.clone()).to_pascal_case()
-                    )
-                }
-                TypeNode::UnsignedInteger32(y) => {
-                    format!(
-                        "public {} {} {{ get; set; }}",
-                        CSharpGenerator::get_array_bounds("uint", y),
-                        CaseWrapper(x.id.clone()).to_pascal_case()
-                    )
-                }
-                TypeNode::Integer32(y) => {
-                    format!(
-                        "public {} {} {{ get; set; }}",
-                        CSharpGenerator::get_array_bounds("int", y),
-                        CaseWrapper(x.id.clone()).to_pascal_case()
-                    )
-                }
-                TypeNode::UnsignedInteger64(y) => {
-                    format!(
-                        "public {} {} {{ get; set; }}",
-                        CSharpGenerator::get_array_bounds("ulong", y),
-                        CaseWrapper(x.id.clone()).to_pascal_case()
-                    )
-                }
-                TypeNode::Integer64(y) => {
-                    format!(
-                        "public {} {} {{ get; set; }}",
-                        CSharpGenerator::get_array_bounds("long", y),
-                        CaseWrapper(x.id.clone()).to_pascal_case()
-                    )
-                }
-                TypeNode::Float32(y) => {
-                    format!(
-                        "public {} {} {{ get; set; }}",
-                        CSharpGenerator::get_array_bounds("float", y),
-                        CaseWrapper(x.id.clone()).to_pascal_case()
-                    )
-                }
-                TypeNode::Float64(y) => {
-                    format!(
-                        "public {} {} {{ get; set; }}",
-                        CSharpGenerator::get_array_bounds("double", y),
-                        CaseWrapper(x.id.clone()).to_pascal_case()
-                    )
-                }
-                _ => "".to_string(),
-            })
-            .fold(String::new(), |acc, v| format!("{}\t    {}\n", acc, v));
+/* ============================================================
+ * Mapping & helpers
+ * ============================================================
+*/
 
-        if !just_fields {
-            format!(
-                "public class {} {{\n {} \n \t{}}}\n\n",
-                expr.name,
-                field_aggregation,
-                &CSharpGenerator::create_serialization_functions(&expr),
-            )
+fn cs_field_type(t: &TypeNode) -> String {
+    use TypeNode::*;
+    let array_of = |base: &str, len: &Option<ExprNode>| {
+        if len.is_some() {
+            format!("{base}[]")
         } else {
-            format!("{}", field_aggregation)
+            base.to_string()
+        }
+    };
+
+    match t {
+        // Integer/Float families
+        UnsignedInteger8(len) => array_of("byte", len),
+        Integer8(len) => array_of("sbyte", len),
+        UnsignedInteger16(len) => array_of("ushort", len),
+        Integer16(len) => array_of("short", len),
+        UnsignedInteger32(len) => array_of("uint", len),
+        Integer32(len) => array_of("int", len),
+        UnsignedInteger64(len) => array_of("ulong", len),
+        Integer64(len) => array_of("long", len),
+        Float32(len) => array_of("float", len),
+        Float64(len) => array_of("double", len),
+
+        // DateTime: represent on-wire as 64-bit (epoch/ticks). Expose long(s).
+        DateTime(len) => array_of("long", len),
+
+        // Opaque byte blobs
+        Bytes(_len) => "byte[]".to_string(),
+        // Mac addresses as bytes (6 when const)
+        MacAddress(_len) => "byte[]".to_string(),
+    }
+}
+
+fn scalar_width_bytes(t: &TypeNode) -> usize {
+    use TypeNode::*;
+    match t {
+        UnsignedInteger8(_) | Integer8(_) => 1,
+        UnsignedInteger16(_) | Integer16(_) => 2,
+        UnsignedInteger32(_) | Integer32(_) | Float32(_) => 4,
+        UnsignedInteger64(_) | Integer64(_) | Float64(_) | DateTime(_) => 8,
+        Bytes(_) | MacAddress(_) => 1, // element width; handled separately
+    }
+}
+
+fn is_array_like(t: &TypeNode) -> bool {
+    use TypeNode::*;
+    match t {
+        Bytes(_) | MacAddress(_) => true,
+        UnsignedInteger8(len)
+        | Integer8(len)
+        | UnsignedInteger16(len)
+        | Integer16(len)
+        | UnsignedInteger32(len)
+        | Integer32(len)
+        | UnsignedInteger64(len)
+        | Integer64(len)
+        | Float32(len)
+        | Float64(len)
+        | DateTime(len) => len.is_some(),
+    }
+}
+
+fn eval_len_const(expr: &ExprNode) -> Option<usize> {
+    fn eval_i128(e: &ExprNode) -> Option<i128> {
+        use ExprNode::*;
+        match e {
+            UnsignedInteger64Value(u) => Some(*u as i128),
+            Integer64Value(i) => Some(*i as i128),
+            Float64Value(f) => Some(*f as i128),
+            ParenthesizedExpr(x) => eval_i128(x),
+            Plus(a, b) => Some(eval_i128(a)? + eval_i128(b)?),
+            Minus(a, b) => Some(eval_i128(a)? - eval_i128(b)?),
+            Mult(a, b) => Some(eval_i128(a)? * eval_i128(b)?),
+            Div(a, b) => {
+                let d = eval_i128(b)?;
+                if d == 0 {
+                    None
+                } else {
+                    Some(eval_i128(a)? / d)
+                }
+            }
+            Pow(a, b) => {
+                let base = eval_i128(a)?;
+                let exp = eval_i128(b)?;
+                if exp < 0 {
+                    return None;
+                }
+                let mut acc: i128 = 1;
+                let mut e = exp as u128;
+                let mut b = base;
+                while e > 0 {
+                    if e & 1 == 1 {
+                        acc = acc.checked_mul(b)?;
+                    }
+                    e >>= 1;
+                    if e > 0 {
+                        b = b.checked_mul(b)?;
+                    }
+                }
+                Some(acc)
+            }
+            _ => None,
         }
     }
+    eval_i128(expr).and_then(|n| if n >= 0 { Some(n as usize) } else { None })
+}
 
-    fn get_array_bounds(data_type: &str, expr: Option<usize>) -> String {
-        match expr {
-            Some(_x) => format!("{}[]", data_type),
-            None => format!("{}", data_type.to_string()),
+/* ============================================================
+ * Codegen snippets
+ * ============================================================
+*/
+
+fn size_calc_snippet(t: &TypeNode, name: &str) -> String {
+    use TypeNode::*;
+    let mut s = String::new();
+    match t {
+        Bytes(len_opt) => {
+            if let Some(expr) = len_opt {
+                if let Some(n) = eval_len_const(expr) {
+                    let _ = writeln!(&mut s, "total += {n};");
+                } else {
+                    let _ = writeln!(&mut s, "total += {name}?.Length ?? 0;");
+                }
+            } else {
+                let _ = writeln!(&mut s, "total += {name}?.Length ?? 0;");
+            }
+        }
+        MacAddress(len_opt) => {
+            if let Some(expr) = len_opt {
+                if let Some(n) = eval_len_const(expr) {
+                    let _ = writeln!(&mut s, "total += {n};");
+                } else {
+                    let _ = writeln!(&mut s, "total += {name}?.Length ?? 0;");
+                }
+            } else {
+                let _ = writeln!(&mut s, "total += 6;");
+            }
+        }
+        _ => {
+            let w = scalar_width_bytes(t);
+            if is_array_like(t) {
+                let _ = writeln!(&mut s, "total += ({name}?.Length ?? 0) * {w};");
+            } else {
+                let _ = writeln!(&mut s, "total += {w};");
+            }
         }
     }
+    s
+}
 
-    fn create_deserializers(expr: &PacketExpr) -> String {
-        let mut result = String::new();
-        let mut counter = 0;
-        for field in &expr.fields {
-            result.push_str(&CSharpGenerator::get_field_deserializer(
-                field,
-                &mut counter,
-            ));
+fn serialize_snippet(t: &TypeNode, name: &str, endian: Endianness) -> String {
+    use Endianness::*;
+    let mut s = String::new();
+    match t {
+        TypeNode::Bytes(_) | TypeNode::MacAddress(_) => {
+            // Copy bytes as-is (mac default length is accounted in size)
+            let _ = writeln!(
+                &mut s,
+                "if ({name} != null) {{ Buffer.BlockCopy({name}, 0, data, pos, {name}.Length); pos += {name}.Length; }}"
+            );
         }
-        result
-    }
-
-    fn create_deserializer_builders(expr: &PacketExpr) -> String {
-        let mut result = String::new();
-        for field in &expr.fields {
-            result.push_str(&CSharpGenerator::get_field_serializer_builder(field));
-        }
-        result
-    }
-
-    fn get_field_serializer_builder(expr: &TypeExpr) -> String {
-        let mut result = String::new();
-        match expr.expr {
-            TypeNode::UnsignedInteger8(y)
-            | TypeNode::Integer8(y)
-            | TypeNode::UnsignedInteger16(y)
-            | TypeNode::Integer16(y)
-            | TypeNode::UnsignedInteger32(y)
-            | TypeNode::Integer32(y)
-            | TypeNode::UnsignedInteger64(y)
-            | TypeNode::Integer64(y)
-            | TypeNode::Float32(y)
-            | TypeNode::Float64(y) => match y {
-                Some(y) => {
-                    let mut array = String::new();
-                    for i in 0..y {
-                        array.push_str(
-                            &format!("{}{}", CaseWrapper(expr.id.clone()).to_pascal_case(), i)
-                                .to_string(),
+        _ => {
+            let w = scalar_width_bytes(t);
+            let write_scalar = |dst: &mut String, expr: String| {
+                match (endian, w) {
+                    (_, 1) => {
+                        let _ = writeln!(dst, "data[pos++] = unchecked((byte)({expr}));");
+                    }
+                    (Le, 2) => {
+                        let _ = writeln!(
+                            dst,
+                            "BinaryPrimitives.WriteUInt16LittleEndian(data.AsSpan(pos), (ushort)({expr})); pos += 2;"
                         );
-                        if i < y - 1 {
-                            array.push_str(", ");
+                    }
+                    (Be, 2) => {
+                        let _ = writeln!(
+                            dst,
+                            "BinaryPrimitives.WriteUInt16BigEndian(data.AsSpan(pos), (ushort)({expr})); pos += 2;"
+                        );
+                    }
+                    (Le, 4) => match t {
+                        TypeNode::Float32(_) => {
+                            let _ = writeln!(
+                                dst,
+                                "BinaryPrimitives.WriteInt32LittleEndian(data.AsSpan(pos), BitConverter.SingleToInt32Bits((float)({expr}))); pos += 4;"
+                            );
                         }
-                    }
-                    result.push_str(
-                        &format!(
-                            "{} = new byte[] {{ {} }},\n",
-                            CaseWrapper(expr.id.clone()).to_pascal_case(),
-                            array
-                        )
-                        .to_string(),
+                        _ => {
+                            let _ = writeln!(
+                                dst,
+                                "BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(pos), (uint)({expr})); pos += 4;"
+                            );
+                        }
+                    },
+                    (Be, 4) => match t {
+                        TypeNode::Float32(_) => {
+                            let _ = writeln!(
+                                dst,
+                                "BinaryPrimitives.WriteInt32BigEndian(data.AsSpan(pos), BitConverter.SingleToInt32Bits((float)({expr}))); pos += 4;"
+                            );
+                        }
+                        _ => {
+                            let _ = writeln!(
+                                dst,
+                                "BinaryPrimitives.WriteUInt32BigEndian(data.AsSpan(pos), (uint)({expr})); pos += 4;"
+                            );
+                        }
+                    },
+                    (Le, 8) => match t {
+                        TypeNode::Float64(_) => {
+                            let _ = writeln!(
+                                dst,
+                                "BinaryPrimitives.WriteInt64LittleEndian(data.AsSpan(pos), BitConverter.DoubleToInt64Bits((double)({expr}))); pos += 8;"
+                            );
+                        }
+                        TypeNode::Integer64(_) | TypeNode::DateTime(_) => {
+                            let _ = writeln!(
+                                dst,
+                                "BinaryPrimitives.WriteInt64LittleEndian(data.AsSpan(pos), (long)({expr})); pos += 8;"
+                            );
+                        }
+                        _ => {
+                            let _ = writeln!(
+                                dst,
+                                "BinaryPrimitives.WriteUInt64LittleEndian(data.AsSpan(pos), (ulong)({expr})); pos += 8;"
+                            );
+                        }
+                    },
+                    (Be, 8) => match t {
+                        TypeNode::Float64(_) => {
+                            let _ = writeln!(
+                                dst,
+                                "BinaryPrimitives.WriteInt64BigEndian(data.AsSpan(pos), BitConverter.DoubleToInt64Bits((double)({expr}))); pos += 8;"
+                            );
+                        }
+                        TypeNode::Integer64(_) | TypeNode::DateTime(_) => {
+                            let _ = writeln!(
+                                dst,
+                                "BinaryPrimitives.WriteInt64BigEndian(data.AsSpan(pos), (long)({expr})); pos += 8;"
+                            );
+                        }
+                        _ => {
+                            let _ = writeln!(
+                                dst,
+                                "BinaryPrimitives.WriteUInt64BigEndian(data.AsSpan(pos), (ulong)({expr})); pos += 8;"
+                            );
+                        }
+                    },
+                    _ => { /* unreachable widths */ }
+                }
+            };
+
+            if is_array_like(t) {
+                let _ = writeln!(&mut s, "if ({name} != null) {{");
+                let _ = writeln!(&mut s, "    for (int i = 0; i < {name}.Length; ++i) {{");
+                write_scalar(&mut s, format!("{name}[i]"));
+                let _ = writeln!(&mut s, "    }}");
+                let _ = writeln!(&mut s, "}}");
+            } else {
+                write_scalar(&mut s, format!("{name}"));
+            }
+        }
+    }
+    s
+}
+
+fn deserialize_snippet(t: &TypeNode, name: &str, endian: Endianness, is_last: bool) -> String {
+    use Endianness::*;
+    let mut s = String::new();
+
+    match t {
+        TypeNode::Bytes(len_opt) => {
+            if let Some(expr) = len_opt {
+                if let Some(n) = eval_len_const(expr) {
+                    let _ = writeln!(
+                        &mut s,
+                        "{name} = new byte[{n}]; Buffer.BlockCopy(data, pos, {name}, 0, {n}); pos += {n};"
+                    );
+                } else if is_last {
+                    let _ = writeln!(
+                        &mut s,
+                        "{name} = new byte[data.Length - pos]; Buffer.BlockCopy(data, pos, {name}, 0, {name}.Length); pos = data.Length;"
+                    );
+                } else {
+                    let _ = writeln!(
+                        &mut s,
+                        r#"throw new NotSupportedException("Dynamic-length bytes field not at end of buffer");"#
                     );
                 }
-                None => {
-                    result.push_str(
-                        &format!(
-                            "{} = {},\n",
-                            CaseWrapper(expr.id.clone()).to_pascal_case(),
-                            CaseWrapper(expr.id.clone()).to_pascal_case()
-                        )
-                        .to_string(),
+            } else if is_last {
+                let _ = writeln!(
+                    &mut s,
+                    "{name} = new byte[data.Length - pos]; Buffer.BlockCopy(data, pos, {name}, 0, {name}.Length); pos = data.Length;"
+                );
+            } else {
+                let _ = writeln!(
+                    &mut s,
+                    r#"throw new NotSupportedException("Open-ended bytes field not at end of buffer");"#
+                );
+            }
+        }
+        TypeNode::MacAddress(len_opt) => {
+            if let Some(expr) = len_opt {
+                if let Some(n) = eval_len_const(expr) {
+                    let _ = writeln!(
+                        &mut s,
+                        "{name} = new byte[{n}]; Buffer.BlockCopy(data, pos, {name}, 0, {n}); pos += {n};"
+                    );
+                } else if is_last {
+                    let _ = writeln!(
+                        &mut s,
+                        "{name} = new byte[data.Length - pos]; Buffer.BlockCopy(data, pos, {name}, 0, {name}.Length); pos = data.Length;"
+                    );
+                } else {
+                    let _ = writeln!(
+                        &mut s,
+                        r#"throw new NotSupportedException("Dynamic-length mac field not at end of buffer");"#
                     );
                 }
-            },
-            TypeNode::MacAddress => {}
-            _ => (),
-        };
-
-        result
-    }
-
-    fn create_serializers(expr: &PacketExpr) -> String {
-        let mut result = String::new();
-        let mut counter = 0;
-        for field in &expr.fields {
-            result.push_str(&CSharpGenerator::get_field_serializer(field, &mut counter));
-        }
-        result
-    }
-
-    fn get_field_serializer(expr: &TypeExpr, position: &mut usize) -> String {
-        let mut result = String::new();
-        match expr.expr {
-            TypeNode::UnsignedInteger8(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&CSharpGenerator::format_array_serialization_variable(
-                            expr,
-                            i,
-                            *position,
-                            &"data".to_string(),
-                            &"byte".to_string(),
-                            1,
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&CSharpGenerator::format_serialization_variable(
-                        expr,
-                        *position,
-                        &"data".to_string(),
-                        &"byte".to_string(),
-                        1,
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::Integer8(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&CSharpGenerator::format_array_serialization_variable(
-                            expr,
-                            i,
-                            *position,
-                            &"data".to_string(),
-                            &"sbyte".to_string(),
-                            1,
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&CSharpGenerator::format_serialization_variable(
-                        expr,
-                        *position,
-                        &"data".to_string(),
-                        &"sbyte".to_string(),
-                        1,
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::UnsignedInteger16(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&CSharpGenerator::format_array_serialization_variable(
-                            expr,
-                            i,
-                            *position,
-                            &"data".to_string(),
-                            &"ushort".to_string(),
-                            2,
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&CSharpGenerator::format_serialization_variable(
-                        expr,
-                        *position,
-                        &"data".to_string(),
-                        &"ushort".to_string(),
-                        2,
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::Integer16(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&CSharpGenerator::format_array_serialization_variable(
-                            expr,
-                            i,
-                            *position,
-                            &"data".to_string(),
-                            &"short".to_string(),
-                            2,
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&CSharpGenerator::format_serialization_variable(
-                        expr,
-                        *position,
-                        &"data".to_string(),
-                        &"short".to_string(),
-                        2,
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::UnsignedInteger32(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&CSharpGenerator::format_array_serialization_variable(
-                            expr,
-                            i,
-                            *position,
-                            &"data".to_string(),
-                            &"uint".to_string(),
-                            4,
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&CSharpGenerator::format_serialization_variable(
-                        expr,
-                        *position,
-                        &"data".to_string(),
-                        &"uint".to_string(),
-                        4,
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::Integer32(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&CSharpGenerator::format_array_serialization_variable(
-                            expr,
-                            i,
-                            *position,
-                            &"data".to_string(),
-                            &"int".to_string(),
-                            4,
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&CSharpGenerator::format_serialization_variable(
-                        expr,
-                        *position,
-                        &"data".to_string(),
-                        &"int".to_string(),
-                        4,
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::UnsignedInteger64(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&CSharpGenerator::format_array_serialization_variable(
-                            expr,
-                            i,
-                            *position,
-                            &"data".to_string(),
-                            &"ulong".to_string(),
-                            8,
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&CSharpGenerator::format_serialization_variable(
-                        expr,
-                        *position,
-                        &"data".to_string(),
-                        &"ulong".to_string(),
-                        8,
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::Integer64(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&CSharpGenerator::format_array_serialization_variable(
-                            expr,
-                            i,
-                            *position,
-                            &"data".to_string(),
-                            &"long".to_string(),
-                            8,
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&CSharpGenerator::format_serialization_variable(
-                        expr,
-                        *position,
-                        &"data".to_string(),
-                        &"long".to_string(),
-                        8,
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::Float32(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&CSharpGenerator::format_array_serialization_variable(
-                            expr,
-                            i,
-                            *position,
-                            &"data".to_string(),
-                            &"float".to_string(),
-                            4,
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&CSharpGenerator::format_serialization_variable(
-                        expr,
-                        *position,
-                        &"data".to_string(),
-                        &"float".to_string(),
-                        4,
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::Float64(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&CSharpGenerator::format_array_serialization_variable(
-                            expr,
-                            i,
-                            *position,
-                            &"data".to_string(),
-                            &"double".to_string(),
-                            8,
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&CSharpGenerator::format_serialization_variable(
-                        expr,
-                        *position,
-                        &"data".to_string(),
-                        &"double".to_string(),
-                        8,
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::MacAddress => {
-                result.push_str(&format!("// Not implemented {};\n", &"data".to_string()));
-                *position += expr.expr.get_type_length_bytes();
+            } else {
+                let _ = writeln!(
+                    &mut s,
+                    "{name} = new byte[6]; Buffer.BlockCopy(data, pos, {name}, 0, 6); pos += 6;"
+                );
             }
-            _ => (),
         }
-        result
-    }
+        _ => {
+            let w = scalar_width_bytes(t);
 
-    fn get_field_deserializer(expr: &TypeExpr, position: &mut usize) -> String {
-        let mut result = String::new();
-        match expr.expr {
-            TypeNode::UnsignedInteger8(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&CSharpGenerator::format_array_deserialization_variable(
-                            expr,
-                            i,
-                            *position,
-                            &"data".to_string(),
-                            &"byte".to_string(),
-                            1,
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
+            let read_scalar = |dst: &mut String, lhs: String| {
+                match (endian, w) {
+                    (_, 1) => {
+                        // byte/sbyte
+                        let _ = writeln!(
+                            dst,
+                            "{lhs} = unchecked(({})(data[pos++]));",
+                            match t {
+                                TypeNode::Integer8(_) => "sbyte",
+                                _ => "byte",
+                            }
+                        );
                     }
-                }
-                None => {
-                    result.push_str(&CSharpGenerator::format_deserialization_variable(
-                        expr,
-                        *position,
-                        &"data".to_string(),
-                        &"byte".to_string(),
-                        1,
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::Integer8(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&CSharpGenerator::format_array_deserialization_variable(
-                            expr,
-                            i,
-                            *position,
-                            &"data".to_string(),
-                            &"sbyte".to_string(),
-                            1,
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
+                    (Le, 2) => {
+                        let _ = writeln!(
+                            dst,
+                            "{lhs} = ({} )BinaryPrimitives.ReadUInt16LittleEndian(data.AsSpan(pos)); pos += 2;",
+                            map_cs_scalar_for_width(t, 2)
+                        );
                     }
-                }
-                None => {
-                    result.push_str(&CSharpGenerator::format_deserialization_variable(
-                        expr,
-                        *position,
-                        &"data".to_string(),
-                        &"sbyte".to_string(),
-                        1,
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::UnsignedInteger16(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&CSharpGenerator::format_array_deserialization_variable(
-                            expr,
-                            i,
-                            *position,
-                            &"data".to_string(),
-                            &"ushort".to_string(),
-                            2,
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
+                    (Be, 2) => {
+                        let _ = writeln!(
+                            dst,
+                            "{lhs} = ({} )BinaryPrimitives.ReadUInt16BigEndian(data.AsSpan(pos)); pos += 2;",
+                            map_cs_scalar_for_width(t, 2)
+                        );
                     }
+                    (Le, 4) => match t {
+                        TypeNode::Float32(_) => {
+                            let _ = writeln!(
+                                dst,
+                                "{{ var bits = BinaryPrimitives.ReadInt32LittleEndian(data.AsSpan(pos)); pos += 4; {lhs} = BitConverter.Int32BitsToSingle(bits); }}"
+                            );
+                        }
+                        _ => {
+                            let _ = writeln!(
+                                dst,
+                                "{lhs} = ({} )BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(pos)); pos += 4;",
+                                map_cs_scalar_for_width(t, 4)
+                            );
+                        }
+                    },
+                    (Be, 4) => match t {
+                        TypeNode::Float32(_) => {
+                            let _ = writeln!(
+                                dst,
+                                "{{ var bits = BinaryPrimitives.ReadInt32BigEndian(data.AsSpan(pos)); pos += 4; {lhs} = BitConverter.Int32BitsToSingle(bits); }}"
+                            );
+                        }
+                        _ => {
+                            let _ = writeln!(
+                                dst,
+                                "{lhs} = ({} )BinaryPrimitives.ReadUInt32BigEndian(data.AsSpan(pos)); pos += 4;",
+                                map_cs_scalar_for_width(t, 4)
+                            );
+                        }
+                    },
+                    (Le, 8) => match t {
+                        TypeNode::Float64(_) => {
+                            let _ = writeln!(
+                                dst,
+                                "{{ var bits = BinaryPrimitives.ReadInt64LittleEndian(data.AsSpan(pos)); pos += 8; {lhs} = BitConverter.Int64BitsToDouble(bits); }}"
+                            );
+                        }
+                        TypeNode::Integer64(_) | TypeNode::DateTime(_) => {
+                            let _ = writeln!(
+                                dst,
+                                "{lhs} = BinaryPrimitives.ReadInt64LittleEndian(data.AsSpan(pos)); pos += 8;"
+                            );
+                        }
+                        _ => {
+                            let _ = writeln!(
+                                dst,
+                                "{lhs} = ({} )BinaryPrimitives.ReadUInt64LittleEndian(data.AsSpan(pos)); pos += 8;",
+                                map_cs_scalar_for_width(t, 8)
+                            );
+                        }
+                    },
+                    (Be, 8) => match t {
+                        TypeNode::Float64(_) => {
+                            let _ = writeln!(
+                                dst,
+                                "{{ var bits = BinaryPrimitives.ReadInt64BigEndian(data.AsSpan(pos)); pos += 8; {lhs} = BitConverter.Int64BitsToDouble(bits); }}"
+                            );
+                        }
+                        TypeNode::Integer64(_) | TypeNode::DateTime(_) => {
+                            let _ = writeln!(
+                                dst,
+                                "{lhs} = BinaryPrimitives.ReadInt64BigEndian(data.AsSpan(pos)); pos += 8;"
+                            );
+                        }
+                        _ => {
+                            let _ = writeln!(
+                                dst,
+                                "{lhs} = ({} )BinaryPrimitives.ReadUInt64BigEndian(data.AsSpan(pos)); pos += 8;",
+                                map_cs_scalar_for_width(t, 8)
+                            );
+                        }
+                    },
+                    _ => {}
                 }
-                None => {
-                    result.push_str(&CSharpGenerator::format_deserialization_variable(
-                        expr,
-                        *position,
-                        &"data".to_string(),
-                        &"ushort".to_string(),
-                        2,
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::Integer16(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&CSharpGenerator::format_array_deserialization_variable(
-                            expr,
-                            i,
-                            *position,
-                            &"data".to_string(),
-                            &"short".to_string(),
-                            2,
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
+            };
+
+            if is_array_like(t) {
+                // Constant-length array? allocate exact; otherwise if last, use remaining bytes / elem size
+                if let Some(len_expr) = type_len_expr(t) {
+                    if let Some(n) = eval_len_const(len_expr) {
+                        let ty = cs_field_type(t).trim_end_matches("[]").to_string();
+                        let _ = writeln!(&mut s, "{name} = new {ty}[{n}];");
+                        let _ = writeln!(&mut s, "for (int i = 0; i < {n}; ++i) {{");
+                        read_scalar(&mut s, format!("{name}[i]"));
+                        let _ = writeln!(&mut s, "}}");
+                    } else if is_last {
+                        let ty = cs_field_type(t).trim_end_matches("[]").to_string();
+                        let elem = w;
+                        let _ = writeln!(
+                            &mut s,
+                            "{{ int rem = data.Length - pos; int cnt = rem / {elem}; {name} = new {ty}[cnt]; for (int i = 0; i < cnt; ++i) {{"
+                        );
+                        read_scalar(&mut s, format!("{name}[i]"));
+                        let _ = writeln!(&mut s, "}} }}");
+                    } else {
+                        let _ = writeln!(
+                            &mut s,
+                            r#"throw new NotSupportedException("Dynamic-length non-byte array not at end of buffer");"#
+                        );
                     }
+                } else {
+                    // Fallback (shouldn't happen): treat as scalar
+                    read_scalar(&mut s, name.to_string());
                 }
-                None => {
-                    result.push_str(&CSharpGenerator::format_deserialization_variable(
-                        expr,
-                        *position,
-                        &"data".to_string(),
-                        &"short".to_string(),
-                        2,
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::UnsignedInteger32(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&CSharpGenerator::format_array_deserialization_variable(
-                            expr,
-                            i,
-                            *position,
-                            &"data".to_string(),
-                            &"uint".to_string(),
-                            4,
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&CSharpGenerator::format_deserialization_variable(
-                        expr,
-                        *position,
-                        &"data".to_string(),
-                        &"uint".to_string(),
-                        4,
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::Integer32(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&CSharpGenerator::format_array_deserialization_variable(
-                            expr,
-                            i,
-                            *position,
-                            &"data".to_string(),
-                            &"int".to_string(),
-                            4,
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&CSharpGenerator::format_deserialization_variable(
-                        expr,
-                        *position,
-                        &"data".to_string(),
-                        &"int".to_string(),
-                        4,
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::UnsignedInteger64(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&CSharpGenerator::format_array_deserialization_variable(
-                            expr,
-                            i,
-                            *position,
-                            &"data".to_string(),
-                            &"ulong".to_string(),
-                            8,
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&CSharpGenerator::format_deserialization_variable(
-                        expr,
-                        *position,
-                        &"data".to_string(),
-                        &"ulong".to_string(),
-                        8,
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::Integer64(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&CSharpGenerator::format_array_deserialization_variable(
-                            expr,
-                            i,
-                            *position,
-                            &"data".to_string(),
-                            &"long".to_string(),
-                            8,
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&CSharpGenerator::format_deserialization_variable(
-                        expr,
-                        *position,
-                        &"data".to_string(),
-                        &"long".to_string(),
-                        8,
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::Float32(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&CSharpGenerator::format_array_deserialization_variable(
-                            expr,
-                            i,
-                            *position,
-                            &"data".to_string(),
-                            &"float".to_string(),
-                            4,
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&CSharpGenerator::format_deserialization_variable(
-                        expr,
-                        *position,
-                        &"data".to_string(),
-                        &"float".to_string(),
-                        4,
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::Float64(y) => match y {
-                Some(y) => {
-                    for i in 0..y {
-                        result.push_str(&CSharpGenerator::format_array_deserialization_variable(
-                            expr,
-                            i,
-                            *position,
-                            &"data".to_string(),
-                            &"double".to_string(),
-                            8,
-                        ));
-                        *position += expr.expr.get_type_length_bytes();
-                    }
-                }
-                None => {
-                    result.push_str(&CSharpGenerator::format_deserialization_variable(
-                        expr,
-                        *position,
-                        &"data".to_string(),
-                        &"double".to_string(),
-                        8,
-                    ));
-                    *position += expr.expr.get_type_length_bytes();
-                }
-            },
-            TypeNode::MacAddress => {
-                result.push_str(&format!("// Not implemented {};\n", &"data".to_string()));
-                *position += expr.expr.get_type_length_bytes();
+            } else {
+                read_scalar(&mut s, format!("{name}"));
             }
-            _ => (),
-        }
-        result
-    }
-
-    fn format_deserialization_variable(
-        expr: &TypeExpr,
-        position: usize,
-        data_variable: &String,
-        variable_type: &String,
-        variable_type_size: usize,
-    ) -> String {
-        format!(
-            "\tvar {} = {};\n",
-            CaseWrapper(expr.id.clone()).to_pascal_case(),
-            CSharpGenerator::get_conversion_deserialization(
-                data_variable,
-                variable_type,
-                position,
-                variable_type_size
-            )
-        )
-    }
-
-    fn format_array_deserialization_variable(
-        expr: &TypeExpr,
-        i: usize,
-        position: usize,
-        data_variable: &String,
-        variable_type: &String,
-        variable_type_size: usize,
-    ) -> String {
-        format!(
-            "\tvar {}{} = {};\n",
-            CaseWrapper(expr.id.clone()).to_pascal_case(),
-            i,
-            CSharpGenerator::get_conversion_deserialization(
-                data_variable,
-                variable_type,
-                position,
-                variable_type_size
-            )
-        )
-    }
-
-    fn format_serialization_variable(
-        expr: &TypeExpr,
-        position: usize,
-        data_variable: &String,
-        variable_type: &String,
-        variable_type_size: usize,
-    ) -> String {
-        format!(
-            "\tvar {} = new byte[{}];\n\t{} = {};\n",
-            CaseWrapper(expr.id.clone()).to_camel_case(),
-            variable_type_size,
-            CSharpGenerator::get_conversion_serialization(
-                data_variable,
-                variable_type,
-                position,
-                variable_type_size
-            ),
-            CaseWrapper(expr.id.clone()).to_camel_case()
-        )
-    }
-
-    fn format_array_serialization_variable(
-        expr: &TypeExpr,
-        i: usize,
-        position: usize,
-        data_variable: &String,
-        variable_type: &String,
-        variable_type_size: usize,
-    ) -> String {
-        format!(
-            "\tvar {}_{} = new byte[{}];\n\t{} = {};\n",
-            CaseWrapper(expr.id.clone()).to_camel_case(),
-            i,
-            variable_type_size,
-            CSharpGenerator::get_conversion_serialization(
-                data_variable,
-                variable_type,
-                position,
-                variable_type_size
-            ),
-            CaseWrapper(expr.id.clone()).to_camel_case()
-        )
-    }
-
-    fn get_conversion_serialization(
-        data_variable: &String,
-        data_type: &String,
-        position: usize,
-        data_byte_size: usize,
-    ) -> String {
-        if data_type == "byte" {
-            format!("{}[{}]", data_variable, position)
-        } else {
-            format!(
-                "BinaryPrimitives.Write{}LittleEndian({}[{}..{}])",
-                capitalize_first(data_type.clone()),
-                data_variable,
-                position,
-                position + data_byte_size
-            )
         }
     }
 
-    fn get_conversion_deserialization(
-        data_variable: &String,
-        data_type: &String,
-        position: usize,
-        data_byte_size: usize,
-    ) -> String {
-        if data_type == "byte" {
-            format!("{}[{}]", data_variable, position)
-        } else {
-            format!(
-                "BinaryPrimitives.Read{}LittleEndian({}[{}..{}])",
-                capitalize_first(data_type.clone()),
-                data_variable,
-                position,
-                position + data_byte_size
-            )
-        }
+    s
+}
+
+fn map_cs_scalar_for_width(t: &TypeNode, w: usize) -> &'static str {
+    use TypeNode::*;
+    match (t, w) {
+        (Integer16(_), 2) => "short",
+        (UnsignedInteger16(_), 2) => "ushort",
+        (Integer32(_), 4) => "int",
+        (UnsignedInteger32(_), 4) => "uint",
+        (Integer64(_), 8) | (DateTime(_), 8) => "long",
+        (UnsignedInteger64(_), 8) => "ulong",
+        // Fallback to unsigned width for other combos (we cast on store/read as needed)
+        _ => match w {
+            2 => "ushort",
+            4 => "uint",
+            8 => "ulong",
+            _ => "byte",
+        },
     }
+}
+
+fn type_len_expr<'a>(t: &'a TypeNode) -> Option<&'a ExprNode> {
+    use TypeNode::*;
+    match t {
+        UnsignedInteger8(e) | Integer8(e) | UnsignedInteger16(e) | Integer16(e)
+        | UnsignedInteger32(e) | Integer32(e) | UnsignedInteger64(e) | Integer64(e)
+        | Float32(e) | Float64(e) | DateTime(e) => e.as_ref(),
+        Bytes(e) | MacAddress(e) => e.as_ref(), // used for const detection
+    }
+}
+
+fn indent(s: &str, tabs: usize) -> String {
+    let pad = "    ".repeat(tabs);
+    s.lines()
+        .map(|l| {
+            if l.is_empty() {
+                "\n".to_string()
+            } else {
+                format!("{pad}{l}\n")
+            }
+        })
+        .collect()
 }

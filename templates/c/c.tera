@@ -1,0 +1,40 @@
+{{ headers }}
+
+{{ support }}
+
+// ---- Packets ----
+{% for p in packets %}
+
+// struct {{ p.name }}
+typedef struct {{ p.name }} {
+{% for f in p.fields %}
+    {{ f.decl }};
+{% endfor %}
+} {{ p.name }};
+
+// serialize {{ p.name }}
+void serialize_{{ p.name }}(uint8_t** data, const {{ p.name }}* packet, int verbose) {
+    size_t total_size = 0;
+    // compute total size
+    {{ p.total_size_code }}
+    *data = (uint8_t*)calloc(total_size, 1);
+    size_t pos = 0;
+
+    // write fields
+    {{ p.serialize_body }}
+
+    (void)verbose; // currently unused
+}
+
+// deserialize {{ p.name }}
+void deserialize_{{ p.name }}({{ p.name }}** packet, const uint8_t* data, int verbose) {
+    *packet = ({{ p.name }}*)malloc(sizeof({{ p.name }}));
+    size_t pos = 0;
+
+    // read fields
+    {{ p.deserialize_body }}
+
+    (void)verbose; // currently unused
+}
+
+{% endfor %}
