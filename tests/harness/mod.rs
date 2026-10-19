@@ -46,11 +46,13 @@ pub struct Case {
     pub error: bool,
     pub encode_error: bool,
     pub encoded: Option<String>,
+    /// Derived robustness case: any outcome is fine as long as the decoder
+    /// reports it cleanly (no crash, leak or hang).
+    pub any: bool,
 }
 
 pub struct Spec {
     pub name: String,
-    pub source: String,
     pub module: Module,
     pub cases: Vec<Case>,
 }
@@ -94,7 +96,11 @@ fn load_spec(path: &Path) -> Spec {
             expect: c.get("expect").and_then(|e| e.as_object()).cloned(),
             error: c.get("error").and_then(|e| e.as_bool()).unwrap_or(false),
             encode_error: c.get("encode_error").and_then(|e| e.as_bool()).unwrap_or(false),
-            encoded: c.get("encoded").and_then(|e| e.as_str()).map(|s| s.chars().filter(|c| !c.is_whitespace()).collect()),
+            encoded: c
+                .get("encoded")
+                .and_then(|e| e.as_str())
+                .map(|s| s.chars().filter(|c| !c.is_whitespace()).collect()),
+            any: false,
         };
         assert!(
             module.packets.iter().any(|p| p.name == case.packet),
@@ -105,7 +111,48 @@ fn load_spec(path: &Path) -> Spec {
         );
         cases.push(case);
     }
-    Spec { name: path.file_stem().unwrap().to_string_lossy().into_owned(), source, module, cases }
+    let derived = derived_cases(&cases);
+    cases.extend(derived);
+    Spec { name: path.file_stem().unwrap().to_string_lossy().into_owned(), module, cases }
+}
+
+/// Truncated and bit-flipped variants of every vector. Decoders must handle
+/// them without crashing; with sanitizers (C) and leak checks (Zig) this
+/// also exercises cleanup on every error path.
+fn derived_cases(cases: &[Case]) -> Vec<Case> {
+    let mut out = Vec::new();
+    let mut seed: u64 = 0x9e3779b97f4a7c15;
+    for c in cases.iter().filter(|c| c.set.is_empty()) {
+        let bytes: Vec<u8> =
+            (0..c.hex.len() / 2).map(|i| u8::from_str_radix(&c.hex[2 * i..2 * i + 2], 16).unwrap()).collect();
+        let mut variants: Vec<Vec<u8>> = (0..bytes.len()).map(|n| bytes[..n].to_vec()).collect();
+        for _ in 0..4 {
+            if bytes.is_empty() {
+                break;
+            }
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            let mut v = bytes.clone();
+            let bit = (seed % (bytes.len() as u64 * 8)) as usize;
+            v[bit / 8] ^= 0x80 >> (bit % 8);
+            variants.push(v);
+        }
+        for (i, v) in variants.into_iter().enumerate() {
+            out.push(Case {
+                name: format!("{} (variant {})", c.name, i),
+                packet: c.packet.clone(),
+                hex: v.iter().map(|b| format!("{:02x}", b)).collect(),
+                set: Vec::new(),
+                expect: None,
+                error: false,
+                encode_error: false,
+                encoded: None,
+                any: true,
+            });
+        }
+    }
+    out
 }
 
 /// A target language as seen by the test driver.
@@ -124,10 +171,27 @@ pub fn packet<'a>(module: &'a Module, name: &str) -> &'a Packet {
 }
 
 pub fn member<'a>(p: &'a Packet, name: &str) -> &'a Member {
-    p.members
-        .iter()
-        .find(|m| m.name == name)
-        .unwrap_or_else(|| panic!("packet {} has no member {}", p.name, name))
+    p.members.iter().find(|m| m.name == name).unwrap_or_else(|| panic!("packet {} has no member {}", p.name, name))
+}
+
+/// Resolve a dotted `set` path such as `header.flags` through nested
+/// (non-array) packet members: returns (owning packet, member) per segment.
+pub fn resolve_path<'a>(module: &'a Module, p: &'a Packet, path: &str) -> Vec<(&'a Packet, &'a Member)> {
+    let mut out = Vec::new();
+    let mut cur = p;
+    for seg in path.split('.') {
+        let m = member(cur, seg);
+        out.push((cur, m));
+        if let packet_builder::ir::ValueType::Packet(n) = &m.ty {
+            cur = packet(module, n);
+        }
+    }
+    out
+}
+
+/// Accessor for a `set` path using a per-language member naming function.
+pub fn accessor(module: &Module, p: &Packet, path: &str, name: impl Fn(&Packet, &Member) -> String) -> String {
+    resolve_path(module, p, path).into_iter().map(|(owner, m)| name(owner, m)).collect::<Vec<_>>().join(".")
 }
 
 /// Integer literal for a `set` value.
@@ -214,6 +278,9 @@ pub fn run_target(target: &dyn Target) {
 fn check_case(case: &Case, line: &str) -> Result<(), String> {
     let out: Value = serde_json::from_str(line).map_err(|e| format!("invalid JSON from harness: {}", e))?;
     let ok = out["ok"].as_bool().unwrap_or(false);
+    if case.any {
+        return if out.get("ok").is_some() { Ok(()) } else { Err("malformed result".into()) };
+    }
     if case.error {
         return if ok { Err("expected a decode error, but decoding succeeded".into()) } else { Ok(()) };
     }

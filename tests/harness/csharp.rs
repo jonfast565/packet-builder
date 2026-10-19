@@ -7,7 +7,7 @@ use packet_builder::generators::net_generator::{namespace, prop_name};
 use packet_builder::ir::{Member, Module, ValueType};
 use packet_builder::{GenOptions, Language};
 
-use super::{member, packet, quote, run, set_literal, which, Case, Target};
+use super::{Case, Target, packet, quote, run, set_literal, which};
 
 pub struct CSharpTarget;
 
@@ -15,9 +15,14 @@ pub struct CSharpTarget;
 fn toolchain() -> Option<(PathBuf, PathBuf, PathBuf)> {
     let dotnet = which("dotnet")?;
     let root = fs::canonicalize(&dotnet).ok()?.parent()?.to_path_buf();
+    // Highest version directory ("10.0.1" sorts after "8.0.31").
     let newest = |dir: PathBuf| -> Option<PathBuf> {
+        let version = |p: &PathBuf| -> Vec<u64> {
+            let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            name.split(|c: char| !c.is_ascii_digit()).filter_map(|x| x.parse().ok()).collect()
+        };
         let mut entries: Vec<PathBuf> = fs::read_dir(dir).ok()?.filter_map(|e| e.ok().map(|e| e.path())).collect();
-        entries.sort();
+        entries.sort_by_key(version);
         entries.pop()
     };
     let csc = newest(root.join("sdk"))?.join("Roslyn").join("bincore").join("csc.dll");
@@ -52,10 +57,16 @@ impl Target for CSharpTarget {
         let mut s = String::from("using System;\nusing System.Globalization;\nusing System.Linq;\n");
         let _ = writeln!(s, "using {};\n", namespace(&GenOptions::default()));
         s.push_str("static class Harness\n{\n");
-        s.push_str("    static string Hx(byte[] b) => \"\\\"\" + Convert.ToHexString(b).ToLowerInvariant() + \"\\\"\";\n");
+        s.push_str(
+            "    static string Hx(byte[] b) => \"\\\"\" + Convert.ToHexString(b).ToLowerInvariant() + \"\\\"\";\n",
+        );
         s.push_str("    static string Q(string s) => \"\\\"\" + s.Replace(\"\\\\\", \"\\\\\\\\\").Replace(\"\\\"\", \"\\\\\\\"\") + \"\\\"\";\n\n");
         for p in &module.packets {
-            let _ = writeln!(s, "    static string Dump{}({} p)\n    {{\n        var parts = new System.Collections.Generic.List<string>();", p.name, p.name);
+            let _ = writeln!(
+                s,
+                "    static string Dump{}({} p)\n    {{\n        var parts = new System.Collections.Generic.List<string>();",
+                p.name, p.name
+            );
             for m in &p.members {
                 let place = format!("p.{}", prop_name(&p.name, &m.name));
                 let _ = writeln!(s, "        parts.Add(\"\\\"{}\\\":\" + {});", m.name, value_expr(m, &place));
@@ -67,10 +78,16 @@ impl Target for CSharpTarget {
             let p = packet(module, &c.packet);
             s.push_str("        {\n");
             let _ = writeln!(s, "            {} p;", p.name);
-            let _ = writeln!(s, "            try {{ p = {}.Decode(Convert.FromHexString({})); }}", p.name, quote(&c.hex));
+            let _ =
+                writeln!(s, "            try {{ p = {}.Decode(Convert.FromHexString({})); }}", p.name, quote(&c.hex));
             s.push_str("            catch (PbException e) { Console.WriteLine(\"{\\\"ok\\\":false,\\\"error\\\":\" + Q(e.Message) + \"}\"); goto done; }\n");
             for (name, v) in &c.set {
-                let _ = writeln!(s, "            p.{} = {};", prop_name(&p.name, &member(p, name).name), set_literal(v));
+                let _ = writeln!(
+                    s,
+                    "            p.{} = {};",
+                    super::accessor(module, p, name, |o, m| prop_name(&o.name, &m.name)),
+                    set_literal(v)
+                );
             }
             let _ = writeln!(s, "            var v = Dump{}(p);", p.name);
             s.push_str("            byte[] b;\n");
@@ -89,7 +106,7 @@ impl Target for CSharpTarget {
         fs::write(dir.join("Main.cs"), harness).unwrap();
         fs::write(
             dir.join("harness.runtimeconfig.json"),
-            r#"{"runtimeOptions":{"tfm":"net8.0","rollForward":"Major","framework":{"name":"Microsoft.NETCore.App","version":"8.0.0"}}}"#,
+            r#"{"runtimeOptions":{"tfm":"net8.0","rollForward":"LatestMajor","framework":{"name":"Microsoft.NETCore.App","version":"8.0.0"}}}"#,
         )
         .unwrap();
         let mut cmd = Command::new(&dotnet);

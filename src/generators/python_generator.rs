@@ -1,6 +1,6 @@
 //! Python backend: a single module using only the standard library.
 
-use crate::generators::common::{emit_expr, is_calc, mask, ExprLang, GenOptions, Mode, Out};
+use crate::generators::common::{ExprLang, GenOptions, Mode, Out, emit_expr, is_calc, mask};
 use crate::ir::{AggOp, ArithOp, Codec, Count, Func, LogicOp, Member, MemberKind, Module, Packet, Step, Ty, ValueType};
 use crate::models::parsing_models::Endianness;
 
@@ -9,9 +9,9 @@ pub struct PythonGenerator;
 const RUNTIME: &str = include_str!("../../runtime/python.py");
 
 const KEYWORDS: &[&str] = &[
-    "False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue", "def",
-    "del", "elif", "else", "except", "finally", "for", "from", "global", "if", "import", "in", "is",
-    "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try", "while", "with", "yield",
+    "False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del",
+    "elif", "else", "except", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda", "nonlocal",
+    "not", "or", "pass", "raise", "return", "try", "while", "with", "yield",
 ];
 
 pub fn ident(name: &str) -> String {
@@ -165,7 +165,11 @@ fn read_elem(codec: &Codec, ty: &ValueType) -> String {
         Codec::Bytes { nbytes, endian } => format!("pb_r.read_uint({}, {})", nbytes, little(endian)),
         Codec::Bits { width } => format!("pb_r.read_bits({})", width),
         Codec::Float { width, endian } => {
-            let fmt = format!("{}{}", if *endian == Endianness::Le { "<" } else { ">" }, if *width == 32 { "f" } else { "d" });
+            let fmt = format!(
+                "{}{}",
+                if *endian == Endianness::Le { "<" } else { ">" },
+                if *width == 32 { "f" } else { "d" }
+            );
             return format!("struct.unpack(\"{}\", pb_r.read_bytes({}))[0]", fmt, width / 8);
         }
         Codec::Mac => return "pb_r.read_bytes(6)".into(),
@@ -188,7 +192,11 @@ fn write_elem(out: &mut Out, codec: &Codec, ty: &ValueType, v: &str, field: &str
         Codec::Bytes { nbytes, endian } => out.line(format!("pb_w.write_uint({}, {}, {})", v, nbytes, little(endian))),
         Codec::Bits { width } => out.line(format!("pb_w.write_bits({}, {})", v, width)),
         Codec::Float { width, endian } => {
-            let fmt = format!("{}{}", if *endian == Endianness::Le { "<" } else { ">" }, if *width == 32 { "f" } else { "d" });
+            let fmt = format!(
+                "{}{}",
+                if *endian == Endianness::Le { "<" } else { ">" },
+                if *width == 32 { "f" } else { "d" }
+            );
             out.line(format!("pb_w.write_bytes(struct.pack(\"{}\", {}))", fmt, v));
         }
         Codec::Mac => out.line(format!("pb_w.write_bytes(bytes({}))", v)),
@@ -301,7 +309,7 @@ fn emit_decode_step(out: &mut Out, p: &Packet, lang: &Lang, step: &Step) {
                         out.line(format!("{} = pb_r.read_bytes(pb_r.remaining_bits() // 8)", target));
                     } else {
                         out.line(format!("{} = []", target));
-                        out.open(format!("while pb_r.remaining_bits() >= {}:", ebits));
+                        out.open("while pb_r.remaining_bits() > 0:");
                         out.line(format!("{}.append({})", target, read_elem(codec, ty)));
                         out.pop();
                     }
@@ -331,7 +339,9 @@ fn emit_encode_step(out: &mut Out, p: &Packet, lang: &Lang, step: &Step) {
             let bits = codec.bits();
             match array {
                 None => out.line(format!("pb_w.write_zero_bits({})", bits)),
-                Some(Count::Expr(e)) => out.line(format!("pb_w.write_zero_bits(max({}, 0) * {})", emit_expr(lang, e), bits)),
+                Some(Count::Expr(e)) => {
+                    out.line(format!("pb_w.write_zero_bits(max({}, 0) * {})", emit_expr(lang, e), bits))
+                }
                 Some(Count::Remaining) => {}
             }
         }
@@ -367,7 +377,9 @@ fn emit_encode_step(out: &mut Out, p: &Packet, lang: &Lang, step: &Step) {
                 out.line(format!("pb_c |= ({} & 0x{:x}) << {}", place, mask(part.width), part.shift));
             }
             match container {
-                Codec::Bytes { nbytes, endian } => out.line(format!("pb_w.write_uint(pb_c, {}, {})", nbytes, little(endian))),
+                Codec::Bytes { nbytes, endian } => {
+                    out.line(format!("pb_w.write_uint(pb_c, {}, {})", nbytes, little(endian)))
+                }
                 _ => out.line(format!("pb_w.write_bits(pb_c, {})", container_width)),
             }
         }

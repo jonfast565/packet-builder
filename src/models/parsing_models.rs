@@ -69,7 +69,10 @@ pub enum TypeNode {
     DateTime,
     Bytes, // opaque blob; element type is a byte
     /// Arbitrary-width integer: `u3`, `i12`, ...
-    Bits { width: u32, signed: bool },
+    Bits {
+        width: u32,
+        signed: bool,
+    },
     /// Reference to another packet by name.
     Packet(String),
 }
@@ -156,10 +159,7 @@ impl TypeNode {
             TypeNode::UnsignedInteger8 | TypeNode::Integer8 | TypeNode::Bytes => 8,
             TypeNode::UnsignedInteger16 | TypeNode::Integer16 => 16,
             TypeNode::UnsignedInteger32 | TypeNode::Integer32 | TypeNode::Float32 => 32,
-            TypeNode::UnsignedInteger64
-            | TypeNode::Integer64
-            | TypeNode::Float64
-            | TypeNode::DateTime => 64,
+            TypeNode::UnsignedInteger64 | TypeNode::Integer64 | TypeNode::Float64 | TypeNode::DateTime => 64,
             TypeNode::MacAddress => 48,
             TypeNode::Bits { width, .. } => *width,
             TypeNode::Packet(_) => return None,
@@ -193,23 +193,25 @@ fn eval_i128(e: &ExprNode) -> Option<i128> {
 
     match e {
         UnsignedInteger64Value(u) => Some(*u as i128),
-        Integer64Value(i)         => Some(*i as i128),
-        Float64Value(f)           => Some(*f as i128), // truncation
-        StringValue(_)            => None,
+        Integer64Value(i) => Some(*i as i128),
+        Float64Value(f) => Some(*f as i128), // truncation
+        StringValue(_) => None,
 
-        ParenthesizedExpr(inner)  => eval_i128(inner),
+        ParenthesizedExpr(inner) => eval_i128(inner),
 
-        Plus(a, b)  => Some(eval_i128(a)? + eval_i128(b)?),
+        Plus(a, b) => Some(eval_i128(a)? + eval_i128(b)?),
         Minus(a, b) => Some(eval_i128(a)? - eval_i128(b)?),
-        Mult(a, b)  => Some(eval_i128(a)? * eval_i128(b)?),
-        Div(a, b)   => {
+        Mult(a, b) => Some(eval_i128(a)? * eval_i128(b)?),
+        Div(a, b) => {
             let rhs = eval_i128(b)?;
             if rhs == 0 { None } else { Some(eval_i128(a)? / rhs) }
         }
-        Pow(a, b)   => {
+        Pow(a, b) => {
             let base = eval_i128(a)?;
-            let exp  = eval_i128(b)?;
-            if exp < 0 { return None; }
+            let exp = eval_i128(b)?;
+            if exp < 0 {
+                return None;
+            }
             Some(ipow_i128(base, exp as u32)?)
         }
 
@@ -219,21 +221,18 @@ fn eval_i128(e: &ExprNode) -> Option<i128> {
         }
 
         // booleans as integers (rarely needed directly, but helpful for guards)
-        Gt(a, b)      => Some((eval_i128(a)? >  eval_i128(b)?) as i128),
-        Gte(a, b)     => Some((eval_i128(a)? >= eval_i128(b)?) as i128),
-        Lt(a, b)      => Some((eval_i128(a)? <  eval_i128(b)?) as i128),
-        Lte(a, b)     => Some((eval_i128(a)? <= eval_i128(b)?) as i128),
-        Equals(a, b)  => Some((eval_i128(a)? == eval_i128(b)?) as i128),
-        NotEquals(a,b)=> Some((eval_i128(a)? != eval_i128(b)?) as i128),
+        Gt(a, b) => Some((eval_i128(a)? > eval_i128(b)?) as i128),
+        Gte(a, b) => Some((eval_i128(a)? >= eval_i128(b)?) as i128),
+        Lt(a, b) => Some((eval_i128(a)? < eval_i128(b)?) as i128),
+        Lte(a, b) => Some((eval_i128(a)? <= eval_i128(b)?) as i128),
+        Equals(a, b) => Some((eval_i128(a)? == eval_i128(b)?) as i128),
+        NotEquals(a, b) => Some((eval_i128(a)? != eval_i128(b)?) as i128),
 
-        And(a, b)     => Some((eval_bool(a)? && eval_bool(b)?) as i128),
-        Or(a, b)      => Some((eval_bool(a)? || eval_bool(b)?) as i128),
+        And(a, b) => Some((eval_bool(a)? && eval_bool(b)?) as i128),
+        Or(a, b) => Some((eval_bool(a)? || eval_bool(b)?) as i128),
 
         // Non-constant constructs we cannot resolve here (need runtime context):
-        ValueReference(_, _) |
-        ActivationRecord(_, _) |
-        AggregateSum(_) |
-        AggregateProduct(_) => None,
+        ValueReference(_, _) | ActivationRecord(_, _) | AggregateSum(_) | AggregateProduct(_) => None,
 
         NoExpr => None,
     }
@@ -242,19 +241,17 @@ fn eval_i128(e: &ExprNode) -> Option<i128> {
 fn eval_bool(e: &ExprNode) -> Option<bool> {
     use ExprNode::*;
     match e {
-        Gt(a, b)      => Some(eval_i128(a)? >  eval_i128(b)?),
-        Gte(a, b)     => Some(eval_i128(a)? >= eval_i128(b)?),
-        Lt(a, b)      => Some(eval_i128(a)? <  eval_i128(b)?),
-        Lte(a, b)     => Some(eval_i128(a)? <= eval_i128(b)?),
-        Equals(a, b)  => Some(eval_i128(a)? == eval_i128(b)?),
-        NotEquals(a,b)=> Some(eval_i128(a)? != eval_i128(b)?),
-        And(a, b)     => Some(eval_bool(a)? && eval_bool(b)?),
-        Or(a, b)      => Some(eval_bool(a)? || eval_bool(b)?),
+        Gt(a, b) => Some(eval_i128(a)? > eval_i128(b)?),
+        Gte(a, b) => Some(eval_i128(a)? >= eval_i128(b)?),
+        Lt(a, b) => Some(eval_i128(a)? < eval_i128(b)?),
+        Lte(a, b) => Some(eval_i128(a)? <= eval_i128(b)?),
+        Equals(a, b) => Some(eval_i128(a)? == eval_i128(b)?),
+        NotEquals(a, b) => Some(eval_i128(a)? != eval_i128(b)?),
+        And(a, b) => Some(eval_bool(a)? && eval_bool(b)?),
+        Or(a, b) => Some(eval_bool(a)? || eval_bool(b)?),
         ParenthesizedExpr(inner) => eval_bool(inner),
         // allow numeric-as-bool (nonzero -> true) if it's a pure constant
-        UnsignedInteger64Value(_) |
-        Integer64Value(_) |
-        Float64Value(_) => Some(eval_i128(e)? != 0),
+        UnsignedInteger64Value(_) | Integer64Value(_) | Float64Value(_) => Some(eval_i128(e)? != 0),
         _ => None,
     }
 }

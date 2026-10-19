@@ -3,7 +3,7 @@
 
 use std::collections::HashSet;
 
-use crate::generators::common::{emit_expr, is_calc, mask, ExprLang, GenOptions, Mode, Out};
+use crate::generators::common::{ExprLang, GenOptions, Mode, Out, emit_expr, is_calc, mask};
 use crate::ir::{AggOp, ArithOp, Codec, Count, Func, Member, MemberKind, Module, Packet, Step, Ty, ValueType};
 use crate::models::parsing_models::Endianness;
 
@@ -13,11 +13,56 @@ const RUNTIME_DECL: &str = include_str!("../../runtime/c_decl.h");
 const RUNTIME_IMPL: &str = include_str!("../../runtime/c_impl.h");
 
 const KEYWORDS: &[&str] = &[
-    "auto", "break", "case", "char", "const", "continue", "default", "do", "double", "else", "enum",
-    "extern", "float", "for", "goto", "if", "inline", "int", "long", "register", "restrict", "return",
-    "short", "signed", "sizeof", "static", "struct", "switch", "typedef", "union", "unsigned", "void",
-    "volatile", "while", "bool", "true", "false", "class", "new", "delete", "this", "template",
-    "typename", "namespace", "private", "public", "protected", "virtual", "operator", "friend",
+    "auto",
+    "break",
+    "case",
+    "char",
+    "const",
+    "continue",
+    "default",
+    "do",
+    "double",
+    "else",
+    "enum",
+    "extern",
+    "float",
+    "for",
+    "goto",
+    "if",
+    "inline",
+    "int",
+    "long",
+    "register",
+    "restrict",
+    "return",
+    "short",
+    "signed",
+    "sizeof",
+    "static",
+    "struct",
+    "switch",
+    "typedef",
+    "union",
+    "unsigned",
+    "void",
+    "volatile",
+    "while",
+    "bool",
+    "true",
+    "false",
+    "class",
+    "new",
+    "delete",
+    "this",
+    "template",
+    "typename",
+    "namespace",
+    "private",
+    "public",
+    "protected",
+    "virtual",
+    "operator",
+    "friend",
 ];
 
 pub fn ident(name: &str) -> String {
@@ -46,7 +91,9 @@ pub fn scalar_type(ty: &ValueType) -> String {
 /// Suffix of the runtime array helpers for an element type.
 fn helper_suffix(ty: &ValueType) -> String {
     match ty {
-        ValueType::Int { width, signed } => format!("{}{}", if *signed { "i" } else { "u" }, crate::ir::storage_for(*width)),
+        ValueType::Int { width, signed } => {
+            format!("{}{}", if *signed { "i" } else { "u" }, crate::ir::storage_for(*width))
+        }
         ValueType::Float { width } => format!("f{}", width),
         _ => "u8".into(),
     }
@@ -70,7 +117,7 @@ impl CGenerator {
         out.line("#ifdef __cplusplus");
         out.line("extern \"C\" {");
         out.line("#endif");
-        for p in &module.packets {
+        for p in module.in_dependency_order() {
             out.line("");
             emit_declarations(&mut out, p);
         }
@@ -125,11 +172,11 @@ fn emit_declarations(out: &mut Out, p: &Packet) {
     }
     out.close(format!("}} {};", name));
     out.line("");
-    out.line(format!("/* Decode from the start of data; trailing bytes are ignored. Returns PB_OK or a"));
+    out.line("/* Decode from the start of data; trailing bytes are ignored. Returns PB_OK or a");
     out.line(format!(" * negative PB_ERR_* code. On success release with {}_free(). */", name));
     out.line(format!("int {}_decode({} *p, const uint8_t *data, size_t len);", name, name));
     out.line(format!("int {}_decode_from({} *p, pb_reader *pb_r);", name, name));
-    out.line(format!("/* Encode into a new malloc'ed buffer (*out, *out_len). */"));
+    out.line("/* Encode into a new malloc'ed buffer (*out, *out_len). */");
     out.line(format!("int {}_encode(const {} *p, uint8_t **out, size_t *out_len);", name, name));
     out.line(format!("int {}_encode_to(const {} *p, pb_writer *pb_w);", name, name));
     out.line(format!("void {}_free({} *p);", name, name));
@@ -250,7 +297,9 @@ fn store_value(expr: String, ty: &ValueType) -> String {
 fn read_elem(out: &mut Out, codec: &Codec, ty: &ValueType, lv: &str) {
     let st = scalar_type(ty);
     match codec {
-        Codec::Bytes { nbytes, endian } => out.line(format!("PB_TRY(pb_read_uint(pb_r, {}, {}, &pb_u));", nbytes, little(endian))),
+        Codec::Bytes { nbytes, endian } => {
+            out.line(format!("PB_TRY(pb_read_uint(pb_r, {}, {}, &pb_u));", nbytes, little(endian)))
+        }
         Codec::Bits { width } => out.line(format!("PB_TRY(pb_read_bits(pb_r, {}, &pb_u));", width)),
         Codec::Float { width, endian } => {
             out.line(format!("PB_TRY(pb_read_uint(pb_r, {}, {}, &pb_u));", width / 8, little(endian)));
@@ -273,21 +322,27 @@ fn read_elem(out: &mut Out, codec: &Codec, ty: &ValueType, lv: &str) {
 }
 
 fn write_elem(out: &mut Out, codec: &Codec, ty: &ValueType, v: &str) {
-    if let ValueType::Int { width, signed } = ty {
-        if ty.needs_range_check() {
-            if *signed {
-                out.line(format!("PB_CHECK(pb_check_i((int64_t){}, {}));", v, width));
-            } else {
-                out.line(format!("PB_CHECK(pb_check_u((uint64_t){}, {}));", v, width));
-            }
+    if let ValueType::Int { width, signed } = ty
+        && ty.needs_range_check()
+    {
+        if *signed {
+            out.line(format!("PB_CHECK(pb_check_i((int64_t){}, {}));", v, width));
+        } else {
+            out.line(format!("PB_CHECK(pb_check_u((uint64_t){}, {}));", v, width));
         }
     }
     match codec {
-        Codec::Bytes { nbytes, endian } => out.line(format!("PB_CHECK(pb_write_uint(pb_w, (uint64_t){}, {}, {}));", v, nbytes, little(endian))),
-        Codec::Bits { width } => out.line(format!("PB_CHECK(pb_write_bits(pb_w, (uint64_t){}, {}));", v, width)),
-        Codec::Float { width, endian } => {
-            out.line(format!("PB_CHECK(pb_write_uint(pb_w, pb_f{}_bits({}), {}, {}));", width, v, width / 8, little(endian)))
+        Codec::Bytes { nbytes, endian } => {
+            out.line(format!("PB_CHECK(pb_write_uint(pb_w, (uint64_t){}, {}, {}));", v, nbytes, little(endian)))
         }
+        Codec::Bits { width } => out.line(format!("PB_CHECK(pb_write_bits(pb_w, (uint64_t){}, {}));", v, width)),
+        Codec::Float { width, endian } => out.line(format!(
+            "PB_CHECK(pb_write_uint(pb_w, pb_f{}_bits({}), {}, {}));",
+            width,
+            v,
+            width / 8,
+            little(endian)
+        )),
         Codec::Mac => out.line(format!("PB_CHECK(pb_write_bytes(pb_w, {}, 6));", v)),
         Codec::Packet(n) => out.line(format!("PB_CHECK({}_encode_to(&{}, pb_w));", n, v)),
     }
@@ -448,8 +503,11 @@ fn emit_decode_step(out: &mut Out, p: &Packet, lang: &Lang, step: &Step) {
                         }
                         Count::Remaining => {
                             out.line("size_t pb_cap = 0;");
-                            out.open(format!("for (pb_i = 0; pb_remaining_bits(pb_r) >= {}; pb_i++) {{", ebits));
-                            out.line(format!("PB_TRY(pb_grow((void **)&{}, &pb_cap, pb_i + 1, sizeof *{}));", target, target));
+                            out.open("for (pb_i = 0; pb_remaining_bits(pb_r) > 0; pb_i++) {");
+                            out.line(format!(
+                                "PB_TRY(pb_grow((void **)&{}, &pb_cap, pb_i + 1, sizeof *{}));",
+                                target, target
+                            ));
                             out.line(format!("{} = pb_i + 1;", len));
                             read_elem(out, codec, ty, &format!("{}[pb_i]", target));
                             out.close("}");
@@ -465,14 +523,20 @@ fn emit_decode_step(out: &mut Out, p: &Packet, lang: &Lang, step: &Step) {
         }
         Step::Bitfield { container, container_width, parts } => {
             match container {
-                Codec::Bytes { nbytes, endian } => out.line(format!("PB_TRY(pb_read_uint(pb_r, {}, {}, &pb_u));", nbytes, little(endian))),
+                Codec::Bytes { nbytes, endian } => {
+                    out.line(format!("PB_TRY(pb_read_uint(pb_r, {}, {}, &pb_u));", nbytes, little(endian)))
+                }
                 _ => out.line(format!("PB_TRY(pb_read_bits(pb_r, {}, &pb_u));", container_width)),
             }
             for part in parts {
                 let m = &p.members[part.member];
                 let st = scalar_type(&m.ty);
                 let bits = format!("((pb_u >> {}) & UINT64_C(0x{:x}))", part.shift, mask(part.width));
-                let v = if part.signed { format!("({})pb_sext({}, {})", st, bits, part.width) } else { format!("({}){}", st, bits) };
+                let v = if part.signed {
+                    format!("({})pb_sext({}, {})", st, bits, part.width)
+                } else {
+                    format!("({}){}", st, bits)
+                };
                 out.line(format!("p->{} = {};", ident(&m.name), v));
             }
         }
@@ -528,10 +592,17 @@ fn emit_encode_step(out: &mut Out, p: &Packet, lang: &Lang, step: &Step) {
                 } else {
                     out.line(format!("PB_CHECK(pb_check_u((uint64_t){}, {}));", place, part.width));
                 }
-                out.line(format!("pb_c |= ((uint64_t){} & UINT64_C(0x{:x})) << {};", place, mask(part.width), part.shift));
+                out.line(format!(
+                    "pb_c |= ((uint64_t){} & UINT64_C(0x{:x})) << {};",
+                    place,
+                    mask(part.width),
+                    part.shift
+                ));
             }
             match container {
-                Codec::Bytes { nbytes, endian } => out.line(format!("PB_CHECK(pb_write_uint(pb_w, pb_c, {}, {}));", nbytes, little(endian))),
+                Codec::Bytes { nbytes, endian } => {
+                    out.line(format!("PB_CHECK(pb_write_uint(pb_w, pb_c, {}, {}));", nbytes, little(endian)))
+                }
                 _ => out.line(format!("PB_CHECK(pb_write_bits(pb_w, pb_c, {}));", container_width)),
             }
             out.close("}");

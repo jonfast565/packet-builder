@@ -63,6 +63,12 @@
       "hex": "11 0001 00 0002 05 aa", "error": true },
     { "name": "nested huge count", "packet": "Container", "hex": "1f 0001 00", "error": true },
 
+    { "name": "rest-of-input words", "packet": "Words", "hex": "02 0001 0002 ffff",
+      "expect": { "count": 2, "words": [1, 2, 65535] } },
+    { "name": "rest-of-input words, empty", "packet": "Words", "hex": "00",
+      "expect": { "words": [] } },
+    { "name": "rest-of-input words, partial element is an error", "packet": "Words", "hex": "02 0001 00", "error": true },
+
     { "name": "keywords as field names", "packet": "Keywords", "hex": "010203040506",
       "expect": { "type": 1, "class": 2, "func": 3, "struct": 4, "default": 5, "string": 6 } }
   ]

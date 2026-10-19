@@ -1,0 +1,184 @@
+// =====================================================================
+// OSCAR — the protocol behind AOL Instant Messenger (AIM) and ICQ.
+//
+// An OSCAR connection is a TCP stream of FLAP frames. Channel 2 frames
+// carry SNACs (a 10-byte header + a family/subtype specific body); most
+// SNAC bodies are chains of TLVs. Everything is big-endian.
+//
+// Decoding is layered the same way the protocol is:
+//   bytes --Flap--> payload --SnacHeader / typed SNAC--> TLVs --> values
+// See docs/oscar.md for a walkthrough.
+// =====================================================================
+
+// ---------------------------------------------------------------------
+// FLAP: framing layer
+// ---------------------------------------------------------------------
+packet Flap be {
+  start uint8,              // always 0x2A ('*')
+  channel uint8,            // 1 signon, 2 SNAC data, 3 error, 4 signoff, 5 keep-alive
+  sequence uint16,          // per-direction sequence number
+  length uint16,            // payload size in bytes
+  payload bytes[length],
+  calc valid uint8 = start == 0x2a and channel >= 1 and channel <= 5
+}
+
+// Channel 1 payload (sign-on): protocol version, then TLVs such as the
+// 0x0006 authorization cookie handed out by the login server.
+packet FlapSignon be {
+  version uint32,           // always 1
+  tlvs Tlv[]
+}
+
+// ---------------------------------------------------------------------
+// TLV: type / length / value
+// ---------------------------------------------------------------------
+packet Tlv be {
+  type uint16,
+  length uint16,
+  value bytes[length]
+}
+
+// ---------------------------------------------------------------------
+// SNAC header: first 10 bytes of every channel 2 payload
+// ---------------------------------------------------------------------
+packet SnacHeader be {
+  family uint16,
+  subtype uint16,
+  flags bitfield uint16 {
+    has_version_info u1,    // 0x8000: a length-prefixed TLV block follows
+    _ u14,
+    more_replies u1         // 0x0001: more SNACs answer the same request
+  },
+  request_id uint32,
+  // Present only when has_version_info is set: an array of 0 or 1 entries.
+  version_info SnacVersionInfo[has_version_info]
+}
+
+packet SnacVersionInfo be {
+  length uint16,
+  tlvs bytes[length]
+}
+
+// Any channel 2 payload, before looking at family/subtype.
+packet Snac be {
+  header SnacHeader,
+  body bytes[]
+}
+
+// ---------------------------------------------------------------------
+// Family 0x0001: generic service controls
+// ---------------------------------------------------------------------
+
+// SNAC(01,03) server ready: the families this connection serves.
+packet ServerReady be {
+  header SnacHeader,
+  families uint16[]
+}
+
+// SNAC(01,17) client / SNAC(01,18) server: family versions.
+packet FamilyVersion be {
+  family uint16,
+  version uint16
+}
+
+packet FamilyVersions be {
+  header SnacHeader,
+  versions FamilyVersion[]
+}
+
+// SNAC(01,07) rate limit information.
+packet RateClass be {
+  id uint16,
+  window_size uint32,
+  clear_level uint32,
+  alert_level uint32,
+  limit_level uint32,
+  disconnect_level uint32,
+  current_level uint32,
+  max_level uint32,
+  last_time uint32,
+  state uint8
+}
+
+packet FamilySubtype be {
+  family uint16,
+  subtype uint16
+}
+
+packet RateGroup be {
+  class_id uint16,
+  pair_count uint16,
+  pairs FamilySubtype[pair_count]
+}
+
+packet RateInfo be {
+  header SnacHeader,
+  class_count uint16,
+  classes RateClass[class_count],
+  groups RateGroup[]
+}
+
+// ---------------------------------------------------------------------
+// Family 0x0017: authorization (MD5 login)
+// ---------------------------------------------------------------------
+
+// SNAC(17,06) request an MD5 salt; TLV 0x0001 carries the screen name.
+packet AuthKeyRequest be {
+  header SnacHeader,
+  tlvs Tlv[]
+}
+
+// SNAC(17,07) the salt to hash the password with.
+packet AuthKeyResponse be {
+  header SnacHeader,
+  key_length uint16,
+  key bytes[key_length]
+}
+
+// ---------------------------------------------------------------------
+// Family 0x0004: ICBM (instant messages)
+// ---------------------------------------------------------------------
+
+// SNAC(04,06) send a message (client to server).
+packet IcbmSend be {
+  header SnacHeader,
+  cookie bytes[8],          // random message id, echoed in acks
+  channel uint16,           // 1 plain text, 2 rendezvous, 4 ICQ
+  screen_name_length uint8,
+  screen_name bytes[screen_name_length],
+  tlvs Tlv[]                // 0x0002 message data, 0x0006 store if offline, ...
+}
+
+// SNAC(04,07) incoming message (server to client).
+packet IcbmReceive be {
+  header SnacHeader,
+  cookie bytes[8],
+  channel uint16,
+  screen_name_length uint8,
+  screen_name bytes[screen_name_length],
+  warning_level uint16,     // sender's warning level in tenths of a percent
+  user_tlv_count uint16,
+  user_tlvs Tlv[user_tlv_count],
+  tlvs Tlv[],
+  calc warning_percent float64 = warning_level / 10.0
+}
+
+// Value of TLV 0x0002 in a channel 1 message: a list of fragments.
+// Fragment 0x05 lists capabilities, fragment 0x01 holds the text.
+packet IcbmFragment be {
+  id uint8,
+  version uint8,
+  length uint16,
+  data bytes[length]
+}
+
+packet IcbmMessage be {
+  fragments IcbmFragment[]
+}
+
+// Data of fragment 0x01.
+packet MessageText be {
+  charset uint16,           // 0x0000 ASCII, 0x0002 UCS-2BE, 0x0003 ISO-8859-1
+  charsubset uint16,
+  text bytes[]
+}

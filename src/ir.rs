@@ -12,13 +12,38 @@ use std::collections::{HashMap, HashSet};
 
 use crate::errors::Diagnostic;
 use crate::models::parsing_models::{
-    ArrayLength, BitOrder, Endianness, ExprNode, PacketExpr, PacketExprList, PacketItem, Span,
-    TypeNode,
+    ArrayLength, BitOrder, Endianness, ExprNode, PacketExpr, PacketExprList, PacketItem, Span, TypeNode,
 };
 
 #[derive(Debug, Clone)]
 pub struct Module {
     pub packets: Vec<Packet>,
+}
+
+impl Module {
+    /// Packets ordered so that every packet comes after the packets it
+    /// contains (needed by languages that require declaration before use).
+    pub fn in_dependency_order(&self) -> Vec<&Packet> {
+        fn visit<'a>(m: &'a Module, p: &'a Packet, seen: &mut HashSet<String>, out: &mut Vec<&'a Packet>) {
+            if !seen.insert(p.name.clone()) {
+                return;
+            }
+            for member in &p.members {
+                if let ValueType::Packet(n) = &member.ty
+                    && let Some(dep) = m.packets.iter().find(|x| &x.name == n)
+                {
+                    visit(m, dep, seen, out);
+                }
+            }
+            out.push(p);
+        }
+        let mut seen = HashSet::new();
+        let mut out = Vec::new();
+        for p in &self.packets {
+            visit(self, p, &mut seen, &mut out);
+        }
+        out
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -115,10 +140,18 @@ pub enum Count {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Codec {
     /// Byte aligned integer of `nbytes` bytes in the given byte order.
-    Bytes { nbytes: u32, endian: Endianness },
+    Bytes {
+        nbytes: u32,
+        endian: Endianness,
+    },
     /// Integer of `width` bits read MSB-first from the bit stream.
-    Bits { width: u32 },
-    Float { width: u32, endian: Endianness },
+    Bits {
+        width: u32,
+    },
+    Float {
+        width: u32,
+        endian: Endianness,
+    },
     Mac,
     Packet(String),
 }
@@ -148,18 +181,9 @@ impl Codec {
 #[derive(Debug, Clone)]
 pub enum Step {
     /// A stored member, or padding when `member` is None.
-    Field {
-        member: Option<usize>,
-        ty: ValueType,
-        codec: Codec,
-        array: Option<Count>,
-    },
+    Field { member: Option<usize>, ty: ValueType, codec: Codec, array: Option<Count> },
     /// An integer container split into sub-fields.
-    Bitfield {
-        container: Codec,
-        container_width: u32,
-        parts: Vec<BitPart>,
-    },
+    Bitfield { container: Codec, container_width: u32, parts: Vec<BitPart> },
     /// Evaluate a calculated member (decode only).
     Calc { member: usize },
 }
@@ -230,16 +254,52 @@ pub enum TExpr {
     IntLit(i64),
     FloatLit(f64),
     /// Scalar member converted to i64 / f64.
-    Ref { member: usize, ty: Ty },
+    Ref {
+        member: usize,
+        ty: Ty,
+    },
     /// Element of an array member.
-    Index { member: usize, index: Box<TExpr>, ty: Ty },
-    Aggregate { member: usize, op: AggOp, ty: Ty },
-    Arith { op: ArithOp, a: Box<TExpr>, b: Box<TExpr>, ty: Ty },
-    Cmp { op: CmpOp, a: Box<TExpr>, b: Box<TExpr> },
-    Logic { op: LogicOp, a: Box<TExpr>, b: Box<TExpr> },
-    Guard { cond: Box<TExpr>, then: Box<TExpr>, other: Box<TExpr>, ty: Ty },
-    Call { func: Func, args: Vec<TExpr>, ty: Ty },
-    Convert { e: Box<TExpr>, to: Ty },
+    Index {
+        member: usize,
+        index: Box<TExpr>,
+        ty: Ty,
+    },
+    Aggregate {
+        member: usize,
+        op: AggOp,
+        ty: Ty,
+    },
+    Arith {
+        op: ArithOp,
+        a: Box<TExpr>,
+        b: Box<TExpr>,
+        ty: Ty,
+    },
+    Cmp {
+        op: CmpOp,
+        a: Box<TExpr>,
+        b: Box<TExpr>,
+    },
+    Logic {
+        op: LogicOp,
+        a: Box<TExpr>,
+        b: Box<TExpr>,
+    },
+    Guard {
+        cond: Box<TExpr>,
+        then: Box<TExpr>,
+        other: Box<TExpr>,
+        ty: Ty,
+    },
+    Call {
+        func: Func,
+        args: Vec<TExpr>,
+        ty: Ty,
+    },
+    Convert {
+        e: Box<TExpr>,
+        to: Ty,
+    },
 }
 
 impl TExpr {
@@ -351,11 +411,7 @@ pub fn analyze(list: &PacketExprList) -> Result<Module, Vec<Diagnostic>> {
         return Err(diags);
     }
 
-    let packets = list
-        .packets
-        .iter()
-        .map(|p| done.remove(&p.name).expect("analyzed"))
-        .collect();
+    let packets = list.packets.iter().map(|p| done.remove(&p.name).expect("analyzed")).collect();
     Ok(Module { packets })
 }
 
@@ -384,15 +440,15 @@ fn packet_order(list: &PacketExprList, by_name: &HashMap<String, usize>) -> Resu
         }
         state[i] = 1;
         for item in &list.packets[i].items {
-            if let PacketItem::Field(f) = item {
-                if let TypeNode::Packet(name) = &f.expr {
-                    match by_name.get(name) {
+            if let PacketItem::Field(f) = item
+                && let TypeNode::Packet(name) = &f.expr
+            {
+                match by_name.get(name) {
                         Some(j) => visit(*j, list, by_name, state, order, diags),
                         None => diags.push(Diagnostic::new(format!("unknown type `{}`", name), f.span).with_note(
                             "built-in types are uint8..uint64, int8..int64, uN/iN, float32, float64, macaddress, datetime, bytes",
                         )),
                     }
-                }
             }
         }
         state[i] = 2;
@@ -515,7 +571,12 @@ fn analyze_packet(p: &PacketExpr, done: &HashMap<String, Packet>) -> Result<Pack
                     if m.name == "_" {
                         continue;
                     }
-                    ctx.declare(&m.name, ValueType::Int { width: m.width, signed: m.signed }, MemberKind::BitfieldPart, m.span);
+                    ctx.declare(
+                        &m.name,
+                        ValueType::Int { width: m.width, signed: m.signed },
+                        MemberKind::BitfieldPart,
+                        m.span,
+                    );
                 }
             }
             PacketItem::Calculated(c) => {
@@ -541,14 +602,12 @@ fn analyze_packet(p: &PacketExpr, done: &HashMap<String, Packet>) -> Result<Pack
             let count = match &f.array {
                 None => None,
                 Some(ArrayLength::Remaining) => Some(Count::Remaining),
-                Some(ArrayLength::Expr(e)) => ctx
-                    .check_expr(e, f.span)
-                    .map(|t| Count::Expr(coerce(t, Ty::Int))),
+                Some(ArrayLength::Expr(e)) => ctx.check_expr(e, f.span).map(|t| Count::Expr(coerce(t, Ty::Int))),
             };
-            if let Some(&idx) = ctx.names.get(&f.id) {
-                if f.id != "_" {
-                    ctx.members[idx].array = count.clone();
-                }
+            if let Some(&idx) = ctx.names.get(&f.id)
+                && f.id != "_"
+            {
+                ctx.members[idx].array = count.clone();
             }
             field_counts.push(count);
         }
@@ -556,15 +615,15 @@ fn analyze_packet(p: &PacketExpr, done: &HashMap<String, Packet>) -> Result<Pack
 
     // Pass 3: calculated field expressions.
     for item in &p.items {
-        if let PacketItem::Calculated(c) = item {
-            if let Some(t) = ctx.check_expr(&c.expr, c.span) {
-                let idx = ctx.names[&c.name];
-                let target = match ctx.members[idx].ty {
-                    ValueType::Float { .. } => Ty::Float,
-                    _ => Ty::Int,
-                };
-                ctx.members[idx].kind = MemberKind::Calculated(coerce(t, target));
-            }
+        if let PacketItem::Calculated(c) = item
+            && let Some(t) = ctx.check_expr(&c.expr, c.span)
+        {
+            let idx = ctx.names[&c.name];
+            let target = match ctx.members[idx].ty {
+                ValueType::Float { .. } => Ty::Float,
+                _ => Ty::Int,
+            };
+            ctx.members[idx].kind = MemberKind::Calculated(coerce(t, target));
         }
     }
 
@@ -576,13 +635,8 @@ fn analyze_packet(p: &PacketExpr, done: &HashMap<String, Packet>) -> Result<Pack
     let mut min_bits: u64 = 0;
     let mut open_ended = false;
     let mut field_no = 0usize;
-    let stored_items: Vec<usize> = p
-        .items
-        .iter()
-        .enumerate()
-        .filter(|(_, it)| !matches!(it, PacketItem::Calculated(_)))
-        .map(|(i, _)| i)
-        .collect();
+    let stored_items: Vec<usize> =
+        p.items.iter().enumerate().filter(|(_, it)| !matches!(it, PacketItem::Calculated(_))).map(|(i, _)| i).collect();
     let last_stored = stored_items.last().copied();
 
     ctx.schedule_calcs(&mut steps, &available, &mut scheduled);
@@ -610,10 +664,13 @@ fn analyze_packet(p: &PacketExpr, done: &HashMap<String, Packet>) -> Result<Pack
                 }
                 if matches!(count, Some(Count::Remaining)) {
                     if !is_last {
-                        ctx.diags.push(Diagnostic::new(
-                            format!("`{}` has no length, so it must be the last field of `{}`", f.id, p.name),
-                            f.span,
-                        ).with_note("give it a length such as bytes[len], or move it to the end"));
+                        ctx.diags.push(
+                            Diagnostic::new(
+                                format!("`{}` has no length, so it must be the last field of `{}`", f.id, p.name),
+                                f.span,
+                            )
+                            .with_note("give it a length such as bytes[len], or move it to the end"),
+                        );
                     }
                     open_ended = true;
                 }
@@ -632,7 +689,10 @@ fn analyze_packet(p: &PacketExpr, done: &HashMap<String, Packet>) -> Result<Pack
                     if let Some(nested) = ctx.done.get(name) {
                         if nested.open_ended && (!is_last || count.is_some()) {
                             ctx.diags.push(Diagnostic::new(
-                                format!("packet `{}` consumes the rest of the input, so `{}` must be a single, last field", name, f.id),
+                                format!(
+                                    "packet `{}` consumes the rest of the input, so `{}` must be a single, last field",
+                                    name, f.id
+                                ),
                                 f.span,
                             ));
                         }
@@ -721,20 +781,23 @@ fn analyze_packet(p: &PacketExpr, done: &HashMap<String, Packet>) -> Result<Pack
         if let PacketItem::Calculated(c) = item {
             let idx = ctx.names[&c.name];
             if !scheduled.contains(&idx) && ctx.diags.is_empty() {
-                ctx.diags.push(Diagnostic::new(
-                    format!("calculated field `{}` depends on itself", c.name),
-                    c.span,
-                ));
+                ctx.diags.push(Diagnostic::new(format!("calculated field `{}` depends on itself", c.name), c.span));
             }
         }
     }
 
     if !align.is_aligned() {
         if align.modulus == 8 {
-            ctx.diags.push(Diagnostic::new(
-                format!("packet `{}` ends {} bit(s) into a byte; packets must be a whole number of bytes", p.name, align.offset),
-                p.span,
-            ).with_note(format!("add `_ u{}` as padding at the end", 8 - align.offset)));
+            ctx.diags.push(
+                Diagnostic::new(
+                    format!(
+                        "packet `{}` ends {} bit(s) into a byte; packets must be a whole number of bytes",
+                        p.name, align.offset
+                    ),
+                    p.span,
+                )
+                .with_note(format!("add `_ u{}` as padding at the end", 8 - align.offset)),
+            );
         } else {
             ctx.diags.push(Diagnostic::new(
                 format!("the size of packet `{}` may not be a whole number of bytes", p.name),
@@ -752,10 +815,10 @@ fn analyze_packet(p: &PacketExpr, done: &HashMap<String, Packet>) -> Result<Pack
         }
     }
     while let Some(m) = stack.pop() {
-        if let MemberKind::Calculated(e) = &ctx.members[m].kind {
-            if needed.insert(m) {
-                e.deps(&mut stack);
-            }
+        if let MemberKind::Calculated(e) = &ctx.members[m].kind
+            && needed.insert(m)
+        {
+            e.deps(&mut stack);
         }
     }
     let encode_calcs = steps
@@ -805,10 +868,15 @@ impl<'a> Ctx<'a> {
         let aligned = align.is_aligned();
         let misaligned = |ctx: &mut Ctx, what: &str| {
             let at = align.describe();
-            ctx.diags.push(Diagnostic::new(
-                format!("{} `{}` starts {}; {} must be byte aligned", type_label(t), name, at, what),
-                span,
-            ).with_note("use a uN type for integers that live in the bit stream, or add `_ uN` padding before this field"));
+            ctx.diags.push(
+                Diagnostic::new(
+                    format!("{} `{}` starts {}; {} must be byte aligned", type_label(t), name, at, what),
+                    span,
+                )
+                .with_note(
+                    "use a uN type for integers that live in the bit stream, or add `_ uN` padding before this field",
+                ),
+            );
         };
         match t {
             TypeNode::Packet(n) => {
@@ -834,10 +902,16 @@ impl<'a> Ctx<'a> {
                     Codec::Bytes { nbytes: width / 8, endian }
                 } else {
                     if explicit && *width > 8 {
-                        self.diags.push(Diagnostic::new(
-                            format!("`{}` is not a whole number of aligned bytes, so it cannot have a byte order", name),
-                            span,
-                        ).with_note("bit-stream integers are always read most significant bit first"));
+                        self.diags.push(
+                            Diagnostic::new(
+                                format!(
+                                    "`{}` is not a whole number of aligned bytes, so it cannot have a byte order",
+                                    name
+                                ),
+                                span,
+                            )
+                            .with_note("bit-stream integers are always read most significant bit first"),
+                        );
                     }
                     Codec::Bits { width: *width }
                 }
@@ -876,7 +950,14 @@ impl<'a> Ctx<'a> {
         }
     }
 
-    fn require_available(&mut self, e: &TExpr, available: &HashSet<usize>, scheduled: &HashSet<usize>, span: Span, field: &str) {
+    fn require_available(
+        &mut self,
+        e: &TExpr,
+        available: &HashSet<usize>,
+        scheduled: &HashSet<usize>,
+        span: Span,
+        field: &str,
+    ) {
         let mut deps = Vec::new();
         e.deps(&mut deps);
         for d in deps {
@@ -933,7 +1014,10 @@ impl<'a> Ctx<'a> {
                 match index {
                     None => {
                         if is_array {
-                            return Err(format!("`{}` is an array; index it (`{}[i]`) or use `sumof {}`", name, name, name));
+                            return Err(format!(
+                                "`{}` is an array; index it (`{}[i]`) or use `sumof {}`",
+                                name, name, name
+                            ));
                         }
                         TExpr::Ref { member: idx, ty }
                     }

@@ -3,11 +3,11 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+use packet_builder::Language;
 use packet_builder::generators::rust_generator::ident;
 use packet_builder::ir::{Member, Module, ValueType};
-use packet_builder::Language;
 
-use super::{member, packet, quote, run, set_literal, which, Case, Target};
+use super::{Case, Target, packet, quote, run, set_literal, which};
 
 pub struct RustTarget;
 
@@ -59,7 +59,12 @@ impl Target for RustTarget {
             s.push_str("        Err(e) => println!(\"{{\\\"ok\\\":false,\\\"error\\\":{}}}\", pb_q(&e.0)),\n");
             s.push_str("        Ok(mut p) => {\n");
             for (name, v) in &c.set {
-                let _ = writeln!(s, "            p.{} = {};", ident(&member(p, name).name), set_literal(v));
+                let _ = writeln!(
+                    s,
+                    "            p.{} = {};",
+                    super::accessor(module, p, name, |_, m| ident(&m.name)),
+                    set_literal(v)
+                );
             }
             let _ = writeln!(s, "            let v = dump_{}(&p);", p.name);
             s.push_str("            match p.encode() {\n");
@@ -76,7 +81,17 @@ impl Target for RustTarget {
         fs::write(dir.join("main.rs"), harness).unwrap();
         // Debug build: integer overflow in generated code panics.
         run(
-            Command::new("rustc").current_dir(dir).args(["--edition", "2021", "-D", "warnings", "-A", "unused", "main.rs", "-o", "harness"]),
+            Command::new("rustc").current_dir(dir).args([
+                "--edition",
+                "2021",
+                "-D",
+                "warnings",
+                "-A",
+                "unused",
+                "main.rs",
+                "-o",
+                "harness",
+            ]),
             "rustc",
         )?;
         run(&mut Command::new(dir.join("harness")), "rust harness")

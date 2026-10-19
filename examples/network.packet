@@ -1,0 +1,77 @@
+// =====================================================================
+// Classic network headers: a showcase for bit-sized fields.
+// All of these are big-endian with most-significant-bit-first bit order.
+// =====================================================================
+
+// Ethernet II frame.
+packet Ethernet be {
+  destination macaddress,
+  source macaddress,
+  ethertype uint16,         // 0x0800 IPv4, 0x86DD IPv6, 0x0806 ARP
+  payload bytes[]
+}
+
+// IPv4 header (RFC 791). Sub-byte fields live directly in the bit stream.
+packet Ipv4 be {
+  version u4,
+  ihl u4,                   // header length in 32-bit words
+  dscp u6,
+  ecn u2,
+  total_length uint16,
+  identification uint16,
+  _ u1,                     // reserved, must be zero
+  dont_fragment u1,
+  more_fragments u1,
+  fragment_offset u13,      // in 8-byte units
+  ttl uint8,
+  protocol uint8,           // 6 TCP, 17 UDP
+  checksum uint16,
+  source uint8[4],
+  destination uint8[4],
+  options bytes[ihl * 4 - 20],
+  calc header_length uint8 = ihl * 4,
+  calc payload_length uint16 = total_length - ihl * 4
+}
+
+// TCP header (RFC 793 / 3168). The nine flag bits form a u9 bitfield
+// container that starts in the middle of a byte.
+packet Tcp be {
+  source_port uint16,
+  destination_port uint16,
+  sequence uint32,
+  acknowledgment uint32,
+  data_offset u4,           // header length in 32-bit words
+  _ u3,
+  flags bitfield u9 {
+    ns u1, cwr u1, ece u1, urg u1, ack u1, psh u1, rst u1, syn u1, fin u1
+  },
+  window uint16,
+  checksum uint16,
+  urgent_pointer uint16,
+  options bytes[data_offset * 4 - 20]
+}
+
+// UDP header (RFC 768) and payload.
+packet Udp be {
+  source_port uint16,
+  destination_port uint16,
+  length uint16,            // header + payload
+  checksum uint16,
+  payload bytes[length - 8]
+}
+
+// DNS message header (RFC 1035 / 4035): a 16-bit flags word.
+packet DnsHeader be {
+  id uint16,
+  flags bitfield uint16 {
+    qr u1,                  // 0 query, 1 response
+    opcode u4,
+    aa u1, tc u1, rd u1, ra u1,
+    z u1, ad u1, cd u1,
+    rcode u4
+  },
+  question_count uint16,
+  answer_count uint16,
+  authority_count uint16,
+  additional_count uint16
+}

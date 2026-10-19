@@ -2,6 +2,7 @@
 name = "packet_builder"
 version = "0.1.1"
 edition = "2024"
+autoexamples = false
 
 [lib]
 name = "packet_builder"

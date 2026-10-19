@@ -1,6 +1,6 @@
 //! C# backend: one file, no dependencies beyond the base class library.
 
-use crate::generators::common::{emit_expr, is_calc, mask, pascal_case, ExprLang, GenOptions, Mode, Out};
+use crate::generators::common::{ExprLang, GenOptions, Mode, Out, emit_expr, is_calc, mask, pascal_case};
 use crate::ir::{AggOp, ArithOp, Codec, Count, Func, Member, MemberKind, Module, Packet, Step, Ty, ValueType};
 use crate::models::parsing_models::Endianness;
 
@@ -12,7 +12,9 @@ const RUNTIME: &str = include_str!("../../runtime/csharp.cs");
 pub fn prop_name(packet: &str, name: &str) -> String {
     let n = pascal_case(name);
     match n.as_str() {
-        "Decode" | "DecodeFrom" | "Encode" | "EncodeTo" | "GetType" | "ToString" | "Equals" | "GetHashCode" => format!("{}_", n),
+        "Decode" | "DecodeFrom" | "Encode" | "EncodeTo" | "GetType" | "ToString" | "Equals" | "GetHashCode" => {
+            format!("{}_", n)
+        }
         _ if n == packet => format!("{}_", n),
         _ => n,
     }
@@ -177,10 +179,10 @@ fn read_elem(codec: &Codec, ty: &ValueType) -> String {
         Codec::Bytes { nbytes, endian } => format!("pbR.ReadUint({}, {})", nbytes, little(endian)),
         Codec::Bits { width } => format!("pbR.ReadBits({})", width),
         Codec::Float { width: 32, endian } => {
-            return format!("BitConverter.Int32BitsToSingle(unchecked((int)pbR.ReadUint(4, {})))", little(endian))
+            return format!("BitConverter.Int32BitsToSingle(unchecked((int)pbR.ReadUint(4, {})))", little(endian));
         }
         Codec::Float { endian, .. } => {
-            return format!("BitConverter.Int64BitsToDouble(unchecked((long)pbR.ReadUint(8, {})))", little(endian))
+            return format!("BitConverter.Int64BitsToDouble(unchecked((long)pbR.ReadUint(8, {})))", little(endian));
         }
         Codec::Mac => return "pbR.ReadBytes(6)".into(),
         Codec::Packet(n) => return format!("{}.DecodeFrom(pbR)", n),
@@ -327,7 +329,7 @@ fn emit_decode_step(out: &mut Out, p: &Packet, lang: &Lang, step: &Step) {
                     } else {
                         out.open("{");
                         out.line(format!("var pbL = new List<{}>();", scalar_type(ty)));
-                        out.line(format!("while (pbR.RemainingBits >= {}) pbL.Add({});", ebits, read_elem(codec, ty)));
+                        out.line(format!("while (pbR.RemainingBits > 0) pbL.Add({});", read_elem(codec, ty)));
                         out.line(format!("{} = pbL.ToArray();", target));
                         out.close("}");
                     }
@@ -364,7 +366,9 @@ fn emit_encode_step(out: &mut Out, p: &Packet, lang: &Lang, step: &Step) {
             let bits = codec.bits();
             match array {
                 None => out.line(format!("pbW.WriteZeroBits({});", bits)),
-                Some(Count::Expr(e)) => out.line(format!("pbW.WriteZeroBits(Math.Max({}, 0L) * {});", emit_expr(lang, e), bits)),
+                Some(Count::Expr(e)) => {
+                    out.line(format!("pbW.WriteZeroBits(Math.Max({}, 0L) * {});", emit_expr(lang, e), bits))
+                }
                 Some(Count::Remaining) => {}
             }
         }
@@ -399,10 +403,17 @@ fn emit_encode_step(out: &mut Out, p: &Packet, lang: &Lang, step: &Step) {
                 } else {
                     out.line(format!("Pb.CheckU((ulong){}, {}, \"{}\");", place, part.width, m.name));
                 }
-                out.line(format!("pbC |= (unchecked((ulong){}) & 0x{:x}UL) << {};", place, mask(part.width), part.shift));
+                out.line(format!(
+                    "pbC |= (unchecked((ulong){}) & 0x{:x}UL) << {};",
+                    place,
+                    mask(part.width),
+                    part.shift
+                ));
             }
             match container {
-                Codec::Bytes { nbytes, endian } => out.line(format!("pbW.WriteUint(pbC, {}, {});", nbytes, little(endian))),
+                Codec::Bytes { nbytes, endian } => {
+                    out.line(format!("pbW.WriteUint(pbC, {}, {});", nbytes, little(endian)))
+                }
                 _ => out.line(format!("pbW.WriteBits(pbC, {});", container_width)),
             }
             out.close("}");

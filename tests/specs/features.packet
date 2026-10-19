@@ -108,3 +108,9 @@ packet Keywords {
   default uint8,
   string uint8
 }
+
+// A rest-of-input array of 16-bit words.
+packet Words be {
+  count uint8,
+  words uint16[]
+}

@@ -9,14 +9,14 @@
 // If you already have your own models, replace the models below with your crate's
 // and keep the parsing functions as-is (types and constructors are aligned).
 
+use pest::Parser;
 use pest::error::Error;
 use pest::iterators::Pair;
-use pest::Parser;
 use pest_derive::Parser;
 
 use crate::models::parsing_models::{
-    ArrayLength, BitOrder, BitfieldExpr, BitfieldMember, CalculatedField, Endianness, ExprNode,
-    PacketExpr, PacketExprList, PacketItem, Span, TypeExpr, TypeNode,
+    ArrayLength, BitOrder, BitfieldExpr, BitfieldMember, CalculatedField, Endianness, ExprNode, PacketExpr,
+    PacketExprList, PacketItem, Span, TypeExpr, TypeNode,
 };
 
 // ===============================
@@ -28,6 +28,7 @@ use crate::models::parsing_models::{
 pub struct PacketParser2;
 
 // Entry point
+#[allow(clippy::result_large_err)] // pest's error type; returned once per parse
 pub fn parse_file(input: &str) -> Result<PacketExprList, Error<Rule>> {
     let mut pairs = PacketParser2::parse(Rule::packets, input)?;
     let root = pairs.next().expect("packets rule must produce a pair");
@@ -38,6 +39,7 @@ pub fn parse_file(input: &str) -> Result<PacketExprList, Error<Rule>> {
 
 /// Reject numeric literals and bit widths that do not fit, with a located error,
 /// so that the tree walk below can assume well-formed values.
+#[allow(clippy::result_large_err)]
 fn check_literals(pair: Pair<Rule>) -> Result<(), Error<Rule>> {
     for p in pair.into_inner().flatten() {
         let s = p.as_str();
@@ -61,10 +63,7 @@ fn check_literals(pair: Pair<Rule>) -> Result<(), Error<Rule>> {
                 Rule::bit_type => format!("bit width of `{}` must be between 1 and 64", s),
                 _ => format!("numeric literal `{}` does not fit in 64 bits", s),
             };
-            return Err(Error::new_from_span(
-                pest::error::ErrorVariant::CustomError { message },
-                p.as_span(),
-            ));
+            return Err(Error::new_from_span(pest::error::ErrorVariant::CustomError { message }, p.as_span()));
         }
     }
     Ok(())
@@ -105,12 +104,8 @@ fn parse_packet(packet: Pair<Rule>) -> PacketExpr {
                     for elem in rule.into_inner() {
                         match elem.as_rule() {
                             Rule::declaration => items.push(PacketItem::Field(parse_declaration(elem))),
-                            Rule::bitfield_declaration => {
-                                items.push(PacketItem::Bitfield(parse_bitfield(elem)))
-                            }
-                            Rule::calculated_field => {
-                                items.push(PacketItem::Calculated(parse_calculated_field(elem)))
-                            }
+                            Rule::bitfield_declaration => items.push(PacketItem::Bitfield(parse_bitfield(elem))),
+                            Rule::calculated_field => items.push(PacketItem::Calculated(parse_calculated_field(elem))),
                             _ => {}
                         }
                     }
@@ -120,12 +115,7 @@ fn parse_packet(packet: Pair<Rule>) -> PacketExpr {
         }
     }
 
-    PacketExpr {
-        name: identifier,
-        items,
-        endianness: packet_endianness,
-        span,
-    }
+    PacketExpr { name: identifier, items, endianness: packet_endianness, span }
 }
 
 fn parse_declaration(parser_rule: Pair<Rule>) -> TypeExpr {
@@ -164,13 +154,7 @@ fn parse_declaration(parser_rule: Pair<Rule>) -> TypeExpr {
         array = Some(ArrayLength::Remaining);
     }
 
-    TypeExpr {
-        id: identifier,
-        expr: type_node,
-        array,
-        endianness: field_endianness,
-        span,
-    }
+    TypeExpr { id: identifier, expr: type_node, array, endianness: field_endianness, span }
 }
 
 fn parse_bitfield(parser_rule: Pair<Rule>) -> BitfieldExpr {
@@ -186,9 +170,7 @@ fn parse_bitfield(parser_rule: Pair<Rule>) -> BitfieldExpr {
             Rule::identifier => identifier = part.as_str().to_string(),
             Rule::type_name | Rule::bit_type => container = type_from_name(part.as_str()),
             Rule::endianness => endianness = to_endianness(part.as_str()),
-            Rule::bit_order => {
-                order = if part.as_str() == "lsb" { BitOrder::Lsb } else { BitOrder::Msb }
-            }
+            Rule::bit_order => order = if part.as_str() == "lsb" { BitOrder::Lsb } else { BitOrder::Msb },
             Rule::bitfield_member => {
                 let mspan = span_of(&part);
                 let mut name = String::new();
@@ -298,9 +280,7 @@ fn parse_cmp(parser_rule: Pair<Rule>) -> ExprNode {
     for item in parser_rule.clone().into_inner() {
         match item.as_rule() {
             Rule::sum => terms.push(parse_sum(item)),
-            Rule::gte | Rule::lte | Rule::gt | Rule::lt | Rule::eq | Rule::neq => {
-                ops.push(item.as_rule())
-            }
+            Rule::gte | Rule::lte | Rule::gt | Rule::lt | Rule::eq | Rule::neq => ops.push(item.as_rule()),
             _ => {}
         }
     }
@@ -385,28 +365,28 @@ fn parse_power(parser_rule: Pair<Rule>) -> ExprNode {
 
 fn parse_primary(parser_rule: Pair<Rule>) -> ExprNode {
     // primary = { guard_expression | literal | function_call | accessor | inner_expr }
-    for node in parser_rule.into_inner() {
-        return match node.as_rule() {
+    match parser_rule.into_inner().next() {
+        Some(node) => match node.as_rule() {
             Rule::guard_expression => parse_guard_expression(node),
             Rule::literal => parse_literal(node),
             Rule::function_call => parse_function_call(node),
             Rule::accessor => parse_accessor(node),
             Rule::inner_expr => parse_inner_expr(node),
             _ => ExprNode::NoExpr,
-        };
+        },
+        None => ExprNode::NoExpr,
     }
-    ExprNode::NoExpr
 }
 
 fn parse_literal(parser_rule: Pair<Rule>) -> ExprNode {
-    for node in parser_rule.into_inner() {
-        return match node.as_rule() {
+    match parser_rule.into_inner().next() {
+        Some(node) => match node.as_rule() {
             Rule::numeric_constant => parse_numeric_constant(node),
             Rule::string => ExprNode::StringValue(parse_string_constant(node)),
             _ => ExprNode::NoExpr,
-        };
+        },
+        None => ExprNode::NoExpr,
     }
-    ExprNode::NoExpr
 }
 
 fn parse_function_call(parser_rule: Pair<Rule>) -> ExprNode {
@@ -424,14 +404,14 @@ fn parse_function_call(parser_rule: Pair<Rule>) -> ExprNode {
 }
 
 fn parse_accessor(parser_rule: Pair<Rule>) -> ExprNode {
-    for p in parser_rule.into_inner() {
-        return match p.as_rule() {
+    match parser_rule.into_inner().next() {
+        Some(p) => match p.as_rule() {
             Rule::aggregate_accessor => parse_aggregate_accessor(p),
             Rule::direct_value_accessor => parse_direct_value_accessor(p),
             _ => ExprNode::NoExpr,
-        };
+        },
+        None => ExprNode::NoExpr,
     }
-    ExprNode::NoExpr
 }
 
 fn parse_inner_expr(parser_rule: Pair<Rule>) -> ExprNode {
@@ -452,11 +432,7 @@ fn parse_guard_expression(parser_rule: Pair<Rule>) -> ExprNode {
         }
     }
     assert!(exprs.len() == 3, "guard_expression must have 3 sub-expressions");
-    ExprNode::GuardExpression(
-        Box::new(exprs[0].clone()),
-        Box::new(exprs[1].clone()),
-        Box::new(exprs[2].clone()),
-    )
+    ExprNode::GuardExpression(Box::new(exprs[0].clone()), Box::new(exprs[1].clone()), Box::new(exprs[2].clone()))
 }
 
 // ===============================
@@ -490,11 +466,7 @@ fn parse_numeric_constant(parser_rule: Pair<Rule>) -> ExprNode {
 fn parse_string_constant(parser_rule: Pair<Rule>) -> String {
     // string -> '"' inner '"'
     let raw = parser_rule.as_str();
-    if raw.len() >= 2 {
-        raw[1..raw.len() - 1].to_string()
-    } else {
-        String::new()
-    }
+    if raw.len() >= 2 { raw[1..raw.len() - 1].to_string() } else { String::new() }
 }
 
 fn parse_aggregate_accessor(parser_rule: Pair<Rule>) -> ExprNode {
@@ -538,6 +510,7 @@ fn parse_direct_value_accessor(parser_rule: Pair<Rule>) -> ExprNode {
     ExprNode::ValueReference(identifier, array_index_expr)
 }
 
+#[allow(clippy::vec_box)] // matches ExprNode::ActivationRecord
 fn parse_parameter_list(parser_rule: Pair<Rule>) -> Vec<Box<ExprNode>> {
     // lparen ~ (expr ~ (comma ~ expr)*)? ~ comma? ~ rparen
     let mut expression_list = Vec::new();
@@ -603,9 +576,7 @@ where
     let mut acc = terms.remove(0);
     let mut it_terms = terms.into_iter();
     for op in ops {
-        let rhs = it_terms
-            .next()
-            .expect("operator must have a right-hand side term");
+        let rhs = it_terms.next().expect("operator must have a right-hand side term");
         acc = f(acc, rhs, op);
     }
     acc

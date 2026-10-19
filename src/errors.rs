@@ -76,21 +76,16 @@ impl CompileError {
                 };
                 let _ = Report::build(ReportKind::Error, src_name, range.start)
                     .with_message("Parse error")
-                    .with_label(
-                        Label::new((src_name, range)).with_message(message).with_color(Color::Red),
-                    )
+                    .with_label(Label::new((src_name, range)).with_message(message).with_color(Color::Red))
                     .finish()
                     .write((src_name, Source::from(src)), &mut out);
             }
             CompileError::Semantic(diags) => {
                 for d in diags {
                     let end = d.span.end.max(d.span.start + 1).min(src.len().max(1));
-                    let mut report = Report::build(ReportKind::Error, src_name, d.span.start)
-                        .with_message(&d.message)
-                        .with_label(
-                            Label::new((src_name, d.span.start..end))
-                                .with_message(&d.message)
-                                .with_color(Color::Red),
+                    let mut report =
+                        Report::build(ReportKind::Error, src_name, d.span.start).with_message(&d.message).with_label(
+                            Label::new((src_name, d.span.start..end)).with_message(&d.message).with_color(Color::Red),
                         );
                     if let Some(note) = &d.note {
                         report = report.with_note(note);

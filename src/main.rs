@@ -2,19 +2,19 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use packet_builder::{compile, generate_module, GenOptions, Language};
+use packet_builder::{GenOptions, Language, compile, generate_module};
 
 const USAGE: &str = "\
 usage: packet_builder [INPUT.packet] [-o OUT_DIR] [-l LANG[,LANG...]] [-p PACKAGE]
 
-  INPUT     packet description (default: ./test_packet.packet)
+  INPUT     packet description (default: examples/oscar.packet)
   -o DIR    output directory (default: ./results)
   -l LANGS  comma separated list of c, rust, zig, csharp, python, go (default: all)
   -p NAME   output file stem / Go package / C# namespace (default: packets)
 ";
 
 fn main() -> ExitCode {
-    let mut input = PathBuf::from("./test_packet.packet");
+    let mut input = PathBuf::from("examples/oscar.packet");
     let mut out_dir = PathBuf::from("./results");
     let mut langs: Vec<Language> = Language::ALL.to_vec();
     let mut opts = GenOptions::default();

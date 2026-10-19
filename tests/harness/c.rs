@@ -3,11 +3,11 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+use packet_builder::Language;
 use packet_builder::generators::c_generator::{ident, len_ident};
 use packet_builder::ir::{Member, Module, Packet, ValueType};
-use packet_builder::Language;
 
-use super::{member, packet, quote, run, set_literal, which, Case, Target};
+use super::{Case, Target, packet, quote, run, set_literal, which};
 
 pub struct CTarget;
 
@@ -55,7 +55,9 @@ impl Target for CTarget {
     }
 
     fn harness(&self, module: &Module, cases: &[Case]) -> String {
-        let mut s = String::from("#define PACKETS_IMPLEMENTATION\n#include \"packets.h\"\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n\n");
+        let mut s = String::from(
+            "#define PACKETS_IMPLEMENTATION\n#include \"packets.h\"\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n\n",
+        );
         s.push_str("static void hx(const uint8_t *b, size_t n) { printf(\"\\\"\"); for (size_t i = 0; i < n; i++) printf(\"%02x\", b[i]); printf(\"\\\"\"); }\n");
         s.push_str("static size_t unhex(const char *h, uint8_t *out) { size_t n = strlen(h) / 2; for (size_t i = 0; i < n; i++) { unsigned v; sscanf(h + 2 * i, \"%2x\", &v); out[i] = (uint8_t)v; } return n; }\n\n");
         for p in &module.packets {
@@ -87,13 +89,22 @@ impl Target for CTarget {
             s.push_str("        if (rc != PB_OK) { printf(\"{\\\"ok\\\":false,\\\"error\\\":\\\"%s\\\"}\\n\", pb_strerror(rc)); }\n");
             s.push_str("        else {\n");
             for (name, v) in &c.set {
-                let _ = writeln!(s, "            p.{} = {};", ident(&member(p, name).name), set_literal(v));
+                let _ = writeln!(
+                    s,
+                    "            p.{} = {};",
+                    super::accessor(module, p, name, |_, m| ident(&m.name)),
+                    set_literal(v)
+                );
             }
             s.push_str("            printf(\"{\\\"ok\\\":true,\\\"value\\\":\");\n");
             let _ = writeln!(s, "            dump_{}(&p);", p.name);
             let _ = writeln!(s, "            rc = {}_encode(&p, &out, &out_len);", p.name);
-            s.push_str("            if (rc != PB_OK) printf(\",\\\"encode_error\\\":\\\"%s\\\"}\\n\", pb_strerror(rc));\n");
-            s.push_str("            else { printf(\",\\\"encoded\\\":\"); hx(out, out_len); printf(\"}\\n\"); free(out); }\n");
+            s.push_str(
+                "            if (rc != PB_OK) printf(\",\\\"encode_error\\\":\\\"%s\\\"}\\n\", pb_strerror(rc));\n",
+            );
+            s.push_str(
+                "            else { printf(\",\\\"encoded\\\":\"); hx(out, out_len); printf(\"}\\n\"); free(out); }\n",
+            );
             let _ = writeln!(s, "            {}_free(&p);", p.name);
             s.push_str("        }\n    }\n");
         }
@@ -108,7 +119,17 @@ impl Target for CTarget {
         // The header must also compile on its own as strict C99.
         fs::write(dir.join("lib.c"), "#define PACKETS_IMPLEMENTATION\n#include \"packets.h\"\n").unwrap();
         run(
-            Command::new(cc).current_dir(dir).args(["-std=c99", "-pedantic", "-Wall", "-Wextra", "-Werror", "-c", "lib.c", "-o", "lib.o"]),
+            Command::new(cc).current_dir(dir).args([
+                "-std=c99",
+                "-pedantic",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-c",
+                "lib.c",
+                "-o",
+                "lib.o",
+            ]),
             "cc (strict C99)",
         )?;
         let sanitize = std::env::var("PB_C_NO_SANITIZE").is_err();

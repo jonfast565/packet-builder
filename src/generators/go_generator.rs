@@ -1,6 +1,6 @@
 //! Go backend: one file, standard library only (Go 1.18+ for generics).
 
-use crate::generators::common::{emit_expr, is_calc, mask, pascal_case, ExprLang, GenOptions, Mode, Out};
+use crate::generators::common::{ExprLang, GenOptions, Mode, Out, emit_expr, is_calc, mask, pascal_case};
 use crate::ir::{AggOp, ArithOp, Codec, Count, Func, Member, MemberKind, Module, Packet, Step, TExpr, Ty, ValueType};
 use crate::models::parsing_models::Endianness;
 
@@ -167,7 +167,9 @@ fn read_elem(codec: &Codec, ty: &ValueType) -> String {
     let raw = match codec {
         Codec::Bytes { nbytes, endian } => format!("pbR.ReadUint({}, {})", nbytes, little(endian)),
         Codec::Bits { width } => format!("pbR.ReadBits({})", width),
-        Codec::Float { width: 32, endian } => return format!("math.Float32frombits(uint32(pbR.ReadUint(4, {})))", little(endian)),
+        Codec::Float { width: 32, endian } => {
+            return format!("math.Float32frombits(uint32(pbR.ReadUint(4, {})))", little(endian));
+        }
         Codec::Float { endian, .. } => return format!("math.Float64frombits(pbR.ReadUint(8, {}))", little(endian)),
         Codec::Mac => return "pbR.ReadMac()".into(),
         Codec::Packet(n) => return format!("pbDecode{}(pbR)", n),
@@ -179,22 +181,26 @@ fn read_elem(codec: &Codec, ty: &ValueType) -> String {
 }
 
 fn write_elem(out: &mut Out, codec: &Codec, ty: &ValueType, v: &str, field: &str) {
-    if let ValueType::Int { width, signed } = ty {
-        if ty.needs_range_check() {
-            if *signed {
-                out.line(format!("pbW.CheckI(int64({}), {}, \"{}\")", v, width, field));
-            } else {
-                out.line(format!("pbW.CheckU(uint64({}), {}, \"{}\")", v, width, field));
-            }
+    if let ValueType::Int { width, signed } = ty
+        && ty.needs_range_check()
+    {
+        if *signed {
+            out.line(format!("pbW.CheckI(int64({}), {}, \"{}\")", v, width, field));
+        } else {
+            out.line(format!("pbW.CheckU(uint64({}), {}, \"{}\")", v, width, field));
         }
     }
     match codec {
-        Codec::Bytes { nbytes, endian } => out.line(format!("pbW.WriteUint(uint64({}), {}, {})", v, nbytes, little(endian))),
+        Codec::Bytes { nbytes, endian } => {
+            out.line(format!("pbW.WriteUint(uint64({}), {}, {})", v, nbytes, little(endian)))
+        }
         Codec::Bits { width } => out.line(format!("pbW.WriteBits(uint64({}), {})", v, width)),
         Codec::Float { width: 32, endian } => {
             out.line(format!("pbW.WriteUint(uint64(math.Float32bits({})), 4, {})", v, little(endian)))
         }
-        Codec::Float { endian, .. } => out.line(format!("pbW.WriteUint(math.Float64bits({}), 8, {})", v, little(endian))),
+        Codec::Float { endian, .. } => {
+            out.line(format!("pbW.WriteUint(math.Float64bits({}), 8, {})", v, little(endian)))
+        }
         Codec::Mac => out.line(format!("pbW.WriteBytes({}[:])", v)),
         Codec::Packet(_) => out.line(format!("{}.EncodeTo(pbW)", v)),
     }
@@ -274,12 +280,9 @@ fn emit_decode_step(out: &mut Out, p: &Packet, lang: &Lang, step: &Step) {
             let bits = codec.bits();
             match array {
                 None => out.line(format!("pbR.SkipBits({})", bits)),
-                Some(Count::Expr(e)) => out.line(format!(
-                    "pbR.SkipBits(pbR.Count({}, {}, \"_\") * {})",
-                    emit_expr(lang, e),
-                    bits,
-                    bits
-                )),
+                Some(Count::Expr(e)) => {
+                    out.line(format!("pbR.SkipBits(pbR.Count({}, {}, \"_\") * {})", emit_expr(lang, e), bits, bits))
+                }
                 Some(Count::Remaining) => out.line("pbR.SkipBits(pbR.RemainingBits())"),
             }
         }
@@ -308,7 +311,7 @@ fn emit_decode_step(out: &mut Out, p: &Packet, lang: &Lang, step: &Step) {
                         out.line(format!("{} = pbR.ReadBytes(pbR.RemainingBits() / 8)", target));
                     } else {
                         out.line(format!("{} = {}{{}}", target, member_type(m)));
-                        out.open(format!("for pbR.Err() == nil && pbR.RemainingBits() >= {} {{", ebits));
+                        out.open("for pbR.Err() == nil && pbR.RemainingBits() > 0 {");
                         out.line(format!("{} = append({}, {})", target, target, read_elem(codec, ty)));
                         out.close("}");
                     }
@@ -327,7 +330,11 @@ fn emit_decode_step(out: &mut Out, p: &Packet, lang: &Lang, step: &Step) {
                 let m = &p.members[part.member];
                 let st = scalar_type(&m.ty);
                 let bits = format!("((pbC >> {}) & 0x{:x})", part.shift, mask(part.width));
-                let v = if part.signed { format!("{}(pbSext({}, {}))", st, bits, part.width) } else { format!("{}({})", st, bits) };
+                let v = if part.signed {
+                    format!("{}(pbSext({}, {}))", st, bits, part.width)
+                } else {
+                    format!("{}({})", st, bits)
+                };
                 out.line(format!("p.{} = {}", field_name(&m.name), v));
             }
             out.close("}");
@@ -342,7 +349,9 @@ fn emit_encode_step(out: &mut Out, p: &Packet, lang: &Lang, step: &Step) {
             let bits = codec.bits();
             match array {
                 None => out.line(format!("pbW.WriteZeroBits({})", bits)),
-                Some(Count::Expr(e)) => out.line(format!("pbW.WriteZeroBits(pbMax({}, 0) * {})", emit_expr(lang, e), bits)),
+                Some(Count::Expr(e)) => {
+                    out.line(format!("pbW.WriteZeroBits(pbMax({}, 0) * {})", emit_expr(lang, e), bits))
+                }
                 Some(Count::Remaining) => {}
             }
         }
@@ -379,7 +388,9 @@ fn emit_encode_step(out: &mut Out, p: &Packet, lang: &Lang, step: &Step) {
                 out.line(format!("pbC |= (uint64({}) & 0x{:x}) << {}", place, mask(part.width), part.shift));
             }
             match container {
-                Codec::Bytes { nbytes, endian } => out.line(format!("pbW.WriteUint(pbC, {}, {})", nbytes, little(endian))),
+                Codec::Bytes { nbytes, endian } => {
+                    out.line(format!("pbW.WriteUint(pbC, {}, {})", nbytes, little(endian)))
+                }
                 _ => out.line(format!("pbW.WriteBits(pbC, {})", container_width)),
             }
             out.close("}");

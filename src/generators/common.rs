@@ -72,9 +72,7 @@ pub fn emit_expr<L: ExprLang + ?Sized>(l: &L, e: &TExpr) -> String {
         TExpr::Guard { cond, then, other, ty } => {
             l.guard(emit_expr(l, cond), emit_expr(l, then), emit_expr(l, other), *ty)
         }
-        TExpr::Call { func, args, ty } => {
-            l.call(*func, args.iter().map(|a| emit_expr(l, a)).collect(), *ty)
-        }
+        TExpr::Call { func, args, ty } => l.call(*func, args.iter().map(|a| emit_expr(l, a)).collect(), *ty),
         TExpr::Convert { e, to } => l.convert(emit_expr(l, e), e.ty(), *to),
     }
 }
@@ -141,9 +139,7 @@ pub fn snake_case(name: &str) -> String {
 
 pub fn indent(code: &str, levels: usize, unit: &str) -> String {
     let pad = unit.repeat(levels);
-    code.lines()
-        .map(|l| if l.trim().is_empty() { "\n".to_string() } else { format!("{}{}\n", pad, l) })
-        .collect()
+    code.lines().map(|l| if l.trim().is_empty() { "\n".to_string() } else { format!("{}{}\n", pad, l) }).collect()
 }
 
 pub fn mask(width: u32) -> u64 {

@@ -1,7 +1,7 @@
 //! Zig backend (Zig 0.13). Bit fields use Zig's exact-width integers (`u3`,
 //! `i12`, ...), so out-of-range values are rejected by the compiler.
 
-use crate::generators::common::{emit_expr, is_calc, mask, ExprLang, GenOptions, Mode, Out};
+use crate::generators::common::{ExprLang, GenOptions, Mode, Out, emit_expr, is_calc, mask};
 use crate::ir::{AggOp, ArithOp, Codec, Count, Func, LogicOp, Member, MemberKind, Module, Packet, Step, Ty, ValueType};
 use crate::models::parsing_models::Endianness;
 
@@ -10,18 +10,91 @@ pub struct ZigGenerator;
 const RUNTIME: &str = include_str!("../../runtime/zig.zig");
 
 const KEYWORDS: &[&str] = &[
-    "addrspace", "align", "allowzero", "and", "anyframe", "anytype", "asm", "async", "await", "break",
-    "callconv", "catch", "comptime", "const", "continue", "defer", "else", "enum", "errdefer", "error",
-    "export", "extern", "fn", "for", "if", "inline", "linksection", "noalias", "noinline", "nosuspend",
-    "opaque", "or", "orelse", "packed", "pub", "resume", "return", "struct", "suspend", "switch", "test",
-    "threadlocal", "try", "union", "unreachable", "usingnamespace", "var", "volatile", "while",
+    "addrspace",
+    "align",
+    "allowzero",
+    "and",
+    "anyframe",
+    "anytype",
+    "asm",
+    "async",
+    "await",
+    "break",
+    "callconv",
+    "catch",
+    "comptime",
+    "const",
+    "continue",
+    "defer",
+    "else",
+    "enum",
+    "errdefer",
+    "error",
+    "export",
+    "extern",
+    "fn",
+    "for",
+    "if",
+    "inline",
+    "linksection",
+    "noalias",
+    "noinline",
+    "nosuspend",
+    "opaque",
+    "or",
+    "orelse",
+    "packed",
+    "pub",
+    "resume",
+    "return",
+    "struct",
+    "suspend",
+    "switch",
+    "test",
+    "threadlocal",
+    "try",
+    "union",
+    "unreachable",
+    "usingnamespace",
+    "var",
+    "volatile",
+    "while",
     // primitive values and types
-    "true", "false", "null", "undefined", "bool", "void", "type", "anyerror", "anyopaque", "noreturn",
-    "isize", "usize", "comptime_int", "comptime_float", "f16", "f32", "f64", "f80", "f128", "c_char",
-    "c_short", "c_ushort", "c_int", "c_uint", "c_long", "c_ulong", "c_longlong", "c_ulonglong",
+    "true",
+    "false",
+    "null",
+    "undefined",
+    "bool",
+    "void",
+    "type",
+    "anyerror",
+    "anyopaque",
+    "noreturn",
+    "isize",
+    "usize",
+    "comptime_int",
+    "comptime_float",
+    "f16",
+    "f32",
+    "f64",
+    "f80",
+    "f128",
+    "c_char",
+    "c_short",
+    "c_ushort",
+    "c_int",
+    "c_uint",
+    "c_long",
+    "c_ulong",
+    "c_longlong",
+    "c_ulonglong",
     "c_longdouble",
     // declarations of every generated struct
-    "decode", "decodeFrom", "encode", "encodeTo", "deinit",
+    "decode",
+    "decodeFrom",
+    "encode",
+    "encodeTo",
+    "deinit",
 ];
 
 /// Zig field name for a member.
@@ -183,12 +256,13 @@ fn store_value(expr: String, ty: &ValueType) -> String {
 fn read_elem(codec: &Codec, ty: &ValueType) -> String {
     let st = scalar_type(ty);
     match codec {
-        Codec::Bytes { nbytes, endian } => format!("pbFromBits({}, try pb_r.readUint({}, {}))", st, nbytes, little(endian)),
+        Codec::Bytes { nbytes, endian } => {
+            format!("pbFromBits({}, try pb_r.readUint({}, {}))", st, nbytes, little(endian))
+        }
         Codec::Bits { width } => format!("pbFromBits({}, try pb_r.readBits({}))", st, width),
-        Codec::Float { width: 32, endian } => format!(
-            "@as(f32, @bitCast(@as(u32, @truncate(try pb_r.readUint(4, {})))))",
-            little(endian)
-        ),
+        Codec::Float { width: 32, endian } => {
+            format!("@as(f32, @bitCast(@as(u32, @truncate(try pb_r.readUint(4, {})))))", little(endian))
+        }
         Codec::Float { endian, .. } => format!("@as(f64, @bitCast(try pb_r.readUint(8, {})))", little(endian)),
         Codec::Mac => "try pb_r.readMac()".into(),
         Codec::Packet(n) => format!("try {}.decodeFrom(allocator, pb_r)", n),
@@ -197,10 +271,16 @@ fn read_elem(codec: &Codec, ty: &ValueType) -> String {
 
 fn write_elem(out: &mut Out, codec: &Codec, v: &str) {
     match codec {
-        Codec::Bytes { nbytes, endian } => out.line(format!("try pb_w.writeUint(pbToBits({}), {}, {});", v, nbytes, little(endian))),
+        Codec::Bytes { nbytes, endian } => {
+            out.line(format!("try pb_w.writeUint(pbToBits({}), {}, {});", v, nbytes, little(endian)))
+        }
         Codec::Bits { width } => out.line(format!("try pb_w.writeBits(pbToBits({}), {});", v, width)),
-        Codec::Float { width: 32, endian } => out.line(format!("try pb_w.writeUint(@as(u32, @bitCast({})), 4, {});", v, little(endian))),
-        Codec::Float { endian, .. } => out.line(format!("try pb_w.writeUint(@as(u64, @bitCast({})), 8, {});", v, little(endian))),
+        Codec::Float { width: 32, endian } => {
+            out.line(format!("try pb_w.writeUint(@as(u32, @bitCast({})), 4, {});", v, little(endian)))
+        }
+        Codec::Float { endian, .. } => {
+            out.line(format!("try pb_w.writeUint(@as(u64, @bitCast({})), 8, {});", v, little(endian)))
+        }
         Codec::Mac => out.line(format!("try pb_w.writeBytes(&{});", v)),
         Codec::Packet(_) => out.line(format!("try {}.encodeTo(pb_w);", v)),
     }
@@ -293,7 +373,12 @@ fn emit_packet(out: &mut Out, p: &Packet) {
     for &c in &p.encode_calcs {
         let m = &p.members[c];
         if let MemberKind::Calculated(e) = &m.kind {
-            body.line(format!("const pbc_{}: {} = {};", m.name, scalar_type(&m.ty), store_value(emit_expr(&lang, e), &m.ty)));
+            body.line(format!(
+                "const pbc_{}: {} = {};",
+                m.name,
+                scalar_type(&m.ty),
+                store_value(emit_expr(&lang, e), &m.ty)
+            ));
         }
     }
     for step in &p.steps {
@@ -361,7 +446,10 @@ fn emit_decode_step(out: &mut Out, p: &Packet, lang: &Lang, step: &Step) {
                     } else {
                         out.open("{");
                         out.line(format!("const pb_a = try allocator.alloc({}, {});", scalar_type(ty), n));
-                        out.line(format!("@memset(pb_a, {});", if matches!(ty, ValueType::Packet(_)) { ".{}" } else { "std.mem.zeroes(@TypeOf(pb_a[0]))" }));
+                        out.line(format!(
+                            "@memset(pb_a, {});",
+                            if matches!(ty, ValueType::Packet(_)) { ".{}" } else { "std.mem.zeroes(@TypeOf(pb_a[0]))" }
+                        ));
                         out.line(format!("{} = pb_a;", target));
                         out.line(format!("for (pb_a) |*pb_e| pb_e.* = {};", read_elem(codec, ty)));
                         out.close("}");
@@ -381,7 +469,10 @@ fn emit_decode_step(out: &mut Out, p: &Packet, lang: &Lang, step: &Step) {
                         } else {
                             out.line("errdefer pb_l.deinit();");
                         }
-                        out.line(format!("while (pb_r.remainingBits() >= {}) try pb_l.append({});", ebits, read_elem(codec, ty)));
+                        out.line(format!(
+                            "while (pb_r.remainingBits() > 0) try pb_l.append({});",
+                            read_elem(codec, ty)
+                        ));
                         out.line(format!("{} = try pb_l.toOwnedSlice();", target));
                         out.close("}");
                     }
@@ -420,7 +511,9 @@ fn emit_encode_step(out: &mut Out, p: &Packet, lang: &Lang, step: &Step) {
             let bits = codec.bits();
             match array {
                 None => out.line(format!("try pb_w.writeZeroBits({});", bits)),
-                Some(Count::Expr(e)) => out.line(format!("try pb_w.writeZeroBits(@max({}, 0) *% {});", emit_expr(lang, e), bits)),
+                Some(Count::Expr(e)) => {
+                    out.line(format!("try pb_w.writeZeroBits(@max({}, 0) *% {});", emit_expr(lang, e), bits))
+                }
                 Some(Count::Remaining) => {}
             }
         }
@@ -460,7 +553,9 @@ fn emit_encode_step(out: &mut Out, p: &Packet, lang: &Lang, step: &Step) {
                 ));
             }
             match container {
-                Codec::Bytes { nbytes, endian } => out.line(format!("try pb_w.writeUint(pb_c, {}, {});", nbytes, little(endian))),
+                Codec::Bytes { nbytes, endian } => {
+                    out.line(format!("try pb_w.writeUint(pb_c, {}, {});", nbytes, little(endian)))
+                }
                 _ => out.line(format!("try pb_w.writeBits(pb_c, {});", container_width)),
             }
             out.close("}");

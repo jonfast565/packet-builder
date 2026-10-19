@@ -3,11 +3,11 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+use packet_builder::Language;
 use packet_builder::generators::go_generator::field_name;
 use packet_builder::ir::{Member, Module, ValueType};
-use packet_builder::Language;
 
-use super::{member, packet, quote, run, set_literal, which, Case, Target};
+use super::{Case, Target, packet, quote, run, set_literal, which};
 
 pub struct GoTarget;
 
@@ -62,7 +62,12 @@ impl Target for GoTarget {
             let _ = writeln!(s, "\t\tp, err := Decode{}(data)", p.name);
             s.push_str("\t\tif err != nil {\n\t\t\tfmt.Printf(\"{\\\"ok\\\":false,\\\"error\\\":%s}\\n\", strconv.Quote(err.Error()))\n\t\t\treturn\n\t\t}\n");
             for (name, v) in &c.set {
-                let _ = writeln!(s, "\t\tp.{} = {}", field_name(&member(p, name).name), set_literal(v));
+                let _ = writeln!(
+                    s,
+                    "\t\tp.{} = {}",
+                    super::accessor(module, p, name, |_, m| field_name(&m.name)),
+                    set_literal(v)
+                );
             }
             let _ = writeln!(s, "\t\tv := dump{}(p)", p.name);
             s.push_str("\t\tb, err := p.Encode()\n");
@@ -81,11 +86,19 @@ impl Target for GoTarget {
         fs::write(dir.join("main.go"), harness).unwrap();
         let unformatted = run(Command::new("gofmt").current_dir(dir).args(["-l", "packets"]), "gofmt")?;
         if !unformatted.trim().is_empty() {
-            let diff = Command::new("gofmt").current_dir(dir).args(["-d", "packets"]).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+            let diff = Command::new("gofmt")
+                .current_dir(dir)
+                .args(["-d", "packets"])
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+                .unwrap_or_default();
             return Err(format!("generated Go code is not gofmt-clean:\n{}", diff));
         }
         run(Command::new("go").current_dir(dir).args(["vet", "./..."]).env("GOFLAGS", "-mod=mod"), "go vet")?;
-        run(Command::new("go").current_dir(dir).args(["build", "-o", "harness", "."]).env("GOFLAGS", "-mod=mod"), "go build")?;
+        run(
+            Command::new("go").current_dir(dir).args(["build", "-o", "harness", "."]).env("GOFLAGS", "-mod=mod"),
+            "go build",
+        )?;
         run(&mut Command::new(dir.join("harness")), "go harness")
     }
 }

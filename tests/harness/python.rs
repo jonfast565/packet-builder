@@ -3,11 +3,11 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+use packet_builder::Language;
 use packet_builder::generators::python_generator::ident;
 use packet_builder::ir::{Member, Module, ValueType};
-use packet_builder::Language;
 
-use super::{member, packet, quote, run, set_literal, which, Case, Target};
+use super::{Case, Target, packet, quote, run, set_literal, which};
 
 pub struct PythonTarget;
 
@@ -51,9 +51,16 @@ impl Target for PythonTarget {
             let _ = writeln!(s, "def case_{}():", i);
             s.push_str("    try:\n");
             let _ = writeln!(s, "        p = {}.decode(bytes.fromhex({}))", p.name, quote(&c.hex));
-            s.push_str("    except PbError as e:\n        print(json.dumps({'ok': False, 'error': str(e)}))\n        return\n");
+            s.push_str(
+                "    except PbError as e:\n        print(json.dumps({'ok': False, 'error': str(e)}))\n        return\n",
+            );
             for (name, v) in &c.set {
-                let _ = writeln!(s, "    p.{} = {}", ident(&member(p, name).name), set_literal(v));
+                let _ = writeln!(
+                    s,
+                    "    p.{} = {}",
+                    super::accessor(module, p, name, |_, m| ident(&m.name)),
+                    set_literal(v)
+                );
             }
             let _ = writeln!(s, "    v = dump_{}(p)", p.name);
             s.push_str("    try:\n        b = p.encode()\n");
