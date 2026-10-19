@@ -161,6 +161,14 @@ fn parse_accessor(parser_rule: Pair<Rule>) -> ExprNode {
     match parser_rule.into_inner().next() {
         Some(p) => match p.as_rule() {
             Rule::aggregate_accessor => parse_aggregate_accessor(p),
+            Rule::qualified_accessor => {
+                let mut ids =
+                    p.into_inner().filter(|x| x.as_rule() == Rule::identifier).map(|x| x.as_str().to_string());
+                match (ids.next(), ids.next()) {
+                    (Some(group), Some(name)) => ExprNode::QualifiedReference(group, name),
+                    _ => ExprNode::NoExpr,
+                }
+            }
             Rule::direct_value_accessor => parse_direct_value_accessor(p),
             _ => ExprNode::NoExpr,
         },
@@ -217,7 +225,7 @@ fn parse_numeric_constant(parser_rule: Pair<Rule>) -> ExprNode {
     ExprNode::UnsignedInteger64Value(s.parse::<u64>().expect("invalid decimal literal"))
 }
 
-fn parse_string_constant(parser_rule: Pair<Rule>) -> String {
+pub(super) fn parse_string_constant(parser_rule: Pair<Rule>) -> String {
     // string -> '"' inner '"'
     let raw = parser_rule.as_str();
     if raw.len() >= 2 { raw[1..raw.len() - 1].to_string() } else { String::new() }

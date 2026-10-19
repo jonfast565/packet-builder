@@ -19,10 +19,15 @@ impl<'a> Ctx<'a> {
     }
 
     fn lookup(&self, name: &str) -> Result<usize, String> {
-        self.names
-            .get(name)
-            .copied()
-            .ok_or_else(|| format!("unknown field `{}` in packet `{}`", name, self.packet.name))
+        self.names.get(name).copied().ok_or_else(|| {
+            if self.consts.category(name).is_some() {
+                format!("`{}` is a category of constants; name one of them, as in `{}.member`", name, name)
+            } else if self.packet.name.is_empty() {
+                format!("unknown constant `{}` (a constant may only use constants declared before it)", name)
+            } else {
+                format!("unknown field `{}` in packet `{}`", name, self.packet.name)
+            }
+        })
     }
 
     fn scalar_ty(&self, vt: &ValueType, name: &str) -> Result<Ty, String> {
@@ -42,6 +47,10 @@ impl<'a> Ctx<'a> {
             UnsignedInteger64Value(v) => TExpr::IntLit(*v as i64),
             Float64Value(v) => TExpr::FloatLit(*v),
             StringValue(_) => return Err("string literals are not supported in expressions".into()),
+            ValueReference(name, None) if !self.names.contains_key(name) && self.consts.single(name).is_some() => {
+                TExpr::IntLit(self.consts.single(name).expect("checked").value)
+            }
+            QualifiedReference(group, name) => TExpr::IntLit(self.consts.member(group, name)?.value),
             ValueReference(name, index) => {
                 let idx = self.lookup(name)?;
                 let m = &self.members[idx];

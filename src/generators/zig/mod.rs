@@ -10,8 +10,8 @@ mod packet;
 pub use naming::{ident, member_type, scalar_type};
 
 use crate::generators::Backend;
-use crate::generators::common::{GenOptions, Out};
-use crate::ir::Module;
+use crate::generators::common::{ConstEmitter, GenOptions, Out};
+use crate::ir::{Category, Constant, Module};
 
 pub struct ZigGenerator;
 
@@ -24,10 +24,35 @@ impl Backend for ZigGenerator {
         out.line("const std = @import(\"std\");");
         out.line("");
         out.buf.push_str(RUNTIME);
+        self.emit_constants(&mut out, module);
         for p in &module.packets {
             out.line("");
             packet::emit_packet(&mut out, p);
         }
         out.buf
+    }
+}
+
+/// `pub const name: u8 = 1;`, with the note as a doc comment.
+fn const_line(out: &mut Out, name: &str, c: &Constant) {
+    if let Some(note) = &c.note {
+        out.line(format!("/// {}", note));
+    }
+    out.line(format!("pub const {}: {} = {};", name, scalar_type(&c.ty), c.literal()));
+}
+
+impl ConstEmitter for ZigGenerator {
+    /// Upper case, so a file-level constant never shadows a (lower case) local.
+    fn constant(&self, out: &mut Out, c: &Constant) {
+        const_line(out, &c.name.to_ascii_uppercase(), c);
+    }
+
+    fn category(&self, out: &mut Out, cat: &Category) {
+        out.line(format!("/// Named `{}` values.", cat.name));
+        out.open(format!("pub const {} = struct {{", ident(&cat.name)));
+        for c in &cat.members {
+            const_line(out, &ident(&c.name), c);
+        }
+        out.close("};");
     }
 }

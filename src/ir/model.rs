@@ -4,10 +4,70 @@ use std::collections::HashSet;
 
 use super::expr::TExpr;
 use crate::ast::Endianness;
+pub use crate::ast::Radix;
 
 #[derive(Debug, Clone)]
 pub struct Module {
     pub packets: Vec<Packet>,
+    /// Standalone named constants, in source order.
+    pub constants: Vec<Constant>,
+    /// Categories of named constants, in source order.
+    pub categories: Vec<Category>,
+}
+
+/// A named value from a `const` declaration.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Constant {
+    pub name: String,
+    /// Always an integer type.
+    pub ty: ValueType,
+    /// The value as 64-bit two's complement (a uint64 above i64::MAX is negative here).
+    pub value: i64,
+    /// How the value was written, so generated code can keep the spelling.
+    pub radix: Radix,
+    pub note: Option<String>,
+}
+
+impl Constant {
+    /// The value as written for an unsigned or signed type, in its radix
+    /// (hex for `0x`/`0b` sources, unless the value is negative).
+    pub fn literal(&self) -> String {
+        if self.ty.is_signed() {
+            if self.value < 0 || self.radix == Radix::Dec {
+                return self.value.to_string();
+            }
+            return format!("0x{:x}", self.value);
+        }
+        let v = self.value as u64;
+        match self.radix {
+            Radix::Dec => v.to_string(),
+            Radix::Hex | Radix::Bin => format!("0x{:x}", v),
+        }
+    }
+}
+
+/// `const Name type { a = 1, ... }`: a group of related named constants.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Category {
+    pub name: String,
+    pub ty: ValueType,
+    pub members: Vec<Constant>,
+}
+
+impl ValueType {
+    /// True if the 64-bit two's complement `value` is representable in this
+    /// integer type (any bit pattern fits a 64-bit unsigned).
+    pub fn holds(&self, value: i64) -> bool {
+        match *self {
+            ValueType::Int { width: 64, .. } => true,
+            ValueType::Int { width, signed: true } => {
+                let half = 1i64 << (width - 1);
+                (-half..half).contains(&value)
+            }
+            ValueType::Int { width, signed: false } => (0..1i64 << width).contains(&value),
+            _ => false,
+        }
+    }
 }
 
 impl Module {
@@ -78,6 +138,8 @@ pub struct Member {
     pub ty: ValueType,
     pub array: Option<Count>,
     pub kind: MemberKind,
+    /// `: Category`: the named constants this member's values come from.
+    pub category: Option<String>,
 }
 
 impl Member {

@@ -175,5 +175,37 @@ fn layout(input: &Path, only: &[String]) -> Result<(), String> {
         }
         println!();
     }
+    if only.is_empty() {
+        print_constants(&module);
+    }
     Ok(())
+}
+
+/// The file's named constants, after the packets.
+fn print_constants(module: &packet_builder::ir::Module) {
+    use packet_builder::ir::{Constant, ValueType};
+    if module.constants.is_empty() && module.categories.is_empty() {
+        return;
+    }
+    let ty = |t: &ValueType| match t {
+        ValueType::Int { width, signed } => format!("{}{}", if *signed { "i" } else { "u" }, width),
+        _ => String::new(),
+    };
+    let row = |name: &str, c: &Constant| {
+        let note = c.note.as_ref().map(|n| format!("  {}", n)).unwrap_or_default();
+        println!("  {:<24} {:>6}  {:>20}{}", name, ty(&c.ty), c.literal(), note);
+    };
+    if !module.constants.is_empty() {
+        println!("constants:");
+    }
+    for c in &module.constants {
+        row(&c.name, c);
+    }
+    for cat in &module.categories {
+        println!("category {} ({}):", cat.name, ty(&cat.ty));
+        for c in &cat.members {
+            row(&format!("{}.{}", cat.name, c.name), c);
+        }
+    }
+    println!();
 }

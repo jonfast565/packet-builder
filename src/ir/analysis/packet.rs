@@ -8,6 +8,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use super::consts::ConstTable;
 use super::context::Ctx;
 use super::cursor::{Cursor, const_factor};
 use super::types::{field_value_type, natural_align, value_type};
@@ -34,10 +35,10 @@ pub(super) struct PacketBuilder<'a> {
 }
 
 impl<'a> PacketBuilder<'a> {
-    pub fn new(p: &'a PacketExpr, done: &'a HashMap<String, Packet>) -> Self {
+    pub fn new(p: &'a PacketExpr, done: &'a HashMap<String, Packet>, consts: &'a ConstTable) -> Self {
         PacketBuilder {
             p,
-            ctx: Ctx::new(p, done),
+            ctx: Ctx::new(p, done, consts),
             default_endian: p.endianness.clone().unwrap_or(Endianness::Le),
             field_counts: Vec::new(),
             steps: Vec::new(),
@@ -67,6 +68,7 @@ impl<'a> PacketBuilder<'a> {
                         continue;
                     }
                     ctx.declare(&f.id, field_value_type(f), MemberKind::Stored, f.span);
+                    ctx.tag(&f.id, &f.category);
                 }
                 PacketItem::Bitfield(b) => {
                     for m in &b.members {
@@ -79,6 +81,7 @@ impl<'a> PacketBuilder<'a> {
                             MemberKind::BitfieldPart,
                             m.span,
                         );
+                        ctx.tag(&m.name, &m.category);
                     }
                 }
                 PacketItem::Calculated(c) => {

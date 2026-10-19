@@ -96,3 +96,29 @@ fn languages_lists_targets() {
         assert!(text.lines().any(|line| line.starts_with(l)), "{}", text);
     }
 }
+
+#[test]
+fn layout_shows_constants_and_tags() {
+    let out = bin().args(["layout", "examples/oscar.packet"]).output().unwrap();
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("u8 : Channel"), "{}", text);
+    assert!(text.contains("FLAP_START"), "{}", text);
+    assert!(text.contains("category Channel (u8):"), "{}", text);
+    assert!(text.contains("Channel.snac"), "{}", text);
+    // Only the packets asked for: no constants section.
+    let out = bin().args(["layout", "examples/oscar.packet", "-k", "Flap"]).output().unwrap();
+    assert!(!String::from_utf8_lossy(&out.stdout).contains("category Channel"));
+}
+
+#[test]
+fn generated_code_exports_constants() {
+    let out = bin().args(["gen", "examples/oscar.packet", "-l", "rust", "--stdout"]).output().unwrap();
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("pub const FLAP_START: u8 = 0x2a;"), "{}", text);
+    assert!(text.contains("pub const SNAC: u8 = 2;"), "{}", text);
+    assert!(text.contains("/// Values from [`Channel`]."), "{}", text);
+    let out = bin().args(["gen", "examples/oscar.packet", "-l", "c", "--stdout"]).output().unwrap();
+    assert!(String::from_utf8_lossy(&out.stdout).contains("#define CHANNEL_SNAC ((uint8_t)2u)"));
+}

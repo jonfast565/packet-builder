@@ -7,11 +7,16 @@ use super::types::{to_endianness, type_from_name};
 use super::{Rule, int_literal, span_of};
 use crate::ast::{
     ArrayLength, BitOrder, BitfieldExpr, BitfieldMember, CalculatedField, Endianness, ExprNode, PacketExpr, PacketItem,
-    TypeExpr, TypeNode,
+    Span, TypeExpr, TypeNode,
 };
 
 fn parse_alignment(pair: Pair<Rule>) -> u64 {
     pair.into_inner().find(|p| p.as_rule() == Rule::numeric_constant).map(|n| int_literal(n.as_str())).unwrap_or(1)
+}
+
+/// The category named by `: Category`.
+fn category_tag(pair: Pair<Rule>) -> Option<(String, Span)> {
+    pair.into_inner().find(|p| p.as_rule() == Rule::identifier).map(|id| (id.as_str().to_string(), span_of(&id)))
 }
 
 /// Builds the parse tree's packets; type names depend on the file's word size.
@@ -20,7 +25,7 @@ pub(super) struct TreeBuilder {
 }
 
 impl TreeBuilder {
-    fn type_from_name(&self, name: &str) -> TypeNode {
+    pub(super) fn type_from_name(&self, name: &str) -> TypeNode {
         type_from_name(name, self.word_size)
     }
 
@@ -83,6 +88,7 @@ impl TreeBuilder {
         let mut array: Option<ArrayLength> = None;
         let mut field_endianness: Option<Endianness> = None;
         let mut align = None;
+        let mut category = None;
 
         for field in parser_rule.into_inner() {
             match field.as_rule() {
@@ -117,6 +123,7 @@ impl TreeBuilder {
                     }
                 }
                 Rule::endianness => field_endianness = to_endianness(field.as_str()),
+                Rule::category_tag => category = category_tag(field),
                 _ => {}
             }
         }
@@ -126,7 +133,7 @@ impl TreeBuilder {
             array = Some(ArrayLength::Remaining);
         }
 
-        TypeExpr { id: identifier, expr: type_node, array, endianness: field_endianness, align, span }
+        TypeExpr { id: identifier, expr: type_node, array, endianness: field_endianness, align, category, span }
     }
 
     fn bitfield(&self, parser_rule: Pair<Rule>) -> BitfieldExpr {
@@ -150,6 +157,7 @@ impl TreeBuilder {
                     let mut name = String::new();
                     let mut width = 0;
                     let mut signed = false;
+                    let mut category = None;
                     for m in part.into_inner() {
                         match m.as_rule() {
                             Rule::identifier => name = m.as_str().to_string(),
@@ -159,10 +167,11 @@ impl TreeBuilder {
                                     signed = s;
                                 }
                             }
+                            Rule::category_tag => category = category_tag(m),
                             _ => {}
                         }
                     }
-                    members.push(BitfieldMember { name, width, signed, span: mspan });
+                    members.push(BitfieldMember { name, width, signed, category, span: mspan });
                 }
                 _ => {}
             }

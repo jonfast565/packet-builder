@@ -4,7 +4,7 @@ use super::decode::Decoder;
 use super::encode::Encoder;
 use super::expr::store_value;
 use super::naming::{default_value, member_type, prop_name, scalar_type};
-use crate::generators::common::{Out, StepEmitter};
+use crate::generators::common::{Out, StepEmitter, member_category};
 use crate::ir::Packet;
 
 pub fn emit_packet(out: &mut Out, p: &Packet) {
@@ -12,6 +12,9 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     out.line(format!("public sealed class {}", name));
     out.open("{");
     for m in &p.members {
+        if let Some(cat) = member_category(m) {
+            out.line(format!("/// <summary>Values from <see cref=\"{}\"/>.</summary>", cat));
+        }
         let decl = format!("public {} {} {{ get; set; }}", member_type(m), prop_name(name, &m.name));
         match default_value(m) {
             Some(d) => out.line(format!("{} = {};", decl, d)),

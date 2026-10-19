@@ -18,9 +18,9 @@ const STREAM: &str = concat!(
 );
 
 fn message_text(tlvs: &[Tlv]) -> Result<Option<String>, PbError> {
-    for tlv in tlvs.iter().filter(|t| t.r#type == 0x0002) {
+    for tlv in tlvs.iter().filter(|t| t.r#type == IcbmTlv::MESSAGE_DATA) {
         for fragment in IcbmMessage::decode(&tlv.value)?.fragments {
-            if fragment.id == 0x01 {
+            if fragment.id == FragmentId::TEXT {
                 let text = MessageText::decode(&fragment.data)?.text;
                 return Ok(Some(String::from_utf8_lossy(&text).into_owned()));
             }
@@ -38,14 +38,16 @@ fn main() -> Result<(), PbError> {
     let mut reader = PbReader::new(&bytes);
     while reader.remaining_bits() > 0 {
         let frame = Flap::decode_from(&mut reader)?;
-        if frame.channel != 2 {
+        if frame.channel != Channel::SNAC {
             println!("channel {} frame, {} byte(s)", frame.channel, frame.length);
             continue;
         }
         let header = SnacHeader::decode(&frame.payload)?;
         match (header.family, header.subtype) {
-            (0x0001, 0x0003) => println!("server ready: {:x?}", ServerReady::decode(&frame.payload)?.families),
-            (0x0004, 0x0007) => {
+            (SnacFamily::SERVICE, ServiceSubtype::SERVER_READY) => {
+                println!("server ready: {:x?}", ServerReady::decode(&frame.payload)?.families)
+            }
+            (SnacFamily::ICBM, IcbmSubtype::RECEIVE) => {
                 let im = IcbmReceive::decode(&frame.payload)?;
                 println!(
                     "message from {} ({}% warning): {}",

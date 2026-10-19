@@ -9,8 +9,8 @@ mod packet;
 pub use naming::{ident, member_type, scalar_type};
 
 use crate::generators::Backend;
-use crate::generators::common::{GenOptions, Out};
-use crate::ir::Module;
+use crate::generators::common::{ConstEmitter, GenOptions, Out};
+use crate::ir::{Category, Constant, Module};
 
 pub struct RustGenerator;
 
@@ -23,10 +23,36 @@ impl Backend for RustGenerator {
         out.line("#![allow(dead_code, unused_variables, unused_mut, unused_parens, non_snake_case, non_camel_case_types, clippy::all)]");
         out.line("");
         out.buf.push_str(RUNTIME);
+        self.emit_constants(&mut out, module);
         for p in &module.packets {
             out.line("");
             packet::emit_packet(&mut out, p);
         }
         out.buf
+    }
+}
+
+/// `pub const NAME: u8 = 1;`, with the note as a doc comment.
+fn const_line(out: &mut Out, c: &Constant) {
+    if let Some(note) = &c.note {
+        out.line(format!("/// {}", note));
+    }
+    out.line(format!("pub const {}: {} = {};", c.name.to_ascii_uppercase(), scalar_type(&c.ty), c.literal()));
+}
+
+impl ConstEmitter for RustGenerator {
+    fn constant(&self, out: &mut Out, c: &Constant) {
+        const_line(out, c);
+    }
+
+    fn category(&self, out: &mut Out, cat: &Category) {
+        out.line(format!("/// Named `{}` values.", cat.name));
+        out.line(format!("pub struct {};", ident(&cat.name)));
+        out.line("");
+        out.open(format!("impl {} {{", ident(&cat.name)));
+        for c in &cat.members {
+            const_line(out, c);
+        }
+        out.close("}");
     }
 }

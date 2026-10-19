@@ -4,9 +4,11 @@
 //! - `literals`: rejects numbers, bit widths and alignments that do not fit,
 //!   so the tree walk can assume well-formed values;
 //! - `items`: packets, fields, bitfields and calculated fields;
+//! - `consts`: file-level named constants and categories;
 //! - `expr`: expressions;
 //! - `types`: type names (including the word-size dependent aliases).
 
+mod consts;
 mod expr;
 mod items;
 mod literals;
@@ -36,8 +38,10 @@ pub fn parse_file(input: &str) -> Result<PacketExprList, Error<Rule>> {
         .map(|n| n.as_str().parse::<u32>().unwrap_or(0))
         .unwrap_or(16);
     literals::check_literals(root.clone(), word_size)?;
-    let results = items::TreeBuilder { word_size }.packets(root);
-    Ok(PacketExprList { packets: results, word_size })
+    let builder = items::TreeBuilder { word_size };
+    let constants = builder.constants(root.clone());
+    let packets = builder.packets(root);
+    Ok(PacketExprList { packets, constants, word_size })
 }
 
 /// Parse an integer literal already validated by check_literals.

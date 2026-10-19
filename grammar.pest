@@ -28,6 +28,8 @@ rbracket = @{ "}" }
 larray = @{ "[" }
 rarray = @{ "]" }
 comma  = @{ "," }
+colon  = @{ ":" }
+dot    = @{ "." }
 assign = @{ "=" }          
 
 gt   = @{ ">" }
@@ -51,6 +53,7 @@ otherwise_kw  = @{ "otherwise" }
 // Packet keywords
 packet_kw     = @{ "packet" }
 calc_kw       = @{ "calc" }
+const_kw      = @{ "const" }
 
 // Intrinsics
 sqrt_kw = @{ "sqrt" }
@@ -74,7 +77,7 @@ wordsize_kw = @{ "wordsize" }
 // Keyword reservation
 // ===============================
 keyword = _{
-    packet_kw | calc_kw
+    packet_kw | calc_kw | const_kw
   | when_kw | then_kw | otherwise_kw
   | sumof_kw | productof_kw
   | and_kw | or_kw
@@ -202,7 +205,10 @@ parameter_list = { lparen ~ (expr ~ (comma ~ expr)*)? ~ comma? ~ rparen } // all
 function_call = { intrinsic_function ~ parameter_list }
 
 // Accessors & declarations
-declaration = { identifier ~ field_type ~ array_specifier? ~ endianness? ~ alignment? }
+declaration = { identifier ~ field_type ~ array_specifier? ~ endianness? ~ alignment? ~ category_tag? }
+
+// `: Category` notes which named constants a field's values come from.
+category_tag = { colon ~ identifier }
 
 // A fixed-size integer container split into named sub-fields:
 //   flags bitfield uint8 { one u1, two u2, _ u5 }
@@ -211,8 +217,11 @@ bitfield_declaration = {
     identifier ~ bitfield_kw ~ (type_name | bit_type) ~ endianness? ~ bit_order? ~ alignment?
     ~ lbracket ~ bitfield_member ~ (comma ~ bitfield_member)* ~ comma? ~ rbracket
 }
-bitfield_member = { identifier ~ bit_type }
-accessor    = { aggregate_accessor | direct_value_accessor }
+bitfield_member = { identifier ~ bit_type ~ category_tag? }
+accessor    = { aggregate_accessor | qualified_accessor | direct_value_accessor }
+
+// `Category.member`: a named constant from a category.
+qualified_accessor = { identifier ~ dot ~ identifier }
 
 direct_value_accessor = { identifier ~ array_specifier? }
 aggregate_accessor    = { (sumof_kw | productof_kw) ~ identifier ~ !larray }
@@ -226,9 +235,20 @@ array_specifier = { larray ~ expr? ~ rarray }
 guard_expression = { when_kw ~ expr ~ then_kw ~ expr ~ otherwise_kw ~ expr }
 
 // ===============================
+// Named constants
+// ===============================
+// A standalone constant or a category of them, each with an optional note:
+//   const FLAP_START uint8 = 0x2a "first byte of every frame"
+//   const Channel uint8 { signon = 1, snac = 2 "SNAC data" }
+const_decl   = { const_kw ~ identifier ~ (type_name | bit_type) ~ (const_value | const_group) }
+const_value  = { assign ~ expr ~ string? }
+const_group  = { lbracket ~ const_member ~ (comma ~ const_member)* ~ comma? ~ rbracket }
+const_member = { identifier ~ assign ~ expr ~ string? }
+
+// ===============================
 // Packets
 // ===============================
-packets = { SOI ~ wordsize_directive? ~ packet+ ~ EOI }
+packets = { SOI ~ wordsize_directive? ~ (const_decl | packet)+ ~ EOI }
 
 // Width of a `word` in bits (16 by default, x86 style; 32 for ARM style).
 wordsize_directive = { wordsize_kw ~ numeric_constant }

@@ -8,24 +8,45 @@
 // Decoding is layered the same way the protocol is:
 //   bytes --Flap--> payload --SnacHeader / typed SNAC--> TLVs --> values
 // See docs/oscar.md for a walkthrough.
+//
+// The protocol's magic numbers are named constants below; generated code
+// exports them (Channel::SNAC in Rust, ChannelSnac in Go, ...).
 // =====================================================================
 
 // ---------------------------------------------------------------------
 // FLAP: framing layer
 // ---------------------------------------------------------------------
+const FLAP_START uint8 = 0x2a "first byte of every FLAP frame ('*')"
+
+const Channel uint8 {
+  signon = 1        "sign-on: FlapSignon payload",
+  snac = 2          "SNAC data: Snac payload",
+  error = 3         "FLAP-level error",
+  signoff = 4       "sign-off",
+  keep_alive = 5    "keep-alive",
+}
+
 packet Flap be {
-  start uint8,              // always 0x2A ('*')
-  channel uint8,            // 1 signon, 2 SNAC data, 3 error, 4 signoff, 5 keep-alive
+  start uint8,              // always FLAP_START
+  channel uint8 : Channel,
   sequence uint16,          // per-direction sequence number
   length uint16,            // payload size in bytes
   payload bytes[length],
-  calc valid uint8 = start == 0x2a and channel >= 1 and channel <= 5
+  calc valid uint8 = start == FLAP_START and channel >= Channel.signon and channel <= Channel.keep_alive
 }
 
-// Channel 1 payload (sign-on): protocol version, then TLVs such as the
-// 0x0006 authorization cookie handed out by the login server.
+const FLAP_VERSION uint32 = 1 "FlapSignon.version is always 1"
+
+// TLV types of the sign-on and authorization exchange.
+const LoginTlv uint16 {
+  screen_name = 0x0001  "the screen name (AuthKeyRequest)",
+  auth_cookie = 0x0006  "authorization cookie handed out by the login server",
+}
+
+// Channel 1 payload (sign-on): protocol version, then TLVs such as
+// LoginTlv.auth_cookie.
 packet FlapSignon be {
-  version uint32,           // always 1
+  version uint32,           // always FLAP_VERSION
   tlvs Tlv[]
 }
 
@@ -41,13 +62,25 @@ packet Tlv be {
 // ---------------------------------------------------------------------
 // SNAC header: first 10 bytes of every channel 2 payload
 // ---------------------------------------------------------------------
+const SnacFamily uint16 {
+  service = 0x0001  "generic service controls",
+  icbm = 0x0004     "ICBM: instant messages",
+  auth = 0x0017     "authorization (MD5 login)",
+}
+
+// The flag bits as masks over the 16-bit flags word.
+const SnacFlag uint16 {
+  has_version_info = 0x8000  "a length-prefixed TLV block follows the header",
+  more_replies = 0x0001      "more SNACs answer the same request",
+}
+
 packet SnacHeader be {
-  family uint16,
-  subtype uint16,
+  family uint16 : SnacFamily,
+  subtype uint16,           // ServiceSubtype, AuthSubtype or IcbmSubtype, by family
   flags bitfield uint16 {
-    has_version_info u1,    // 0x8000: a length-prefixed TLV block follows
+    has_version_info u1,    // SnacFlag.has_version_info
     _ u14,
-    more_replies u1         // 0x0001: more SNACs answer the same request
+    more_replies u1         // SnacFlag.more_replies
   },
   request_id uint32,
   // Present only when has_version_info is set: an array of 0 or 1 entries.
@@ -66,8 +99,14 @@ packet Snac be {
 }
 
 // ---------------------------------------------------------------------
-// Family 0x0001: generic service controls
+// Family 0x0001 (SnacFamily.service): generic service controls
 // ---------------------------------------------------------------------
+const ServiceSubtype uint16 {
+  server_ready = 0x03     "ServerReady",
+  rate_info = 0x07        "RateInfo",
+  client_versions = 0x17  "FamilyVersions sent by the client",
+  server_versions = 0x18  "FamilyVersions sent by the server",
+}
 
 // SNAC(01,03) server ready: the families this connection serves.
 packet ServerReady be {
@@ -119,10 +158,14 @@ packet RateInfo be {
 }
 
 // ---------------------------------------------------------------------
-// Family 0x0017: authorization (MD5 login)
+// Family 0x0017 (SnacFamily.auth): authorization (MD5 login)
 // ---------------------------------------------------------------------
+const AuthSubtype uint16 {
+  key_request = 0x06   "AuthKeyRequest",
+  key_response = 0x07  "AuthKeyResponse",
+}
 
-// SNAC(17,06) request an MD5 salt; TLV 0x0001 carries the screen name.
+// SNAC(17,06) request an MD5 salt; LoginTlv.screen_name carries the screen name.
 packet AuthKeyRequest be {
   header SnacHeader,
   tlvs Tlv[]
@@ -136,23 +179,38 @@ packet AuthKeyResponse be {
 }
 
 // ---------------------------------------------------------------------
-// Family 0x0004: ICBM (instant messages)
+// Family 0x0004 (SnacFamily.icbm): ICBM (instant messages)
 // ---------------------------------------------------------------------
+const IcbmSubtype uint16 {
+  send = 0x06     "IcbmSend",
+  receive = 0x07  "IcbmReceive",
+}
+
+const IcbmChannel uint16 {
+  plain_text = 1  "plain text: an IcbmMessage in IcbmTlv.message_data",
+  rendezvous = 2  "rendezvous (file transfer, direct connect, ...)",
+  icq = 4         "ICQ-style message",
+}
+
+const IcbmTlv uint16 {
+  message_data = 0x0002   "an IcbmMessage",
+  store_offline = 0x0006  "store the message if the recipient is offline (empty)",
+}
 
 // SNAC(04,06) send a message (client to server).
 packet IcbmSend be {
   header SnacHeader,
   cookie bytes[8],          // random message id, echoed in acks
-  channel uint16,           // 1 plain text, 2 rendezvous, 4 ICQ
+  channel uint16 : IcbmChannel,
   screen_name string(uint8),  // length-prefixed: one length byte, then the name
-  tlvs Tlv[]                // 0x0002 message data, 0x0006 store if offline, ...
+  tlvs Tlv[]                // IcbmTlv types
 }
 
 // SNAC(04,07) incoming message (server to client).
 packet IcbmReceive be {
   header SnacHeader,
   cookie bytes[8],
-  channel uint16,
+  channel uint16 : IcbmChannel,
   screen_name string(uint8),
   warning_level uint16,     // sender's warning level in tenths of a percent
   user_tlv_count uint16,
@@ -161,10 +219,15 @@ packet IcbmReceive be {
   calc warning_percent float64 = warning_level / 10.0
 }
 
-// Value of TLV 0x0002 in a channel 1 message: a list of fragments.
-// Fragment 0x05 lists capabilities, fragment 0x01 holds the text.
+// Value of IcbmTlv.message_data in an IcbmChannel.plain_text message: a
+// list of fragments.
+const FragmentId uint8 {
+  text = 0x01          "the text: MessageText",
+  capabilities = 0x05  "capabilities the sender supports",
+}
+
 packet IcbmFragment be {
-  id uint8,
+  id uint8 : FragmentId,
   version uint8,
   length uint16,
   data bytes[length]
@@ -174,9 +237,15 @@ packet IcbmMessage be {
   fragments IcbmFragment[]
 }
 
-// Data of fragment 0x01.
+// Data of fragment FragmentId.text.
+const Charset uint16 {
+  ascii = 0x0000       "US-ASCII",
+  ucs2be = 0x0002      "UCS-2, big-endian",
+  iso_8859_1 = 0x0003  "ISO-8859-1",
+}
+
 packet MessageText be {
-  charset uint16,           // 0x0000 ASCII, 0x0002 UCS-2BE, 0x0003 ISO-8859-1
+  charset uint16 : Charset,
   charsubset uint16,
   text bytes[]
 }

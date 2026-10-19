@@ -4,7 +4,7 @@ use super::decode::Decoder;
 use super::encode::Encoder;
 use super::expr::store_value;
 use super::naming::{ident, member_type, scalar_type};
-use crate::generators::common::{Out, StepEmitter};
+use crate::generators::common::{Out, StepEmitter, member_category};
 use crate::ir::Packet;
 
 pub fn emit_packet(out: &mut Out, p: &Packet) {
@@ -13,6 +13,9 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     out.line("#[derive(Debug, Clone, PartialEq, Default)]");
     out.open(format!("pub struct {} {{", name));
     for m in &p.members {
+        if let Some(cat) = member_category(m) {
+            out.line(format!("/// Values from [`{}`].", ident(cat)));
+        }
         out.line(format!("pub {}: {},", ident(&m.name), member_type(m)));
     }
     out.close("}");
