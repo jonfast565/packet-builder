@@ -1,0 +1,406 @@
+{
+  "spec": "../../examples/oscar.packet",
+  "cases": [
+    {
+      "name": "FLAP sign-on frame from the server",
+      "packet": "Flap",
+      "hex": "2a011f3a000400000001",
+      "expect": {
+        "start": 42,
+        "channel": 1,
+        "sequence": 7994,
+        "length": 4,
+        "payload": "00000001",
+        "valid": 1
+      }
+    },
+    {
+      "name": "FLAP sign-on payload with an auth cookie",
+      "packet": "FlapSignon",
+      "hex": "00000001000600088e2f5bc4d1a07733",
+      "expect": {
+        "version": 1,
+        "tlvs": [
+          {
+            "type": 6,
+            "length": 8,
+            "value": "8e2f5bc4d1a07733"
+          }
+        ]
+      }
+    },
+    {
+      "name": "FLAP keep-alive",
+      "packet": "Flap",
+      "hex": "2a0500070000",
+      "expect": {
+        "channel": 5,
+        "length": 0,
+        "payload": "",
+        "valid": 1
+      }
+    },
+    {
+      "name": "FLAP with a bad start byte decodes but is flagged",
+      "packet": "Flap",
+      "hex": "210200000000",
+      "expect": {
+        "start": 33,
+        "valid": 0
+      }
+    },
+    {
+      "name": "FLAP truncated payload",
+      "packet": "Flap",
+      "hex": "2a02000100040017",
+      "error": true
+    },
+    {
+      "name": "FLAP length field must match payload on encode",
+      "packet": "Flap",
+      "hex": "2a02000100020017",
+      "set": {
+        "length": 3
+      },
+      "encode_error": true
+    },
+    {
+      "name": "SNAC(01,03) server ready",
+      "packet": "ServerReady",
+      "hex": "000100030000000000000001000200030004000900130015",
+      "expect": {
+        "header": {
+          "family": 1,
+          "subtype": 3,
+          "has_version_info": 0,
+          "more_replies": 0,
+          "request_id": 0,
+          "version_info": []
+        },
+        "families": [
+          1,
+          2,
+          3,
+          4,
+          9,
+          19,
+          21
+        ]
+      }
+    },
+    {
+      "name": "SNAC(01,03) with the optional version-info block (flag 0x8000)",
+      "packet": "ServerReady",
+      "hex": "00010003800000000000000600010002000100010002",
+      "expect": {
+        "header": {
+          "family": 1,
+          "subtype": 3,
+          "has_version_info": 1,
+          "more_replies": 0,
+          "request_id": 0,
+          "version_info": [
+            {
+              "length": 6,
+              "tlvs": "000100020001"
+            }
+          ]
+        },
+        "families": [
+          1,
+          2
+        ]
+      }
+    },
+    {
+      "name": "SNAC flag set without its block on encode",
+      "packet": "ServerReady",
+      "hex": "000100030000000000000001000200030004000900130015",
+      "set": {
+        "header.has_version_info": 1
+      },
+      "encode_error": true
+    },
+    {
+      "name": "SNAC(01,17) client family versions",
+      "packet": "FamilyVersions",
+      "hex": "0001001700000000005c000100040013000400020001",
+      "expect": {
+        "header": {
+          "family": 1,
+          "subtype": 23,
+          "has_version_info": 0,
+          "more_replies": 0,
+          "request_id": 92,
+          "version_info": []
+        },
+        "versions": [
+          {
+            "family": 1,
+            "version": 4
+          },
+          {
+            "family": 19,
+            "version": 4
+          },
+          {
+            "family": 2,
+            "version": 1
+          }
+        ]
+      }
+    },
+    {
+      "name": "SNAC(01,17) trailing partial entry is an error",
+      "packet": "FamilyVersions",
+      "hex": "0001001700000000005c0001000400130004000200010001",
+      "error": true
+    },
+    {
+      "name": "SNAC(01,07) rate limit info",
+      "packet": "RateInfo",
+      "hex": "000100070000000000020001000100000050000009c4000007d0000005dc0000032000000d6900001770000000000000010003000100030004000600130002",
+      "expect": {
+        "header": {
+          "family": 1,
+          "subtype": 7,
+          "has_version_info": 0,
+          "more_replies": 0,
+          "request_id": 2,
+          "version_info": []
+        },
+        "class_count": 1,
+        "classes": [
+          {
+            "id": 1,
+            "window_size": 80,
+            "clear_level": 2500,
+            "alert_level": 2000,
+            "limit_level": 1500,
+            "disconnect_level": 800,
+            "current_level": 3433,
+            "max_level": 6000,
+            "last_time": 0,
+            "state": 0
+          }
+        ],
+        "groups": [
+          {
+            "class_id": 1,
+            "pair_count": 3,
+            "pairs": [
+              {
+                "family": 1,
+                "subtype": 3
+              },
+              {
+                "family": 4,
+                "subtype": 6
+              },
+              {
+                "family": 19,
+                "subtype": 2
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "SNAC(01,07) class count larger than the data",
+      "packet": "RateInfo",
+      "hex": "000100070000000000020004000100000050000009c4000007d0000005dc0000032000000d69000017700000000000",
+      "error": true
+    },
+    {
+      "name": "SNAC(17,06) MD5 auth key request",
+      "packet": "AuthKeyRequest",
+      "hex": "00170006000000000000000100076578616d706c65004b0000005a0000",
+      "expect": {
+        "header": {
+          "family": 23,
+          "subtype": 6,
+          "has_version_info": 0,
+          "more_replies": 0,
+          "request_id": 0,
+          "version_info": []
+        },
+        "tlvs": [
+          {
+            "type": 1,
+            "length": 7,
+            "value": "6578616d706c65"
+          },
+          {
+            "type": 75,
+            "length": 0,
+            "value": ""
+          },
+          {
+            "type": 90,
+            "length": 0,
+            "value": ""
+          }
+        ]
+      }
+    },
+    {
+      "name": "the same request inside its FLAP frame",
+      "packet": "Flap",
+      "hex": "2a021234001d00170006000000000000000100076578616d706c65004b0000005a0000",
+      "expect": {
+        "channel": 2,
+        "sequence": 4660,
+        "length": 29,
+        "payload": "00170006000000000000000100076578616d706c65004b0000005a0000",
+        "valid": 1
+      }
+    },
+    {
+      "name": "SNAC(17,07) MD5 auth key response",
+      "packet": "AuthKeyResponse",
+      "hex": "00170007000000000000000a33343536373839303132",
+      "expect": {
+        "key_length": 10,
+        "key": "33343536373839303132"
+      }
+    },
+    {
+      "name": "SNAC(04,06) send an instant message",
+      "packet": "IcbmSend",
+      "hex": "0004000600000000001031323334353637380001076578616d706c650002001805010001010101000f0000000048656c6c6f2c2041494d2100060000",
+      "expect": {
+        "header": {
+          "family": 4,
+          "subtype": 6,
+          "has_version_info": 0,
+          "more_replies": 0,
+          "request_id": 16,
+          "version_info": []
+        },
+        "cookie": "3132333435363738",
+        "channel": 1,
+        "screen_name": "example",
+        "tlvs": [
+          {
+            "type": 2,
+            "length": 24,
+            "value": "05010001010101000f0000000048656c6c6f2c2041494d21"
+          },
+          {
+            "type": 6,
+            "length": 0,
+            "value": ""
+          }
+        ]
+      }
+    },
+    {
+      "name": "TLV 0x0002 message fragments",
+      "packet": "IcbmMessage",
+      "hex": "05010001010101000f0000000048656c6c6f2c2041494d21",
+      "expect": {
+        "fragments": [
+          {
+            "id": 5,
+            "version": 1,
+            "length": 1,
+            "data": "01"
+          },
+          {
+            "id": 1,
+            "version": 1,
+            "length": 15,
+            "data": "0000000048656c6c6f2c2041494d21"
+          }
+        ]
+      }
+    },
+    {
+      "name": "fragment 0x01 message text",
+      "packet": "MessageText",
+      "hex": "0000000048656c6c6f2c2041494d21",
+      "expect": {
+        "charset": 0,
+        "charsubset": 0,
+        "text": "48656c6c6f2c2041494d21"
+      }
+    },
+    {
+      "name": "SNAC(04,07) incoming instant message",
+      "packet": "IcbmReceive",
+      "hex": "0004000700000000002f313233343536373800010961696d62756464793100190002000100020010000300043b9aca000002001805010001010101000f0000000048656c6c6f2c2041494d21",
+      "expect": {
+        "header": {
+          "family": 4,
+          "subtype": 7,
+          "has_version_info": 0,
+          "more_replies": 0,
+          "request_id": 47,
+          "version_info": []
+        },
+        "channel": 1,
+        "screen_name": "aimbuddy1",
+        "warning_level": 25,
+        "warning_percent": 2.5,
+        "user_tlv_count": 2,
+        "user_tlvs": [
+          {
+            "type": 1,
+            "length": 2,
+            "value": "0010"
+          },
+          {
+            "type": 3,
+            "length": 4,
+            "value": "3b9aca00"
+          }
+        ],
+        "tlvs": [
+          {
+            "type": 2,
+            "length": 24,
+            "value": "05010001010101000f0000000048656c6c6f2c2041494d21"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SNAC(04,07) TLV running past the end",
+      "packet": "IcbmReceive",
+      "hex": "0004000700000000002f313233343536373800010961696d62756464793100190002000100020010000300043b9aca000002001805010001010101000f0000000048656c6c6f2c2041",
+      "error": true
+    },
+    {
+      "name": "SNAC(04,06) screen name longer than 255 bytes",
+      "packet": "IcbmSend",
+      "hex": "0004000600000000001031323334353637380001076578616d706c650002001805010001010101000f0000000048656c6c6f2c2041494d2100060000",
+      "set": {
+        "screen_name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "encode_error": true
+    },
+    {
+      "name": "SNAC(04,06) screen name length prefix past the end",
+      "packet": "IcbmSend",
+      "hex": "0004000600000000001031323334353637380001406578616d",
+      "error": true
+    },
+    {
+      "name": "SNAC more-replies flag (0x0001)",
+      "packet": "Snac",
+      "hex": "0013000600010000000500",
+      "expect": {
+        "header": {
+          "family": 19,
+          "subtype": 6,
+          "has_version_info": 0,
+          "more_replies": 1,
+          "request_id": 5,
+          "version_info": []
+        },
+        "body": "00"
+      }
+    }
+  ]
+}

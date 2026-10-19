@@ -1,0 +1,61 @@
+//! Decode a captured OSCAR (AIM) TCP stream with the generated Rust parser.
+//!
+//!     cargo run -- examples/oscar.packet -l rust -o examples/out
+//!     cp examples/oscar_demo.rs examples/out/ && cd examples/out
+//!     rustc --edition 2021 oscar_demo.rs && ./oscar_demo
+
+mod packets;
+
+use packets::*;
+
+const STREAM: &str = concat!(
+    "2a011f3a000400000001",
+    "2a021f3b0018000100030000000000000001000200030004000900130015",
+    "2a021f3c004c000400070000",
+    "0000002f313233343536373800010961696d6275646479310019000200010002",
+    "0010000300043b9aca00000200180501000101010100",
+    "0f0000000048656c6c6f2c2041494d21",
+);
+
+fn message_text(tlvs: &[Tlv]) -> Result<Option<String>, PbError> {
+    for tlv in tlvs.iter().filter(|t| t.r#type == 0x0002) {
+        for fragment in IcbmMessage::decode(&tlv.value)?.fragments {
+            if fragment.id == 0x01 {
+                let text = MessageText::decode(&fragment.data)?.text;
+                return Ok(Some(String::from_utf8_lossy(&text).into_owned()));
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn main() -> Result<(), PbError> {
+    let bytes: Vec<u8> = (0..STREAM.len() / 2)
+        .map(|i| u8::from_str_radix(&STREAM[2 * i..2 * i + 2], 16).unwrap())
+        .collect();
+
+    // FLAP frames follow each other on the TCP stream.
+    let mut reader = PbReader::new(&bytes);
+    while reader.remaining_bits() > 0 {
+        let frame = Flap::decode_from(&mut reader)?;
+        if frame.channel != 2 {
+            println!("channel {} frame, {} byte(s)", frame.channel, frame.length);
+            continue;
+        }
+        let header = SnacHeader::decode(&frame.payload)?;
+        match (header.family, header.subtype) {
+            (0x0001, 0x0003) => println!("server ready: {:x?}", ServerReady::decode(&frame.payload)?.families),
+            (0x0004, 0x0007) => {
+                let im = IcbmReceive::decode(&frame.payload)?;
+                println!(
+                    "message from {} ({}% warning): {}",
+                    im.screen_name,
+                    im.warning_percent,
+                    message_text(&im.tlvs)?.unwrap_or_default()
+                );
+            }
+            other => println!("SNAC {:04x?}", other),
+        }
+    }
+    Ok(())
+}

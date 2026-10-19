@@ -1,0 +1,141 @@
+// =====================================================================
+// P3 — the link protocol of the original America Online client
+// (AOL 1.x-9.x for Windows and Mac; OSCAR came later, for AIM/ICQ).
+//
+// A P3 connection is a stream of packets: an 8-byte header, the data,
+// and a carriage return. DATA packets carry a two-character "token"
+// naming the message, followed by an FDO91 atom stream (FDO is AOL's
+// form/display language). Everything is big-endian.
+//
+// The layout follows the open-source P3 client notaol
+// (https://github.com/chfoo/notaol) and its captured INIT packet.
+// See docs/p3.md for a walkthrough.
+// =====================================================================
+
+// ---------------------------------------------------------------------
+// Framing: any P3 packet
+// ---------------------------------------------------------------------
+packet P3Packet be {
+  sync uint8,               // always 0x5A ('Z')
+  crc uint16,               // CRC-16/ARC of everything from `length` up to the stop byte
+  length uint16,            // tx_seq + rx_seq + type + data, i.e. data bytes + 3
+  tx_seq uint8,             // sequence numbers run 0x10..0x7F and wrap to 0x10
+  rx_seq uint8,             // last sequence number received from the other side
+  kind bitfield uint8 {
+    always_set u1,          // the high bit of the type byte is always 1
+    type u7                 // see P3 packet types below
+  },
+  data bytes[length - 3],
+  stop uint8,               // always 0x0D ('\r')
+  calc valid uint8 = sync == 0x5a and stop == 0x0d and always_set == 1
+                     and type >= 0x20 and type <= 0x26 and length >= 3
+}
+
+// P3 packet types (the `type` member):
+//   0x20 DATA       numbered message carrying a token and FDO atoms
+//   0x21 SS         ask the peer for a status report (SSR)
+//   0x22 SSR        status report: lists messages to retransmit
+//   0x23 INIT       first packet sent by the client
+//   0x24 ACK        acknowledge / null message
+//   0x25 NAK        a damaged or out-of-order packet was received
+//   0x26 HEARTBEAT  keep-alive; answer with an ACK
+// Control packets (SS, SSR, ACK, NAK, HEARTBEAT) carry no data.
+
+// ---------------------------------------------------------------------
+// DATA packets (type 0x20): a token, then an FDO atom stream
+// ---------------------------------------------------------------------
+packet P3DataPacket be {
+  sync uint8,
+  crc uint16,
+  length uint16,
+  tx_seq uint8,
+  rx_seq uint8,
+  kind bitfield uint8 { always_set u1, type u7 },
+  token char[2],            // e.g. "Dd" (login), "SD" (go ahead after INIT), "AA" (chat)
+  atoms bytes[length - 5],  // FDO91 atom stream; see FdoStream
+  stop uint8
+}
+
+// The data of a DATA packet on its own.
+packet P3Message be {
+  token char[2],
+  atoms bytes[]
+}
+
+// ---------------------------------------------------------------------
+// INIT (type 0x23): the client describes itself
+// ---------------------------------------------------------------------
+// The 52-byte form seen in a captured AOL client session. Field names
+// follow notaol. Only platform, client version, session_flags, num_colors
+// and speed are confirmed by notaol's tests; the rest are its best guesses
+// (in the capture, horizontal_res/vertical_res do not hold a resolution).
+packet P3Init be {
+  platform uint8,           // 0x03 Windows, 0x0C Macintosh
+  client_major uint8,       // client internal version
+  client_minor uint8,
+  build_num uint8,
+  machine_memory uint8,
+  app_memory uint8,
+  pc_type uint16,
+  release_month uint8,
+  release_day uint8,
+  customer_class uint16,
+  timestamp uint32,         // update-disk (UDO) timestamp
+  dos_major uint8,
+  dos_minor uint8,
+  session_flags uint16,
+  video_type uint8,
+  cpu_type uint8,
+  media_type uint32,
+  windows_major uint8,
+  windows_minor uint8,
+  unknown1 uint16,
+  windows_mem_type uint8,
+  horizontal_res uint16,
+  vertical_res uint16,
+  num_colors uint16,
+  filler1 uint8,
+  region uint16,
+  language_1 uint16,
+  language_2 uint16,
+  language_3 uint16,
+  language_4 uint16,
+  unknown2 uint16,
+  speed uint16
+}
+
+// A complete INIT packet in one pass.
+packet P3InitPacket be {
+  sync uint8,
+  crc uint16,
+  length uint16,            // 55 for the 52-byte INIT data
+  tx_seq uint8,
+  rx_seq uint8,
+  kind bitfield uint8 { always_set u1, type u7 },
+  init P3Init,
+  stop uint8
+}
+
+// ---------------------------------------------------------------------
+// FDO91 atom streams (the data after a DATA packet's token)
+// ---------------------------------------------------------------------
+// Each atom starts with a byte holding a 3-bit compression style and a
+// 5-bit value. Style 0, the form clients send, is uncompressed:
+// protocol, atom number, argument length, argument. The compressed styles
+// 1-7 change the layout and are not modelled here; `uncompressed` flags
+// them so a caller can stop.
+packet FdoAtom be {
+  head bitfield uint8 {
+    style u3,
+    protocol u5             // atom protocol (0 uni, 1 man, 3 de, ...)
+  },
+  atom uint8,               // atom number within the protocol
+  arg_length uint8,
+  arg bytes[arg_length],
+  calc uncompressed uint8 = style == 0
+}
+
+packet FdoStream be {
+  stream_id uint16,
+  atoms FdoAtom[]
+}

@@ -1,0 +1,399 @@
+{
+  "spec": "../../examples/p3.packet",
+  "cases": [
+    {
+      "name": "captured INIT packet (framing)",
+      "packet": "P3Packet",
+      "hex": "5ab35f00377f7fa3039d116180000000050f00001fb4b53ec00014d1032000000000040a0000014b070504ffff0000000000fffec8f718000001b2070d",
+      "expect": {
+        "sync": 90,
+        "crc": 45919,
+        "length": 55,
+        "tx_seq": 127,
+        "rx_seq": 127,
+        "always_set": 1,
+        "type": 35,
+        "data": "039d116180000000050f00001fb4b53ec00014d1032000000000040a0000014b070504ffff0000000000fffec8f718000001b207",
+        "stop": 13,
+        "valid": 1
+      }
+    },
+    {
+      "name": "captured INIT packet (typed)",
+      "packet": "P3InitPacket",
+      "hex": "5ab35f00377f7fa3039d116180000000050f00001fb4b53ec00014d1032000000000040a0000014b070504ffff0000000000fffec8f718000001b2070d",
+      "expect": {
+        "crc": 45919,
+        "type": 35,
+        "init": {
+          "platform": 3,
+          "client_major": 157,
+          "client_minor": 17,
+          "build_num": 97,
+          "machine_memory": 128,
+          "app_memory": 0,
+          "pc_type": 0,
+          "release_month": 5,
+          "release_day": 15,
+          "customer_class": 0,
+          "timestamp": 531936574,
+          "dos_major": 192,
+          "dos_minor": 0,
+          "session_flags": 5329,
+          "video_type": 3,
+          "cpu_type": 32,
+          "media_type": 0,
+          "windows_major": 4,
+          "windows_minor": 10,
+          "unknown1": 0,
+          "windows_mem_type": 1,
+          "horizontal_res": 19207,
+          "vertical_res": 1284,
+          "num_colors": 65535,
+          "filler1": 0,
+          "region": 0,
+          "language_1": 0,
+          "language_2": 65534,
+          "language_3": 51447,
+          "language_4": 6144,
+          "unknown2": 1,
+          "speed": 45575
+        },
+        "stop": 13
+      }
+    },
+    {
+      "name": "captured INIT data",
+      "packet": "P3Init",
+      "hex": "039d116180000000050f00001fb4b53ec00014d1032000000000040a0000014b070504ffff0000000000fffec8f718000001b207",
+      "expect": {
+        "platform": 3,
+        "client_major": 157,
+        "client_minor": 17,
+        "build_num": 97,
+        "machine_memory": 128,
+        "app_memory": 0,
+        "pc_type": 0,
+        "release_month": 5,
+        "release_day": 15,
+        "customer_class": 0,
+        "timestamp": 531936574,
+        "dos_major": 192,
+        "dos_minor": 0,
+        "session_flags": 5329,
+        "video_type": 3,
+        "cpu_type": 32,
+        "media_type": 0,
+        "windows_major": 4,
+        "windows_minor": 10,
+        "unknown1": 0,
+        "windows_mem_type": 1,
+        "horizontal_res": 19207,
+        "vertical_res": 1284,
+        "num_colors": 65535,
+        "filler1": 0,
+        "region": 0,
+        "language_1": 0,
+        "language_2": 65534,
+        "language_3": 51447,
+        "language_4": 6144,
+        "unknown2": 1,
+        "speed": 45575
+      }
+    },
+    {
+      "name": "INIT data one byte short",
+      "packet": "P3Init",
+      "hex": "039d116180000000050f00001fb4b53ec00014d1032000000000040a0000014b070504ffff0000000000fffec8f718000001b2",
+      "error": true
+    },
+    {
+      "name": "ACK control packet",
+      "packet": "P3Packet",
+      "hex": "5a6a0c00031011a40d",
+      "expect": {
+        "length": 3,
+        "tx_seq": 16,
+        "rx_seq": 17,
+        "type": 36,
+        "data": "",
+        "valid": 1
+      }
+    },
+    {
+      "name": "HEARTBEAT control packet",
+      "packet": "P3Packet",
+      "hex": "5a26bc00037f10a60d",
+      "expect": {
+        "type": 38,
+        "valid": 1
+      }
+    },
+    {
+      "name": "NAK control packet",
+      "packet": "P3Packet",
+      "hex": "5a9a6c00031212a50d",
+      "expect": {
+        "type": 37,
+        "valid": 1
+      }
+    },
+    {
+      "name": "Dd login DATA packet (framing)",
+      "packet": "P3Packet",
+      "hex": "5a6a0a0058107fa044640016000100010a0400000001010b040000000503010a736f6d65677579202020011d00011d00010a040000000203010970617373776f726431011d00010a0400000010010b0400000001011d00011d000002000d",
+      "expect": {
+        "type": 32,
+        "length": 88,
+        "data": "44640016000100010a0400000001010b040000000503010a736f6d65677579202020011d00011d00010a040000000203010970617373776f726431011d00010a0400000010010b0400000001011d00011d00000200",
+        "valid": 1
+      }
+    },
+    {
+      "name": "Dd login DATA packet (typed)",
+      "packet": "P3DataPacket",
+      "hex": "5a6a0a0058107fa044640016000100010a0400000001010b040000000503010a736f6d65677579202020011d00011d00010a040000000203010970617373776f726431011d00010a0400000010010b0400000001011d00011d000002000d",
+      "expect": {
+        "type": 32,
+        "token": "Dd",
+        "atoms": "0016000100010a0400000001010b040000000503010a736f6d65677579202020011d00011d00010a040000000203010970617373776f726431011d00010a0400000010010b0400000001011d00011d00000200",
+        "stop": 13
+      }
+    },
+    {
+      "name": "Dd login message",
+      "packet": "P3Message",
+      "hex": "44640016000100010a0400000001010b040000000503010a736f6d65677579202020011d00011d00010a040000000203010970617373776f726431011d00010a0400000010010b0400000001011d00011d00000200",
+      "expect": {
+        "token": "Dd",
+        "atoms": "0016000100010a0400000001010b040000000503010a736f6d65677579202020011d00011d00010a040000000203010970617373776f726431011d00010a0400000010010b0400000001011d00011d00000200"
+      }
+    },
+    {
+      "name": "login FDO atom stream",
+      "packet": "FdoStream",
+      "hex": "0016000100010a0400000001010b040000000503010a736f6d65677579202020011d00011d00010a040000000203010970617373776f726431011d00010a0400000010010b0400000001011d00011d00000200",
+      "expect": {
+        "stream_id": 22,
+        "atoms": [
+          {
+            "style": 0,
+            "protocol": 0,
+            "atom": 1,
+            "arg_length": 0,
+            "arg": "",
+            "uncompressed": 1
+          },
+          {
+            "style": 0,
+            "protocol": 1,
+            "atom": 10,
+            "arg_length": 4,
+            "arg": "00000001",
+            "uncompressed": 1
+          },
+          {
+            "style": 0,
+            "protocol": 1,
+            "atom": 11,
+            "arg_length": 4,
+            "arg": "00000005",
+            "uncompressed": 1
+          },
+          {
+            "style": 0,
+            "protocol": 3,
+            "atom": 1,
+            "arg_length": 10,
+            "arg": "736f6d65677579202020",
+            "uncompressed": 1
+          },
+          {
+            "style": 0,
+            "protocol": 1,
+            "atom": 29,
+            "arg_length": 0,
+            "arg": "",
+            "uncompressed": 1
+          },
+          {
+            "style": 0,
+            "protocol": 1,
+            "atom": 29,
+            "arg_length": 0,
+            "arg": "",
+            "uncompressed": 1
+          },
+          {
+            "style": 0,
+            "protocol": 1,
+            "atom": 10,
+            "arg_length": 4,
+            "arg": "00000002",
+            "uncompressed": 1
+          },
+          {
+            "style": 0,
+            "protocol": 3,
+            "atom": 1,
+            "arg_length": 9,
+            "arg": "70617373776f726431",
+            "uncompressed": 1
+          },
+          {
+            "style": 0,
+            "protocol": 1,
+            "atom": 29,
+            "arg_length": 0,
+            "arg": "",
+            "uncompressed": 1
+          },
+          {
+            "style": 0,
+            "protocol": 1,
+            "atom": 10,
+            "arg_length": 4,
+            "arg": "00000010",
+            "uncompressed": 1
+          },
+          {
+            "style": 0,
+            "protocol": 1,
+            "atom": 11,
+            "arg_length": 4,
+            "arg": "00000001",
+            "uncompressed": 1
+          },
+          {
+            "style": 0,
+            "protocol": 1,
+            "atom": 29,
+            "arg_length": 0,
+            "arg": "",
+            "uncompressed": 1
+          },
+          {
+            "style": 0,
+            "protocol": 1,
+            "atom": 29,
+            "arg_length": 0,
+            "arg": "",
+            "uncompressed": 1
+          },
+          {
+            "style": 0,
+            "protocol": 0,
+            "atom": 2,
+            "arg_length": 0,
+            "arg": "",
+            "uncompressed": 1
+          }
+        ]
+      }
+    },
+    {
+      "name": "compressed FDO atom is flagged",
+      "packet": "FdoAtom",
+      "hex": "610500",
+      "expect": {
+        "style": 3,
+        "protocol": 1,
+        "uncompressed": 0
+      }
+    },
+    {
+      "name": "FDO atom argument past the end",
+      "packet": "FdoAtom",
+      "hex": "03010a736f6d65",
+      "error": true
+    },
+    {
+      "name": "SD go-ahead DATA packet without atoms",
+      "packet": "P3DataPacket",
+      "hex": "5ab7f900051010a053440d",
+      "expect": {
+        "token": "SD",
+        "atoms": "",
+        "length": 5
+      }
+    },
+    {
+      "name": "bad sync byte decodes but is flagged",
+      "packet": "P3Packet",
+      "hex": "5b6a0c00031011a40d",
+      "expect": {
+        "sync": 91,
+        "valid": 0
+      }
+    },
+    {
+      "name": "missing stop byte is flagged",
+      "packet": "P3Packet",
+      "hex": "5a6a0c00031011a40a",
+      "expect": {
+        "stop": 10,
+        "valid": 0
+      }
+    },
+    {
+      "name": "type byte without the high bit is flagged",
+      "packet": "P3Packet",
+      "hex": "5a6a0c00031011240d",
+      "expect": {
+        "always_set": 0,
+        "valid": 0
+      }
+    },
+    {
+      "name": "length below 3 is rejected",
+      "packet": "P3Packet",
+      "hex": "5a0000000210110d",
+      "error": true
+    },
+    {
+      "name": "length past the end is rejected",
+      "packet": "P3Packet",
+      "hex": "5a000000ff7f7fa044640d",
+      "error": true
+    },
+    {
+      "name": "truncated header",
+      "packet": "P3Packet",
+      "hex": "5ab35f00377f",
+      "error": true
+    },
+    {
+      "name": "DATA packet too short for its token",
+      "packet": "P3DataPacket",
+      "hex": "5affa100047f7fa0440d",
+      "error": true
+    },
+    {
+      "name": "length must match the data on encode",
+      "packet": "P3Packet",
+      "hex": "5a6a0a0058107fa044640016000100010a0400000001010b040000000503010a736f6d65677579202020011d00011d00010a040000000203010970617373776f726431011d00010a0400000010010b0400000001011d00011d000002000d",
+      "set": {
+        "length": 10
+      },
+      "encode_error": true
+    },
+    {
+      "name": "7-bit type field on encode",
+      "packet": "P3Packet",
+      "hex": "5a6a0c00031011a40d",
+      "set": {
+        "type": 128
+      },
+      "encode_error": true
+    },
+    {
+      "name": "token longer than two characters on encode",
+      "packet": "P3DataPacket",
+      "hex": "5a6a0a0058107fa044640016000100010a0400000001010b040000000503010a736f6d65677579202020011d00011d00010a040000000203010970617373776f726431011d00010a0400000010010b0400000001011d00011d000002000d",
+      "set": {
+        "token": "Ddd"
+      },
+      "encode_error": true
+    }
+  ]
+}

@@ -45,105 +45,168 @@ pub enum ExprNode {
     Or(Box<ExprNode>, Box<ExprNode>),
 }
 
+/// Source location of a declaration (byte offsets into the input).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Span {
+    pub start: usize,
+    pub end: usize,
+}
+
+/// A field's element type, as written in the source.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeNode {
-    Integer8(Option<ExprNode>),
-    UnsignedInteger8(Option<ExprNode>),
-    Integer16(Option<ExprNode>),
-    UnsignedInteger16(Option<ExprNode>),
-    Integer32(Option<ExprNode>),
-    UnsignedInteger32(Option<ExprNode>),
-    Integer64(Option<ExprNode>),
-    UnsignedInteger64(Option<ExprNode>),
-    Float32(Option<ExprNode>),
-    Float64(Option<ExprNode>),
-    MacAddress(Option<ExprNode>),
-    DateTime(Option<ExprNode>),
-    Bytes(Option<ExprNode>), // opaque blob
+    Integer8,
+    UnsignedInteger8,
+    Integer16,
+    UnsignedInteger16,
+    Integer32,
+    UnsignedInteger32,
+    Integer64,
+    UnsignedInteger64,
+    Float32,
+    Float64,
+    MacAddress,
+    DateTime,
+    Bytes, // opaque blob; element type is a byte
+    /// `char`: one 8-bit character. `char[n]` is a fixed-size, NUL-padded string.
+    Char,
+    /// `string[n]` (exactly n bytes) or `string` / `string[]` (rest of input).
+    Str,
+    /// NUL-terminated string.
+    CStr,
+    /// `string(uint8)`: a string preceded by its length in bytes.
+    PrefixedStr {
+        prefix: Box<TypeNode>,
+        endianness: Option<Endianness>,
+    },
+    /// Arbitrary-width integer: `u3`, `i12`, ...
+    Bits {
+        width: u32,
+        signed: bool,
+    },
+    /// Reference to another packet by name.
+    Packet(String),
+}
+
+/// Array length specifier on a declaration.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ArrayLength {
+    /// `[expr]`
+    Expr(ExprNode),
+    /// `[]` (or a bare `bytes`): everything up to the end of the input
+    Remaining,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeExpr {
     pub id: String,
     pub expr: TypeNode,
+    pub array: Option<ArrayLength>,
     pub endianness: Option<Endianness>,
+    /// `align N`: pad to a multiple of N bytes (from the packet start) first.
+    pub align: Option<u64>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BitOrder {
+    /// The first member occupies the most significant bits (network convention).
+    Msb,
+    /// The first member occupies the least significant bits (C compilers on x86).
+    Lsb,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BitfieldMember {
+    /// `_` marks explicit padding.
+    pub name: String,
+    pub width: u32,
+    pub signed: bool,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BitfieldExpr {
+    pub id: String,
+    /// Container type: a standard integer type or a `uN` type.
+    pub container: TypeNode,
+    pub endianness: Option<Endianness>,
+    pub order: BitOrder,
+    pub align: Option<u64>,
+    pub members: Vec<BitfieldMember>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CalculatedField {
     pub name: String,
-    pub data_type: String, // textual typename as written (e.g. "uint16")
+    pub data_type: TypeNode,
     pub expr: Box<ExprNode>,
+    pub span: Span,
+}
+
+/// One entry of a packet body, in source order.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PacketItem {
+    Field(TypeExpr),
+    Bitfield(BitfieldExpr),
+    Calculated(CalculatedField),
+    /// `align N` on its own: pad to a multiple of N bytes from the packet start.
+    Align(u64, Span),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PacketExpr {
     pub name: String,
-    pub fields: Vec<TypeExpr>,
-    pub calculated_fields: Vec<CalculatedField>,
+    pub items: Vec<PacketItem>,
     pub endianness: Option<Endianness>,
+    /// `packet P align N`: C-struct-like natural alignment, packed to N bytes.
+    pub align: Option<u64>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PacketExprList {
     pub packets: Vec<PacketExpr>,
+    /// Bits in a `word` (16 unless the file says `wordsize 32`).
+    pub word_size: u32,
 }
 
 impl TypeNode {
-    pub fn scalar_width_bytes(&self) -> usize {
-        match self {
-            TypeNode::UnsignedInteger8(_)  => 1,
-            TypeNode::Integer8(_)          => 1,
-            TypeNode::UnsignedInteger16(_) => 2,
-            TypeNode::Integer16(_)         => 2,
-            TypeNode::UnsignedInteger32(_) => 4,
-            TypeNode::Integer32(_)         => 4,
-            TypeNode::UnsignedInteger64(_) => 8,
-            TypeNode::Integer64(_)         => 8,
-            TypeNode::Float32(_)           => 4,
-            TypeNode::Float64(_)           => 8,
-            TypeNode::MacAddress(_)        => 6,
-            TypeNode::DateTime(_)          => 8,
-            TypeNode::Bytes(_)             => 1,
-        }
+    /// Width in bits of a single element, or None for packet references.
+    pub fn bit_width(&self) -> Option<u32> {
+        Some(match self {
+            TypeNode::UnsignedInteger8 | TypeNode::Integer8 | TypeNode::Bytes | TypeNode::Char => 8,
+            TypeNode::Str | TypeNode::CStr | TypeNode::PrefixedStr { .. } => 8,
+            TypeNode::UnsignedInteger16 | TypeNode::Integer16 => 16,
+            TypeNode::UnsignedInteger32 | TypeNode::Integer32 | TypeNode::Float32 => 32,
+            TypeNode::UnsignedInteger64 | TypeNode::Integer64 | TypeNode::Float64 | TypeNode::DateTime => 64,
+            TypeNode::MacAddress => 48,
+            TypeNode::Bits { width, .. } => *width,
+            TypeNode::Packet(_) => return None,
+        })
     }
 
-    pub fn get_type_length_bytes(&self) -> usize {
-        self.scalar_width_bytes()
-    }
-
-    pub fn get_length_bytes(&self) -> usize {
-        match self {
-            TypeNode::Bytes(len_expr_opt) => {
-                len_expr_opt
-                    .as_ref()
-                    .and_then(eval_len_count)
-                    .unwrap_or(0)
-            }
-
-            TypeNode::UnsignedInteger8(m)
-            | TypeNode::Integer8(m)
-            | TypeNode::UnsignedInteger16(m)
-            | TypeNode::Integer16(m)
-            | TypeNode::UnsignedInteger32(m)
-            | TypeNode::Integer32(m)
-            | TypeNode::UnsignedInteger64(m)
-            | TypeNode::Integer64(m)
-            | TypeNode::Float32(m)
-            | TypeNode::Float64(m)
-            | TypeNode::MacAddress(m)
-            | TypeNode::DateTime(m) => {
-                let elem = self.scalar_width_bytes();
-                let count = m.as_ref().and_then(eval_len_count).unwrap_or(1);
-                elem * count
-            }
-        }
+    /// (width, signed) for integer-like types.
+    pub fn integer_info(&self) -> Option<(u32, bool)> {
+        Some(match self {
+            TypeNode::UnsignedInteger8 | TypeNode::Bytes | TypeNode::Char => (8, false),
+            TypeNode::Integer8 => (8, true),
+            TypeNode::UnsignedInteger16 => (16, false),
+            TypeNode::Integer16 => (16, true),
+            TypeNode::UnsignedInteger32 => (32, false),
+            TypeNode::Integer32 => (32, true),
+            TypeNode::UnsignedInteger64 => (64, false),
+            TypeNode::Integer64 | TypeNode::DateTime => (64, true),
+            TypeNode::Bits { width, signed } => (*width, *signed),
+            _ => return None,
+        })
     }
 }
 
-
-fn eval_len_count(expr: &ExprNode) -> Option<usize> {
-    eval_i128(expr).and_then(|n| if n >= 0 { Some(n as usize) } else { None })
+/// Evaluate an expression that only involves constants.
+pub fn eval_const(expr: &ExprNode) -> Option<i128> {
+    eval_i128(expr)
 }
 
 fn eval_i128(e: &ExprNode) -> Option<i128> {
@@ -151,23 +214,25 @@ fn eval_i128(e: &ExprNode) -> Option<i128> {
 
     match e {
         UnsignedInteger64Value(u) => Some(*u as i128),
-        Integer64Value(i)         => Some(*i as i128),
-        Float64Value(f)           => Some(*f as i128), // truncation
-        StringValue(_)            => None,
+        Integer64Value(i) => Some(*i as i128),
+        Float64Value(f) => Some(*f as i128), // truncation
+        StringValue(_) => None,
 
-        ParenthesizedExpr(inner)  => eval_i128(inner),
+        ParenthesizedExpr(inner) => eval_i128(inner),
 
-        Plus(a, b)  => Some(eval_i128(a)? + eval_i128(b)?),
+        Plus(a, b) => Some(eval_i128(a)? + eval_i128(b)?),
         Minus(a, b) => Some(eval_i128(a)? - eval_i128(b)?),
-        Mult(a, b)  => Some(eval_i128(a)? * eval_i128(b)?),
-        Div(a, b)   => {
+        Mult(a, b) => Some(eval_i128(a)? * eval_i128(b)?),
+        Div(a, b) => {
             let rhs = eval_i128(b)?;
             if rhs == 0 { None } else { Some(eval_i128(a)? / rhs) }
         }
-        Pow(a, b)   => {
+        Pow(a, b) => {
             let base = eval_i128(a)?;
-            let exp  = eval_i128(b)?;
-            if exp < 0 { return None; }
+            let exp = eval_i128(b)?;
+            if exp < 0 {
+                return None;
+            }
             Some(ipow_i128(base, exp as u32)?)
         }
 
@@ -177,21 +242,18 @@ fn eval_i128(e: &ExprNode) -> Option<i128> {
         }
 
         // booleans as integers (rarely needed directly, but helpful for guards)
-        Gt(a, b)      => Some((eval_i128(a)? >  eval_i128(b)?) as i128),
-        Gte(a, b)     => Some((eval_i128(a)? >= eval_i128(b)?) as i128),
-        Lt(a, b)      => Some((eval_i128(a)? <  eval_i128(b)?) as i128),
-        Lte(a, b)     => Some((eval_i128(a)? <= eval_i128(b)?) as i128),
-        Equals(a, b)  => Some((eval_i128(a)? == eval_i128(b)?) as i128),
-        NotEquals(a,b)=> Some((eval_i128(a)? != eval_i128(b)?) as i128),
+        Gt(a, b) => Some((eval_i128(a)? > eval_i128(b)?) as i128),
+        Gte(a, b) => Some((eval_i128(a)? >= eval_i128(b)?) as i128),
+        Lt(a, b) => Some((eval_i128(a)? < eval_i128(b)?) as i128),
+        Lte(a, b) => Some((eval_i128(a)? <= eval_i128(b)?) as i128),
+        Equals(a, b) => Some((eval_i128(a)? == eval_i128(b)?) as i128),
+        NotEquals(a, b) => Some((eval_i128(a)? != eval_i128(b)?) as i128),
 
-        And(a, b)     => Some((eval_bool(a)? && eval_bool(b)?) as i128),
-        Or(a, b)      => Some((eval_bool(a)? || eval_bool(b)?) as i128),
+        And(a, b) => Some((eval_bool(a)? && eval_bool(b)?) as i128),
+        Or(a, b) => Some((eval_bool(a)? || eval_bool(b)?) as i128),
 
         // Non-constant constructs we cannot resolve here (need runtime context):
-        ValueReference(_, _) |
-        ActivationRecord(_, _) |
-        AggregateSum(_) |
-        AggregateProduct(_) => None,
+        ValueReference(_, _) | ActivationRecord(_, _) | AggregateSum(_) | AggregateProduct(_) => None,
 
         NoExpr => None,
     }
@@ -200,19 +262,17 @@ fn eval_i128(e: &ExprNode) -> Option<i128> {
 fn eval_bool(e: &ExprNode) -> Option<bool> {
     use ExprNode::*;
     match e {
-        Gt(a, b)      => Some(eval_i128(a)? >  eval_i128(b)?),
-        Gte(a, b)     => Some(eval_i128(a)? >= eval_i128(b)?),
-        Lt(a, b)      => Some(eval_i128(a)? <  eval_i128(b)?),
-        Lte(a, b)     => Some(eval_i128(a)? <= eval_i128(b)?),
-        Equals(a, b)  => Some(eval_i128(a)? == eval_i128(b)?),
-        NotEquals(a,b)=> Some(eval_i128(a)? != eval_i128(b)?),
-        And(a, b)     => Some(eval_bool(a)? && eval_bool(b)?),
-        Or(a, b)      => Some(eval_bool(a)? || eval_bool(b)?),
+        Gt(a, b) => Some(eval_i128(a)? > eval_i128(b)?),
+        Gte(a, b) => Some(eval_i128(a)? >= eval_i128(b)?),
+        Lt(a, b) => Some(eval_i128(a)? < eval_i128(b)?),
+        Lte(a, b) => Some(eval_i128(a)? <= eval_i128(b)?),
+        Equals(a, b) => Some(eval_i128(a)? == eval_i128(b)?),
+        NotEquals(a, b) => Some(eval_i128(a)? != eval_i128(b)?),
+        And(a, b) => Some(eval_bool(a)? && eval_bool(b)?),
+        Or(a, b) => Some(eval_bool(a)? || eval_bool(b)?),
         ParenthesizedExpr(inner) => eval_bool(inner),
         // allow numeric-as-bool (nonzero -> true) if it's a pure constant
-        UnsignedInteger64Value(_) |
-        Integer64Value(_) |
-        Float64Value(_) => Some(eval_i128(e)? != 0),
+        UnsignedInteger64Value(_) | Integer64Value(_) | Float64Value(_) => Some(eval_i128(e)? != 0),
         _ => None,
     }
 }

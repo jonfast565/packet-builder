@@ -1,0 +1,174 @@
+{
+  "spec": "../../examples/network.packet",
+  "cases": [
+    {
+      "name": "IPv4 header (Wikipedia checksum example)",
+      "packet": "Ipv4",
+      "hex": "45000073000040004011b861c0a80001c0a800c7",
+      "expect": {
+        "version": 4,
+        "ihl": 5,
+        "dscp": 0,
+        "ecn": 0,
+        "total_length": 115,
+        "identification": 0,
+        "dont_fragment": 1,
+        "more_fragments": 0,
+        "fragment_offset": 0,
+        "ttl": 64,
+        "protocol": 17,
+        "checksum": 47201,
+        "source": "c0a80001",
+        "destination": "c0a800c7",
+        "options": "",
+        "header_length": 20,
+        "payload_length": 95
+      }
+    },
+    {
+      "name": "IPv4 fragment with an option and odd bit fields",
+      "packet": "Ipv4",
+      "hex": "46b90020beef20b9030600000a0000010a00000294040000",
+      "expect": {
+        "version": 4,
+        "ihl": 6,
+        "dscp": 46,
+        "ecn": 1,
+        "dont_fragment": 0,
+        "more_fragments": 1,
+        "fragment_offset": 185,
+        "options": "94040000",
+        "header_length": 24,
+        "payload_length": 8
+      }
+    },
+    {
+      "name": "IPv4 with ihl < 5 is rejected",
+      "packet": "Ipv4",
+      "hex": "44000073000040004011b861c0a80001c0a800c7",
+      "error": true
+    },
+    {
+      "name": "IPv4 13-bit fragment offset overflow on encode",
+      "packet": "Ipv4",
+      "hex": "45000073000040004011b861c0a80001c0a800c7",
+      "set": {
+        "fragment_offset": 8192
+      },
+      "encode_error": true
+    },
+    {
+      "name": "IPv4 4-bit version overflow on encode",
+      "packet": "Ipv4",
+      "hex": "45000073000040004011b861c0a80001c0a800c7",
+      "set": {
+        "version": 16
+      },
+      "encode_error": true
+    },
+    {
+      "name": "TCP SYN with MSS option",
+      "packet": "Tcp",
+      "hex": "c001005012345678000000006002faf01c460000020405b4",
+      "expect": {
+        "source_port": 49153,
+        "destination_port": 80,
+        "sequence": 305419896,
+        "acknowledgment": 0,
+        "data_offset": 6,
+        "ns": 0,
+        "cwr": 0,
+        "ece": 0,
+        "urg": 0,
+        "ack": 0,
+        "psh": 0,
+        "rst": 0,
+        "syn": 1,
+        "fin": 0,
+        "window": 64240,
+        "options": "020405b4"
+      }
+    },
+    {
+      "name": "TCP SYN-ACK with the NS bit",
+      "packet": "Tcp",
+      "hex": "0050c001abcdef01123456795112ffff00000000",
+      "expect": {
+        "data_offset": 5,
+        "ns": 1,
+        "ack": 1,
+        "syn": 1,
+        "fin": 0,
+        "options": ""
+      }
+    },
+    {
+      "name": "UDP datagram carrying a DNS query",
+      "packet": "Udp",
+      "hex": "cf080035001400001a2b01000001000000000000",
+      "expect": {
+        "source_port": 53000,
+        "destination_port": 53,
+        "length": 20,
+        "payload": "1a2b01000001000000000000"
+      }
+    },
+    {
+      "name": "UDP length shorter than its header",
+      "packet": "Udp",
+      "hex": "0001000200040000",
+      "error": true
+    },
+    {
+      "name": "DNS query header",
+      "packet": "DnsHeader",
+      "hex": "1a2b01000001000000000000",
+      "expect": {
+        "id": 6699,
+        "qr": 0,
+        "opcode": 0,
+        "aa": 0,
+        "tc": 0,
+        "rd": 1,
+        "ra": 0,
+        "z": 0,
+        "ad": 0,
+        "cd": 0,
+        "rcode": 0,
+        "question_count": 1
+      }
+    },
+    {
+      "name": "DNS NXDOMAIN response header",
+      "packet": "DnsHeader",
+      "hex": "1a2b81830001000000010000",
+      "expect": {
+        "qr": 1,
+        "rd": 1,
+        "ra": 1,
+        "rcode": 3,
+        "authority_count": 1
+      }
+    },
+    {
+      "name": "DNS opcode out of range on encode",
+      "packet": "DnsHeader",
+      "hex": "1a2b01000001000000000000",
+      "set": {
+        "opcode": 16
+      },
+      "encode_error": true
+    },
+    {
+      "name": "Ethernet II frame",
+      "packet": "Ethernet",
+      "hex": "ffffffffffff0242ac110002080045000073000040004011b861c0a80001c0a800c7",
+      "expect": {
+        "destination": "ffffffffffff",
+        "source": "0242ac110002",
+        "ethertype": 2048,
+        "payload": "45000073000040004011b861c0a80001c0a800c7"
+      }
+    }
+  ]
+}

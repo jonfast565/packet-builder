@@ -2,12 +2,21 @@
 name = "packet_builder"
 version = "0.1.1"
 edition = "2024"
+autoexamples = false
+
+[lib]
+name = "packet_builder"
+path = "src/lib.rs"
+
+[[bin]]
+name = "packet_builder"
+path = "src/main.rs"
 
 [dependencies]
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
 pest = "2.1.3"
 pest_derive = "2.1.0"
-tera = "1.15.0"
-lazy_static = "1.4.0"
 ariadne = { version = "0.4", features = ["auto-color"] }
+clap = { version = "4", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1.0"

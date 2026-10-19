@@ -1,0 +1,116 @@
+// Exercises every feature of the language. Used by tests/codegen.rs.
+
+// The example from the bit field request: an 8-bit container with a 1-bit
+// field, a 2-bit field, a 3-bit field and two bits of padding.
+packet Flags8 {
+  flags bitfield uint8 {
+    one u1,
+    two u2,
+    three u3
+  }
+}
+
+// Same container with the first member in the least significant bit.
+packet Flags8Lsb {
+  flags bitfield uint8 lsb {
+    one u1,
+    two u2,
+    three u3
+  }
+}
+
+// Little-endian 16-bit container with signed members and explicit padding.
+packet Flags16 le {
+  ctl bitfield uint16 {
+    kind u4,
+    _ u2,
+    delta i5,
+    level u5
+  },
+  tail uint8
+}
+
+// Integers of arbitrary bit width packed back to back, crossing byte
+// boundaries, followed by a byte aligned field.
+packet BitStream be {
+  a u3,
+  b u7,
+  c i6,
+  d u13,
+  e u35,
+  _ u4,
+  f u24,
+  _ u4,
+  g u24 le,
+  h uint16
+}
+
+// Bit-sized array elements and a count taken from a bit-sized field.
+// u12[count * 2] always covers a whole number of bytes.
+packet BitArrays {
+  count u4,
+  nibbles u4[3],
+  values u12[count * 2],
+  signed i3[2],
+  _ u2
+}
+
+// Standard types, endianness overrides, arrays and calculated fields.
+packet Scalars le {
+  a int8,
+  b uint16 be,
+  c int32,
+  d uint64 be,
+  e float32,
+  f float64 be,
+  mac macaddress,
+  stamp datetime,
+  n uint8,
+  words uint16[n] be,
+  blob bytes[n * 2 - 1],
+  calc total uint32 = sumof words + 1,
+  calc big uint8 = when n > 2 then 1 otherwise 0,
+  calc half float64 = sqrt(e) / 2,
+  calc first uint16 = words[0],
+  calc missing uint16 = words[100],
+  calc ratio int16 = (c - 7) / 2,
+  calc capped uint8 = min(n, 3) * max(1, 2) ^ 2
+}
+
+// A length computed from a calculated field declared after its use.
+packet CalcLength be {
+  n uint8,
+  data bytes[size],
+  calc size uint16 = n * 2
+}
+
+// Nested packets, arrays of nested packets and a rest-of-input array.
+packet Item be {
+  id uint16,
+  len uint8,
+  value bytes[len]
+}
+
+packet Container be {
+  version u4,
+  count u4,
+  head Item,
+  items Item[count],
+  tail Item[]
+}
+
+// Field names that are keywords in some target languages.
+packet Keywords {
+  type uint8,
+  class uint8,
+  func uint8,
+  struct uint8,
+  default uint8,
+  string uint8
+}
+
+// A rest-of-input array of 16-bit words.
+packet Words be {
+  count uint8,
+  words uint16[]
+}
