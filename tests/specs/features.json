@@ -1,0 +1,69 @@
+{
+  "spec": "features.packet",
+  "cases": [
+    { "name": "flags8 example", "packet": "Flags8", "hex": "b0",
+      "expect": { "one": 1, "two": 1, "three": 4 } },
+    { "name": "flags8 all ones", "packet": "Flags8", "hex": "fc",
+      "expect": { "one": 1, "two": 3, "three": 7 } },
+    { "name": "flags8 padding is dropped", "packet": "Flags8", "hex": "b3",
+      "expect": { "one": 1, "two": 1, "three": 4 }, "encoded": "b0" },
+    { "name": "flags8 member out of range", "packet": "Flags8", "hex": "b0",
+      "set": { "two": 4 }, "encode_error": true },
+    { "name": "flags8 empty input", "packet": "Flags8", "hex": "", "error": true },
+
+    { "name": "flags8 lsb", "packet": "Flags8Lsb", "hex": "1d",
+      "expect": { "one": 1, "two": 2, "three": 3 } },
+
+    { "name": "flags16 le signed member", "packet": "Flags16", "hex": "a85207",
+      "expect": { "kind": 5, "delta": -11, "level": 8, "tail": 7 } },
+    { "name": "flags16 signed member out of range", "packet": "Flags16", "hex": "a85207",
+      "set": { "delta": 16 }, "encode_error": true },
+    { "name": "flags16 truncated", "packet": "Flags16", "hex": "a85c", "error": true },
+
+    { "name": "bit stream", "packet": "BitStream",
+      "hex": "b93dfa0400000000012345602143 65beef",
+      "expect": { "a": 5, "b": 100, "c": -3, "d": 8000, "e": 17179869184,
+                  "f": 1193046, "g": 6636321, "h": 48879 } },
+    { "name": "bit stream truncated mid-field", "packet": "BitStream", "hex": "b93dfa04", "error": true },
+    { "name": "bit stream value too wide", "packet": "BitStream",
+      "hex": "b93dfa0400000000012345602143 65beef", "set": { "a": 8 }, "encode_error": true },
+
+    { "name": "bit arrays", "packet": "BitArrays", "hex": "2123 456789abcdef cc",
+      "expect": { "count": 2, "nibbles": [1, 2, 3], "values": [1110, 1929, 2748, 3567], "signed": [-2, 3] } },
+    { "name": "bit arrays truncated", "packet": "BitArrays", "hex": "2123 456789abcd", "error": true },
+    { "name": "flags16 padding bits ignored", "packet": "Flags16", "hex": "a85e07",
+      "expect": { "kind": 5, "delta": -11, "level": 8 }, "encoded": "a85207" },
+
+    { "name": "scalars", "packet": "Scalars",
+      "hex": "fe 1234 f9ffffff 0102030405060708 0000803f 3ff8000000000000 001122334455 0100000000000000 03 000a 000b 000c 0102030405",
+      "expect": { "a": -2, "b": 4660, "c": -7, "d": 72623859790382856, "e": 1.0, "f": 1.5,
+                  "mac": "001122334455", "stamp": 1, "n": 3, "words": [10, 11, 12],
+                  "blob": "0102030405", "total": 34, "big": 1, "half": 0.5, "first": 10,
+                  "missing": 0, "ratio": -7, "capped": 12 } },
+    { "name": "scalars length mismatch on encode", "packet": "Scalars",
+      "hex": "fe 1234 f9ffffff 0102030405060708 0000803f 3ff8000000000000 001122334455 0100000000000000 03 000a 000b 000c 0102030405",
+      "set": { "n": 2 }, "encode_error": true },
+    { "name": "scalars array longer than input", "packet": "Scalars",
+      "hex": "fe 1234 f9ffffff 0102030405060708 0000803f 3ff8000000000000 001122334455 0100000000000000 ff 000a", "error": true },
+
+    { "name": "length from later calc", "packet": "CalcLength", "hex": "02 aabbccdd",
+      "expect": { "n": 2, "data": "aabbccdd", "size": 4 } },
+    { "name": "length from later calc, trailing data ignored", "packet": "CalcLength", "hex": "01 aabbccdd",
+      "expect": { "data": "aabb" }, "encoded": "01aabb" },
+
+    { "name": "nested", "packet": "Container",
+      "hex": "12 0001 02 abcd 0002 00 0003 01 ff 0004 01 ee 0005 00",
+      "expect": { "version": 1, "count": 2,
+                  "head": { "id": 1, "len": 2, "value": "abcd" },
+                  "items": [ { "id": 2, "len": 0, "value": "" }, { "id": 3, "len": 1, "value": "ff" } ],
+                  "tail": [ { "id": 4, "len": 1, "value": "ee" }, { "id": 5, "len": 0, "value": "" } ] } },
+    { "name": "nested with empty tail", "packet": "Container", "hex": "10 0001 00",
+      "expect": { "count": 0, "items": [], "tail": [] } },
+    { "name": "nested truncated inside array element", "packet": "Container",
+      "hex": "11 0001 00 0002 05 aa", "error": true },
+    { "name": "nested huge count", "packet": "Container", "hex": "1f 0001 00", "error": true },
+
+    { "name": "keywords as field names", "packet": "Keywords", "hex": "010203040506",
+      "expect": { "type": 1, "class": 2, "func": 3, "struct": 4, "default": 5, "string": 6 } }
+  ]
+}

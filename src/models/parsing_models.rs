@@ -45,43 +45,103 @@ pub enum ExprNode {
     Or(Box<ExprNode>, Box<ExprNode>),
 }
 
+/// Source location of a declaration (byte offsets into the input).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Span {
+    pub start: usize,
+    pub end: usize,
+}
+
+/// A field's element type, as written in the source.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeNode {
-    Integer8(Option<ExprNode>),
-    UnsignedInteger8(Option<ExprNode>),
-    Integer16(Option<ExprNode>),
-    UnsignedInteger16(Option<ExprNode>),
-    Integer32(Option<ExprNode>),
-    UnsignedInteger32(Option<ExprNode>),
-    Integer64(Option<ExprNode>),
-    UnsignedInteger64(Option<ExprNode>),
-    Float32(Option<ExprNode>),
-    Float64(Option<ExprNode>),
-    MacAddress(Option<ExprNode>),
-    DateTime(Option<ExprNode>),
-    Bytes(Option<ExprNode>), // opaque blob
+    Integer8,
+    UnsignedInteger8,
+    Integer16,
+    UnsignedInteger16,
+    Integer32,
+    UnsignedInteger32,
+    Integer64,
+    UnsignedInteger64,
+    Float32,
+    Float64,
+    MacAddress,
+    DateTime,
+    Bytes, // opaque blob; element type is a byte
+    /// Arbitrary-width integer: `u3`, `i12`, ...
+    Bits { width: u32, signed: bool },
+    /// Reference to another packet by name.
+    Packet(String),
+}
+
+/// Array length specifier on a declaration.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ArrayLength {
+    /// `[expr]`
+    Expr(ExprNode),
+    /// `[]` (or a bare `bytes`): everything up to the end of the input
+    Remaining,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeExpr {
     pub id: String,
     pub expr: TypeNode,
+    pub array: Option<ArrayLength>,
     pub endianness: Option<Endianness>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BitOrder {
+    /// The first member occupies the most significant bits (network convention).
+    Msb,
+    /// The first member occupies the least significant bits (C compilers on x86).
+    Lsb,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BitfieldMember {
+    /// `_` marks explicit padding.
+    pub name: String,
+    pub width: u32,
+    pub signed: bool,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BitfieldExpr {
+    pub id: String,
+    /// Container type: a standard integer type or a `uN` type.
+    pub container: TypeNode,
+    pub endianness: Option<Endianness>,
+    pub order: BitOrder,
+    pub members: Vec<BitfieldMember>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CalculatedField {
     pub name: String,
-    pub data_type: String, // textual typename as written (e.g. "uint16")
+    pub data_type: TypeNode,
     pub expr: Box<ExprNode>,
+    pub span: Span,
+}
+
+/// One entry of a packet body, in source order.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PacketItem {
+    Field(TypeExpr),
+    Bitfield(BitfieldExpr),
+    Calculated(CalculatedField),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PacketExpr {
     pub name: String,
-    pub fields: Vec<TypeExpr>,
-    pub calculated_fields: Vec<CalculatedField>,
+    pub items: Vec<PacketItem>,
     pub endianness: Option<Endianness>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -90,60 +150,42 @@ pub struct PacketExprList {
 }
 
 impl TypeNode {
-    pub fn scalar_width_bytes(&self) -> usize {
-        match self {
-            TypeNode::UnsignedInteger8(_)  => 1,
-            TypeNode::Integer8(_)          => 1,
-            TypeNode::UnsignedInteger16(_) => 2,
-            TypeNode::Integer16(_)         => 2,
-            TypeNode::UnsignedInteger32(_) => 4,
-            TypeNode::Integer32(_)         => 4,
-            TypeNode::UnsignedInteger64(_) => 8,
-            TypeNode::Integer64(_)         => 8,
-            TypeNode::Float32(_)           => 4,
-            TypeNode::Float64(_)           => 8,
-            TypeNode::MacAddress(_)        => 6,
-            TypeNode::DateTime(_)          => 8,
-            TypeNode::Bytes(_)             => 1,
-        }
+    /// Width in bits of a single element, or None for packet references.
+    pub fn bit_width(&self) -> Option<u32> {
+        Some(match self {
+            TypeNode::UnsignedInteger8 | TypeNode::Integer8 | TypeNode::Bytes => 8,
+            TypeNode::UnsignedInteger16 | TypeNode::Integer16 => 16,
+            TypeNode::UnsignedInteger32 | TypeNode::Integer32 | TypeNode::Float32 => 32,
+            TypeNode::UnsignedInteger64
+            | TypeNode::Integer64
+            | TypeNode::Float64
+            | TypeNode::DateTime => 64,
+            TypeNode::MacAddress => 48,
+            TypeNode::Bits { width, .. } => *width,
+            TypeNode::Packet(_) => return None,
+        })
     }
 
-    pub fn get_type_length_bytes(&self) -> usize {
-        self.scalar_width_bytes()
-    }
-
-    pub fn get_length_bytes(&self) -> usize {
-        match self {
-            TypeNode::Bytes(len_expr_opt) => {
-                len_expr_opt
-                    .as_ref()
-                    .and_then(eval_len_count)
-                    .unwrap_or(0)
-            }
-
-            TypeNode::UnsignedInteger8(m)
-            | TypeNode::Integer8(m)
-            | TypeNode::UnsignedInteger16(m)
-            | TypeNode::Integer16(m)
-            | TypeNode::UnsignedInteger32(m)
-            | TypeNode::Integer32(m)
-            | TypeNode::UnsignedInteger64(m)
-            | TypeNode::Integer64(m)
-            | TypeNode::Float32(m)
-            | TypeNode::Float64(m)
-            | TypeNode::MacAddress(m)
-            | TypeNode::DateTime(m) => {
-                let elem = self.scalar_width_bytes();
-                let count = m.as_ref().and_then(eval_len_count).unwrap_or(1);
-                elem * count
-            }
-        }
+    /// (width, signed) for integer-like types.
+    pub fn integer_info(&self) -> Option<(u32, bool)> {
+        Some(match self {
+            TypeNode::UnsignedInteger8 | TypeNode::Bytes => (8, false),
+            TypeNode::Integer8 => (8, true),
+            TypeNode::UnsignedInteger16 => (16, false),
+            TypeNode::Integer16 => (16, true),
+            TypeNode::UnsignedInteger32 => (32, false),
+            TypeNode::Integer32 => (32, true),
+            TypeNode::UnsignedInteger64 => (64, false),
+            TypeNode::Integer64 | TypeNode::DateTime => (64, true),
+            TypeNode::Bits { width, signed } => (*width, *signed),
+            _ => return None,
+        })
     }
 }
 
-
-fn eval_len_count(expr: &ExprNode) -> Option<usize> {
-    eval_i128(expr).and_then(|n| if n >= 0 { Some(n as usize) } else { None })
+/// Evaluate an expression that only involves constants.
+pub fn eval_const(expr: &ExprNode) -> Option<i128> {
+    eval_i128(expr)
 }
 
 fn eval_i128(e: &ExprNode) -> Option<i128> {

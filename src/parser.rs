@@ -14,7 +14,10 @@ use pest::iterators::Pair;
 use pest::Parser;
 use pest_derive::Parser;
 
-use crate::models::parsing_models::{CalculatedField, Endianness, ExprNode, PacketExpr, PacketExprList, TypeExpr, TypeNode};
+use crate::models::parsing_models::{
+    ArrayLength, BitOrder, BitfieldExpr, BitfieldMember, CalculatedField, Endianness, ExprNode,
+    PacketExpr, PacketExprList, PacketItem, Span, TypeExpr, TypeNode,
+};
 
 // ===============================
 // Pest Parser
@@ -28,8 +31,48 @@ pub struct PacketParser2;
 pub fn parse_file(input: &str) -> Result<PacketExprList, Error<Rule>> {
     let mut pairs = PacketParser2::parse(Rule::packets, input)?;
     let root = pairs.next().expect("packets rule must produce a pair");
+    check_literals(root.clone())?;
     let results = parse_packets(root);
     Ok(PacketExprList { packets: results })
+}
+
+/// Reject numeric literals and bit widths that do not fit, with a located error,
+/// so that the tree walk below can assume well-formed values.
+fn check_literals(pair: Pair<Rule>) -> Result<(), Error<Rule>> {
+    for p in pair.into_inner().flatten() {
+        let s = p.as_str();
+        let ok = match p.as_rule() {
+            Rule::numeric_constant => {
+                if let Some(rest) = s.strip_prefix("0x") {
+                    u64::from_str_radix(rest, 16).is_ok()
+                } else if let Some(rest) = s.strip_prefix("0b") {
+                    u64::from_str_radix(rest, 2).is_ok()
+                } else if s.contains('.') {
+                    s.parse::<f64>().is_ok()
+                } else {
+                    s.parse::<u64>().is_ok()
+                }
+            }
+            Rule::bit_type => matches!(s[1..].parse::<u32>(), Ok(w) if (1..=64).contains(&w)),
+            _ => true,
+        };
+        if !ok {
+            let message = match p.as_rule() {
+                Rule::bit_type => format!("bit width of `{}` must be between 1 and 64", s),
+                _ => format!("numeric literal `{}` does not fit in 64 bits", s),
+            };
+            return Err(Error::new_from_span(
+                pest::error::ErrorVariant::CustomError { message },
+                p.as_span(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn span_of(pair: &Pair<Rule>) -> Span {
+    let s = pair.as_span();
+    Span { start: s.start(), end: s.end() }
 }
 
 fn parse_packets(packets: Pair<Rule>) -> Vec<PacketExpr> {
@@ -45,8 +88,8 @@ fn parse_packets(packets: Pair<Rule>) -> Vec<PacketExpr> {
 }
 
 fn parse_packet(packet: Pair<Rule>) -> PacketExpr {
-    let mut type_rules = Vec::<TypeExpr>::new();
-    let mut calculated_fields = Vec::<CalculatedField>::new();
+    let span = span_of(&packet);
+    let mut items = Vec::<PacketItem>::new();
     let mut identifier = String::new();
     let mut packet_endianness: Option<Endianness> = None;
 
@@ -61,9 +104,12 @@ fn parse_packet(packet: Pair<Rule>) -> PacketExpr {
                     }
                     for elem in rule.into_inner() {
                         match elem.as_rule() {
-                            Rule::declaration => type_rules.push(parse_declaration(elem)),
+                            Rule::declaration => items.push(PacketItem::Field(parse_declaration(elem))),
+                            Rule::bitfield_declaration => {
+                                items.push(PacketItem::Bitfield(parse_bitfield(elem)))
+                            }
                             Rule::calculated_field => {
-                                calculated_fields.push(parse_calculated_field(elem))
+                                items.push(PacketItem::Calculated(parse_calculated_field(elem)))
                             }
                             _ => {}
                         }
@@ -76,43 +122,101 @@ fn parse_packet(packet: Pair<Rule>) -> PacketExpr {
 
     PacketExpr {
         name: identifier,
-        fields: type_rules,
-        calculated_fields,
+        items,
         endianness: packet_endianness,
+        span,
     }
 }
 
 fn parse_declaration(parser_rule: Pair<Rule>) -> TypeExpr {
+    let span = span_of(&parser_rule);
     let mut identifier = String::new();
-    let mut type_name = String::new();
-    let mut array_len_expr: Option<ExprNode> = None;
+    let mut type_node = TypeNode::UnsignedInteger8;
+    let mut array: Option<ArrayLength> = None;
     let mut field_endianness: Option<Endianness> = None;
 
     for field in parser_rule.into_inner() {
         match field.as_rule() {
             Rule::identifier => identifier = field.as_str().to_string(),
-            Rule::type_name => type_name = field.as_str().to_string(), // actual text like "uint16"
+            Rule::field_type => {
+                let inner = field.into_inner().next().expect("field_type has one child");
+                type_node = match inner.as_rule() {
+                    Rule::packet_type => TypeNode::Packet(inner.as_str().to_string()),
+                    _ => type_from_name(inner.as_str()),
+                };
+            }
             Rule::array_specifier => {
-                // array_specifier: "[" expr "]"
+                // array_specifier: "[" expr? "]"
+                array = Some(ArrayLength::Remaining);
                 for inner in field.into_inner() {
                     if inner.as_rule() == Rule::expr {
-                        array_len_expr = Some(parse_expr(inner));
+                        array = Some(ArrayLength::Expr(parse_expr(inner)));
                     }
                 }
             }
-            Rule::endianness => field_endianness = to_endianness_opt(field.as_str()),
+            Rule::endianness => field_endianness = to_endianness(field.as_str()),
             _ => {}
         }
     }
 
+    // A bare `bytes` field (no length) consumes the rest of the input.
+    if type_node == TypeNode::Bytes && array.is_none() {
+        array = Some(ArrayLength::Remaining);
+    }
+
     TypeExpr {
         id: identifier,
-        expr: expr_from_type_name(type_name, array_len_expr),
+        expr: type_node,
+        array,
         endianness: field_endianness,
+        span,
     }
 }
 
+fn parse_bitfield(parser_rule: Pair<Rule>) -> BitfieldExpr {
+    let span = span_of(&parser_rule);
+    let mut identifier = String::new();
+    let mut container = TypeNode::UnsignedInteger8;
+    let mut endianness = None;
+    let mut order = BitOrder::Msb;
+    let mut members = Vec::new();
+
+    for part in parser_rule.into_inner() {
+        match part.as_rule() {
+            Rule::identifier => identifier = part.as_str().to_string(),
+            Rule::type_name | Rule::bit_type => container = type_from_name(part.as_str()),
+            Rule::endianness => endianness = to_endianness(part.as_str()),
+            Rule::bit_order => {
+                order = if part.as_str() == "lsb" { BitOrder::Lsb } else { BitOrder::Msb }
+            }
+            Rule::bitfield_member => {
+                let mspan = span_of(&part);
+                let mut name = String::new();
+                let mut width = 0;
+                let mut signed = false;
+                for m in part.into_inner() {
+                    match m.as_rule() {
+                        Rule::identifier => name = m.as_str().to_string(),
+                        Rule::bit_type => {
+                            if let TypeNode::Bits { width: w, signed: s } = type_from_name(m.as_str()) {
+                                width = w;
+                                signed = s;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                members.push(BitfieldMember { name, width, signed, span: mspan });
+            }
+            _ => {}
+        }
+    }
+
+    BitfieldExpr { id: identifier, container, endianness, order, members, span }
+}
+
 fn parse_calculated_field(parser_rule: Pair<Rule>) -> CalculatedField {
+    let span = span_of(&parser_rule);
     let mut identifier = String::new();
     let mut type_name = String::new();
     let mut option_expr: Option<ExprNode> = None;
@@ -120,7 +224,7 @@ fn parse_calculated_field(parser_rule: Pair<Rule>) -> CalculatedField {
     for field in parser_rule.into_inner() {
         match field.as_rule() {
             Rule::identifier => identifier = field.as_str().to_string(),
-            Rule::type_name => type_name = field.as_str().to_string(),
+            Rule::type_name | Rule::bit_type => type_name = field.as_str().to_string(),
             Rule::expr => option_expr = Some(parse_expr(field)),
             _ => {}
         }
@@ -128,8 +232,9 @@ fn parse_calculated_field(parser_rule: Pair<Rule>) -> CalculatedField {
 
     CalculatedField {
         name: identifier,
-        data_type: type_name,
+        data_type: type_from_name(&type_name),
         expr: Box::new(option_expr.expect("calc field must have an expression")),
+        span,
     }
 }
 
@@ -186,7 +291,7 @@ fn parse_bool_and(parser_rule: Pair<Rule>) -> ExprNode {
 }
 
 fn parse_cmp(parser_rule: Pair<Rule>) -> ExprNode {
-    // cmp = { sum ~ ((gte|lte|gt|lt|eq|neq) ~ sum)* }
+    // cmp = { sum ~ ((neq|gte|lte|gt|lt|eq) ~ sum)? }
     let mut terms = Vec::<ExprNode>::new();
     let mut ops = Vec::<Rule>::new();
 
@@ -448,22 +553,27 @@ fn parse_parameter_list(parser_rule: Pair<Rule>) -> Vec<Box<ExprNode>> {
 // Type mapping
 // ===============================
 
-fn expr_from_type_name(type_name: String, array_length: Option<ExprNode>) -> TypeNode {
-    match type_name.as_str() {
-        "int8" => TypeNode::Integer8(array_length),
-        "uint8" => TypeNode::UnsignedInteger8(array_length),
-        "int16" => TypeNode::Integer16(array_length),
-        "uint16" => TypeNode::UnsignedInteger16(array_length),
-        "int32" => TypeNode::Integer32(array_length),
-        "uint32" => TypeNode::UnsignedInteger32(array_length),
-        "int64" => TypeNode::Integer64(array_length),
-        "uint64" => TypeNode::UnsignedInteger64(array_length),
-        "float32" => TypeNode::Float32(array_length),
-        "float64" => TypeNode::Float64(array_length),
-        "macaddress" => TypeNode::MacAddress(array_length),
-        "datetime" => TypeNode::DateTime(array_length),
-        "bytes" => TypeNode::Bytes(array_length),
-        _ => panic!("Not a supported type: {}", type_name),
+fn type_from_name(type_name: &str) -> TypeNode {
+    match type_name {
+        "int8" => TypeNode::Integer8,
+        "uint8" => TypeNode::UnsignedInteger8,
+        "int16" => TypeNode::Integer16,
+        "uint16" => TypeNode::UnsignedInteger16,
+        "int32" => TypeNode::Integer32,
+        "uint32" => TypeNode::UnsignedInteger32,
+        "int64" => TypeNode::Integer64,
+        "uint64" => TypeNode::UnsignedInteger64,
+        "float32" => TypeNode::Float32,
+        "float64" => TypeNode::Float64,
+        "macaddress" => TypeNode::MacAddress,
+        "datetime" => TypeNode::DateTime,
+        "bytes" => TypeNode::Bytes,
+        other => {
+            // bit_type: validated by check_literals
+            let signed = other.starts_with('i');
+            let width = other[1..].parse::<u32>().expect("bit width validated earlier");
+            TypeNode::Bits { width, signed }
+        }
     }
 }
 
@@ -477,9 +587,6 @@ fn to_endianness(s: &str) -> Option<Endianness> {
         "be" => Some(Endianness::Be),
         _ => None,
     }
-}
-fn to_endianness_opt(s: &str) -> Option<Endianness> {
-    to_endianness(s)
 }
 
 /// Generic left-fold builder for expression sequences.
