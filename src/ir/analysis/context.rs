@@ -2,10 +2,10 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::ast::{PacketExpr, Span};
 use crate::errors::Diagnostic;
 use crate::ir::expr::TExpr;
 use crate::ir::model::{Member, MemberKind, Packet, Step, ValueType};
-use crate::models::parsing_models::{PacketExpr, Span};
 
 pub(super) struct Ctx<'a> {
     pub packet: &'a PacketExpr,

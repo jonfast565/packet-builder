@@ -12,7 +12,7 @@ source ──parser──▶ PacketExprList ──ir::analyze──▶ ir::Modul
 | path | role |
 |------|------|
 | `src/parser/` | pest grammar (`grammar.pest`) → parse tree. `literals` validates numbers first; `items` (`TreeBuilder`) builds packets; `expr` parses expressions; `types` maps type names. |
-| `src/models/` | parse-tree types (`TypeNode`, `ExprNode`, `PacketExpr`, ...). |
+| `src/ast.rs` | parse-tree types (`TypeNode`, `ExprNode`, `PacketExpr`, ...). |
 | `src/ir/model.rs` | the validated model every backend consumes: `Packet`, `Member`, `ValueType`, `Codec`, `Step`. |
 | `src/ir/expr.rs` | type-checked expressions (`TExpr`). |
 | `src/ir/analysis/` | builds the model. `packet.rs` is a `PacketBuilder` that runs the passes in order (declare → counts → calcs → lay out → finish); `cursor.rs` tracks the bit offset; `typecheck.rs`, `codec.rs`, `context.rs`, `types.rs` hold the rest. |

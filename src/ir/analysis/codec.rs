@@ -3,9 +3,9 @@
 use super::context::Ctx;
 use super::cursor::Align;
 use super::types::type_label;
+use crate::ast::{Endianness, Span, TypeExpr, TypeNode};
 use crate::errors::Diagnostic;
 use crate::ir::model::{Codec, StrMode};
-use crate::models::parsing_models::{Endianness, Span, TypeExpr, TypeNode};
 
 impl<'a> Ctx<'a> {
     pub fn codec_for(

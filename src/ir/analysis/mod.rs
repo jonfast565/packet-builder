@@ -17,8 +17,8 @@ mod types;
 use std::collections::HashMap;
 
 use super::model::{Module, Packet};
+use crate::ast::{PacketExprList, PacketItem, TypeNode};
 use crate::errors::Diagnostic;
-use crate::models::parsing_models::{PacketExprList, PacketItem, TypeNode};
 
 /// Type names a packet may not take.
 const BUILTIN: &[&str] = &[

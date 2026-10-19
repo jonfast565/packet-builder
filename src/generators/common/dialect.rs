@@ -4,8 +4,8 @@
 use std::marker::PhantomData;
 
 use super::expr::{ExprLang, Mode, emit_expr};
+use crate::ast::Endianness;
 use crate::ir::{Member, Packet, TExpr};
-use crate::models::parsing_models::Endianness;
 
 /// Spelling rules of a target language. Each backend has one zero-sized
 /// marker type implementing this; [`Scope`] is generic over it.

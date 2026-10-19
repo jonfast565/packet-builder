@@ -2,8 +2,8 @@
 
 use std::collections::HashMap;
 
+use crate::ast::{TypeExpr, TypeNode};
 use crate::ir::model::{Packet, ValueType};
-use crate::models::parsing_models::{TypeExpr, TypeNode};
 
 pub(super) fn value_type(t: &TypeNode) -> ValueType {
     match t {

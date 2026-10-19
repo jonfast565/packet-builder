@@ -1,3 +1,5 @@
+//! The parse tree produced by [`crate::parser`] and consumed by [`crate::ir::analyze`].
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Endianness {
     Le,
@@ -8,7 +10,6 @@ pub enum Endianness {
 pub enum ExprNode {
     NoExpr,
     UnsignedInteger64Value(u64),
-    Integer64Value(i64),
     Float64Value(f64),
     StringValue(String),
 
@@ -16,9 +17,8 @@ pub enum ExprNode {
     ValueReference(String, Option<Box<ExprNode>>),
 
     // function call: name(args...)
-    ActivationRecord(String, Vec<Box<ExprNode>>),
+    Call(String, Vec<ExprNode>),
 
-    ParenthesizedExpr(Box<ExprNode>),
     GuardExpression(Box<ExprNode>, Box<ExprNode>, Box<ExprNode>), // when cond then a otherwise b
 
     // aggregates: sumof foo / productof bar
@@ -202,91 +202,4 @@ impl TypeNode {
             _ => return None,
         })
     }
-}
-
-/// Evaluate an expression that only involves constants.
-pub fn eval_const(expr: &ExprNode) -> Option<i128> {
-    eval_i128(expr)
-}
-
-fn eval_i128(e: &ExprNode) -> Option<i128> {
-    use ExprNode::*;
-
-    match e {
-        UnsignedInteger64Value(u) => Some(*u as i128),
-        Integer64Value(i) => Some(*i as i128),
-        Float64Value(f) => Some(*f as i128), // truncation
-        StringValue(_) => None,
-
-        ParenthesizedExpr(inner) => eval_i128(inner),
-
-        Plus(a, b) => Some(eval_i128(a)? + eval_i128(b)?),
-        Minus(a, b) => Some(eval_i128(a)? - eval_i128(b)?),
-        Mult(a, b) => Some(eval_i128(a)? * eval_i128(b)?),
-        Div(a, b) => {
-            let rhs = eval_i128(b)?;
-            if rhs == 0 { None } else { Some(eval_i128(a)? / rhs) }
-        }
-        Pow(a, b) => {
-            let base = eval_i128(a)?;
-            let exp = eval_i128(b)?;
-            if exp < 0 {
-                return None;
-            }
-            Some(ipow_i128(base, exp as u32)?)
-        }
-
-        GuardExpression(cond, then_e, else_e) => {
-            let c = eval_bool(cond)?;
-            if c { eval_i128(then_e) } else { eval_i128(else_e) }
-        }
-
-        // booleans as integers (rarely needed directly, but helpful for guards)
-        Gt(a, b) => Some((eval_i128(a)? > eval_i128(b)?) as i128),
-        Gte(a, b) => Some((eval_i128(a)? >= eval_i128(b)?) as i128),
-        Lt(a, b) => Some((eval_i128(a)? < eval_i128(b)?) as i128),
-        Lte(a, b) => Some((eval_i128(a)? <= eval_i128(b)?) as i128),
-        Equals(a, b) => Some((eval_i128(a)? == eval_i128(b)?) as i128),
-        NotEquals(a, b) => Some((eval_i128(a)? != eval_i128(b)?) as i128),
-
-        And(a, b) => Some((eval_bool(a)? && eval_bool(b)?) as i128),
-        Or(a, b) => Some((eval_bool(a)? || eval_bool(b)?) as i128),
-
-        // Non-constant constructs we cannot resolve here (need runtime context):
-        ValueReference(_, _) | ActivationRecord(_, _) | AggregateSum(_) | AggregateProduct(_) => None,
-
-        NoExpr => None,
-    }
-}
-
-fn eval_bool(e: &ExprNode) -> Option<bool> {
-    use ExprNode::*;
-    match e {
-        Gt(a, b) => Some(eval_i128(a)? > eval_i128(b)?),
-        Gte(a, b) => Some(eval_i128(a)? >= eval_i128(b)?),
-        Lt(a, b) => Some(eval_i128(a)? < eval_i128(b)?),
-        Lte(a, b) => Some(eval_i128(a)? <= eval_i128(b)?),
-        Equals(a, b) => Some(eval_i128(a)? == eval_i128(b)?),
-        NotEquals(a, b) => Some(eval_i128(a)? != eval_i128(b)?),
-        And(a, b) => Some(eval_bool(a)? && eval_bool(b)?),
-        Or(a, b) => Some(eval_bool(a)? || eval_bool(b)?),
-        ParenthesizedExpr(inner) => eval_bool(inner),
-        // allow numeric-as-bool (nonzero -> true) if it's a pure constant
-        UnsignedInteger64Value(_) | Integer64Value(_) | Float64Value(_) => Some(eval_i128(e)? != 0),
-        _ => None,
-    }
-}
-
-fn ipow_i128(mut base: i128, mut exp: u32) -> Option<i128> {
-    let mut acc: i128 = 1;
-    while exp > 0 {
-        if (exp & 1) == 1 {
-            acc = acc.checked_mul(base)?;
-        }
-        exp >>= 1;
-        if exp > 0 {
-            base = base.checked_mul(base)?;
-        }
-    }
-    Some(acc)
 }

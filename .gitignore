@@ -1,2 +1,4 @@
 /target
-/results/examples/out
+/results
+/examples/out
+.DS_Store

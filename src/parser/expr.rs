@@ -4,7 +4,7 @@
 use pest::iterators::Pair;
 
 use super::Rule;
-use crate::models::parsing_models::ExprNode;
+use crate::ast::ExprNode;
 
 pub(super) fn parse_expr(parser_rule: Pair<Rule>) -> ExprNode {
     // entry: expr -> bool_or
@@ -54,7 +54,7 @@ fn parse_cmp(parser_rule: Pair<Rule>) -> ExprNode {
     let mut terms = Vec::<ExprNode>::new();
     let mut ops = Vec::<Rule>::new();
 
-    for item in parser_rule.clone().into_inner() {
+    for item in parser_rule.into_inner() {
         match item.as_rule() {
             Rule::sum => terms.push(parse_sum(item)),
             Rule::gte | Rule::lte | Rule::gt | Rule::lt | Rule::eq | Rule::neq => ops.push(item.as_rule()),
@@ -63,10 +63,10 @@ fn parse_cmp(parser_rule: Pair<Rule>) -> ExprNode {
     }
 
     // If exactly one operator, build a binary comparison; otherwise just return first term
-    if terms.len() == 2 && ops.len() == 1 {
-        let lhs = Box::new(terms[0].clone());
-        let rhs = Box::new(terms[1].clone());
-        return match ops[0] {
+    if let ([_, _], [op]) = (&terms[..], &ops[..]) {
+        let rhs = Box::new(terms.pop().expect("two terms"));
+        let lhs = Box::new(terms.pop().expect("two terms"));
+        return match op {
             Rule::gt => ExprNode::Gt(lhs, rhs),
             Rule::gte => ExprNode::Gte(lhs, rhs),
             Rule::lt => ExprNode::Lt(lhs, rhs),
@@ -101,7 +101,7 @@ fn parse_power(parser_rule: Pair<Rule>) -> ExprNode {
     let mut prims = Vec::<ExprNode>::new();
     let mut has_pow = false;
 
-    for item in parser_rule.clone().into_inner() {
+    for item in parser_rule.into_inner() {
         match item.as_rule() {
             Rule::primary => prims.push(parse_primary(item)),
             Rule::pw => has_pow = true,
@@ -110,7 +110,8 @@ fn parse_power(parser_rule: Pair<Rule>) -> ExprNode {
     }
 
     if has_pow && prims.len() == 2 {
-        ExprNode::Pow(Box::new(prims[0].clone()), Box::new(prims[1].clone()))
+        let exponent = Box::new(prims.pop().expect("two primaries"));
+        ExprNode::Pow(Box::new(prims.pop().expect("two primaries")), exponent)
     } else {
         prims.into_iter().next().unwrap_or(ExprNode::NoExpr)
     }
@@ -153,7 +154,7 @@ fn parse_function_call(parser_rule: Pair<Rule>) -> ExprNode {
             _ => {}
         }
     }
-    ExprNode::ActivationRecord(fname, args)
+    ExprNode::Call(fname, args)
 }
 
 fn parse_accessor(parser_rule: Pair<Rule>) -> ExprNode {
@@ -184,8 +185,8 @@ fn parse_guard_expression(parser_rule: Pair<Rule>) -> ExprNode {
             exprs.push(parse_expr(value));
         }
     }
-    assert!(exprs.len() == 3, "guard_expression must have 3 sub-expressions");
-    ExprNode::GuardExpression(Box::new(exprs[0].clone()), Box::new(exprs[1].clone()), Box::new(exprs[2].clone()))
+    let [cond, then, other]: [ExprNode; 3] = exprs.try_into().expect("guard_expression must have 3 sub-expressions");
+    ExprNode::GuardExpression(Box::new(cond), Box::new(then), Box::new(other))
 }
 
 // ===============================
@@ -263,13 +264,12 @@ fn parse_direct_value_accessor(parser_rule: Pair<Rule>) -> ExprNode {
     ExprNode::ValueReference(identifier, array_index_expr)
 }
 
-#[allow(clippy::vec_box)] // matches ExprNode::ActivationRecord
-fn parse_parameter_list(parser_rule: Pair<Rule>) -> Vec<Box<ExprNode>> {
+fn parse_parameter_list(parser_rule: Pair<Rule>) -> Vec<ExprNode> {
     // lparen ~ (expr ~ (comma ~ expr)*)? ~ comma? ~ rparen
     let mut expression_list = Vec::new();
     for value in parser_rule.into_inner() {
         if value.as_rule() == Rule::expr {
-            expression_list.push(Box::new(parse_expr(value)));
+            expression_list.push(parse_expr(value));
         }
     }
     expression_list

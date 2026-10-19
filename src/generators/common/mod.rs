@@ -16,7 +16,7 @@ pub mod steps;
 
 pub use dialect::{Dialect, Scope};
 pub use expr::{ExprLang, Mode, cmp_symbol, emit_expr};
-pub use naming::{pascal_case, snake_case};
+pub use naming::pascal_case;
 pub use options::GenOptions;
 pub use out::Out;
 pub use steps::{PREFIX_LEN, StepEmitter, mask};

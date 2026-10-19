@@ -21,22 +21,3 @@ pub fn pascal_case(name: &str) -> String {
     }
     out
 }
-
-/// `PascalCase` / `camelCase` → `snake_case`.
-pub fn snake_case(name: &str) -> String {
-    let mut out = String::new();
-    let chars: Vec<char> = name.chars().collect();
-    for (i, c) in chars.iter().enumerate() {
-        if c.is_uppercase() {
-            let prev_lower = i > 0 && (chars[i - 1].is_lowercase() || chars[i - 1].is_ascii_digit());
-            let next_lower = i + 1 < chars.len() && chars[i + 1].is_lowercase();
-            if i > 0 && chars[i - 1] != '_' && (prev_lower || (next_lower && chars[i - 1].is_uppercase())) {
-                out.push('_');
-            }
-            out.extend(c.to_lowercase());
-        } else {
-            out.push(*c);
-        }
-    }
-    out
-}

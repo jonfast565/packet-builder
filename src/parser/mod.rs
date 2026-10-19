@@ -17,16 +17,16 @@ use pest::error::Error;
 use pest::iterators::Pair;
 use pest_derive::Parser;
 
-use crate::models::parsing_models::{PacketExprList, Span};
+use crate::ast::{PacketExprList, Span};
 
 #[derive(Parser)]
 #[grammar = "../grammar.pest"]
-pub struct PacketParser2;
+pub struct PacketParser;
 
 // Entry point
 #[allow(clippy::result_large_err)] // pest's error type; returned once per parse
 pub fn parse_file(input: &str) -> Result<PacketExprList, Error<Rule>> {
-    let mut pairs = PacketParser2::parse(Rule::packets, input)?;
+    let mut pairs = PacketParser::parse(Rule::packets, input)?;
     let root = pairs.next().expect("packets rule must produce a pair");
     let word_size = root
         .clone()

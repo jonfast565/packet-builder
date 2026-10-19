@@ -5,7 +5,7 @@ use pest::iterators::Pair;
 use super::expr::parse_expr;
 use super::types::{to_endianness, type_from_name};
 use super::{Rule, int_literal, span_of};
-use crate::models::parsing_models::{
+use crate::ast::{
     ArrayLength, BitOrder, BitfieldExpr, BitfieldMember, CalculatedField, Endianness, ExprNode, PacketExpr, PacketItem,
     TypeExpr, TypeNode,
 };

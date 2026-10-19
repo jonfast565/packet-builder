@@ -1,11 +1,11 @@
 //! packet-builder: a small language for describing binary packets, and code
 //! generators that turn it into parsers/serializers for several languages.
 
+pub mod ast;
 pub mod errors;
 pub mod generators;
 pub mod ir;
 mod language;
-pub mod models;
 pub mod parser;
 
 pub use errors::CompileError;

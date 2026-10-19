@@ -3,7 +3,7 @@ use std::fmt;
 use ariadne::{Color, Label, Report, ReportKind, Source};
 use pest::error::{Error, ErrorVariant, InputLocation};
 
-use crate::models::parsing_models::Span;
+use crate::ast::Span;
 use crate::parser::Rule;
 
 /// A semantic problem found after parsing (unknown field, misaligned type, ...).

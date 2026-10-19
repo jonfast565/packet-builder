@@ -1,8 +1,8 @@
 //! Python identifiers and type annotations.
 
+use crate::ast::Endianness;
 use crate::generators::common::Dialect;
 use crate::ir::{Member, Packet, ValueType};
-use crate::models::parsing_models::Endianness;
 
 const KEYWORDS: &[&str] = &[
     "False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del",

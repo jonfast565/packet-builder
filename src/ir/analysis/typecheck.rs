@@ -2,10 +2,10 @@
 
 use super::context::Ctx;
 use super::types::field_value_type;
+use crate::ast::{ExprNode, PacketItem, Span};
 use crate::errors::Diagnostic;
 use crate::ir::expr::{AggOp, ArithOp, CmpOp, Func, LogicOp, TExpr, Ty, coerce, numeric_join};
 use crate::ir::model::ValueType;
-use crate::models::parsing_models::{ExprNode, PacketItem, Span};
 
 impl<'a> Ctx<'a> {
     pub fn check_expr(&mut self, e: &ExprNode, span: Span) -> Option<TExpr> {
@@ -40,10 +40,8 @@ impl<'a> Ctx<'a> {
         Ok(match e {
             NoExpr => return Err("empty expression".into()),
             UnsignedInteger64Value(v) => TExpr::IntLit(*v as i64),
-            Integer64Value(v) => TExpr::IntLit(*v),
             Float64Value(v) => TExpr::FloatLit(*v),
             StringValue(_) => return Err("string literals are not supported in expressions".into()),
-            ParenthesizedExpr(x) => self.typecheck(x)?,
             ValueReference(name, index) => {
                 let idx = self.lookup(name)?;
                 let m = &self.members[idx];
@@ -77,7 +75,7 @@ impl<'a> Ctx<'a> {
                 let op = if matches!(e, AggregateSum(_)) { AggOp::Sum } else { AggOp::Product };
                 TExpr::Aggregate { member: idx, op, ty }
             }
-            ActivationRecord(fname, args) => {
+            Call(fname, args) => {
                 let args = args.iter().map(|a| self.typecheck(a)).collect::<Result<Vec<_>, _>>()?;
                 match fname.as_str() {
                     "sqrt" => {

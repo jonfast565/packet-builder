@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use super::expr::TExpr;
-use crate::models::parsing_models::Endianness;
+use crate::ast::Endianness;
 
 #[derive(Debug, Clone)]
 pub struct Module {

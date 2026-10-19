@@ -11,12 +11,10 @@ use std::collections::{HashMap, HashSet};
 use super::context::Ctx;
 use super::cursor::{Cursor, const_factor};
 use super::types::{field_value_type, natural_align, value_type};
+use crate::ast::{ArrayLength, BitOrder, BitfieldExpr, Endianness, PacketExpr, PacketItem, TypeExpr, TypeNode};
 use crate::errors::Diagnostic;
 use crate::ir::expr::{TExpr, Ty, coerce};
 use crate::ir::model::{BitPart, Codec, Count, MemberKind, Packet, Step, StrMode, ValueType};
-use crate::models::parsing_models::{
-    ArrayLength, BitOrder, BitfieldExpr, Endianness, PacketExpr, PacketItem, TypeExpr, TypeNode,
-};
 
 pub(super) struct PacketBuilder<'a> {
     p: &'a PacketExpr,

@@ -1,6 +1,6 @@
 //! Type names and byte order keywords.
 
-use crate::models::parsing_models::{Endianness, TypeNode};
+use crate::ast::{Endianness, TypeNode};
 
 /// "unsigned   char" -> "unsigned char"
 pub(super) fn normalize_type(name: &str) -> String {
