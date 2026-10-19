@@ -40,6 +40,11 @@ Real protocol descriptions live in [`examples/`](examples):
   protocol (FLAP framing, SNAC headers with their flag bits, TLV chains,
   instant messages, rate limits). [`docs/oscar.md`](docs/oscar.md) walks through
   decoding a captured AIM session and sending a reply.
+* [`examples/p3.packet`](examples/p3.packet): **P3**, the link protocol of
+  the original AOL client (framing with a bitfield type byte, INIT, DATA
+  packets with tokens, FDO91 atom streams).
+  [`docs/p3.md`](docs/p3.md) decodes a session that includes a captured INIT
+  packet, checks the CRCs and builds a reply.
 * [`examples/network.packet`](examples/network.packet): Ethernet, IPv4, TCP,
   UDP and DNS headers, all heavy users of sub-byte fields.
 
@@ -291,7 +296,7 @@ cargo test
   at every length and with random bit flips. Any outcome is accepted there as
   long as the decoder fails cleanly, which, with sanitizers in C and a
   leak-checking allocator in Zig, covers the error paths.
-* `tests/examples.rs` runs the OSCAR demo programs.
+* `tests/examples.rs` runs the OSCAR and P3 demo programs.
 
 Languages whose toolchain is missing are skipped with a message. Set
 `PB_REQUIRE_ALL=1` to turn a missing toolchain into a failure (CI does). Zig is

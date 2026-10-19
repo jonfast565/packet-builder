@@ -9,7 +9,11 @@ use std::process::Command;
 use packet_builder::{GenOptions, Language, generate};
 
 fn generated(lang: Language, dir: &std::path::Path) {
-    let src = fs::read_to_string("examples/oscar.packet").unwrap();
+    generated_from("examples/oscar.packet", lang, dir);
+}
+
+fn generated_from(spec: &str, lang: Language, dir: &std::path::Path) {
+    let src = fs::read_to_string(spec).unwrap();
     let code = generate(&src, lang, &GenOptions::default()).unwrap();
     fs::write(dir.join(format!("packets.{}", lang.extension())), code).unwrap();
 }
@@ -56,4 +60,50 @@ fn rust_oscar_demo() {
     let out = harness::run(&mut Command::new(dir.join("demo")), "oscar demo").unwrap();
     assert!(out.contains("message from aimbuddy1 (2.5% warning): Hello, AIM!"), "{}", out);
     assert!(out.contains("server ready: [1, 2, 3, 4, 9, 13, 15]"), "{}", out);
+}
+
+#[test]
+fn python_p3_demo() {
+    if harness::which("python3").is_none() {
+        eprintln!("skipping: python3 not found");
+        return;
+    }
+    let dir = harness::work_dir(Language::Python, "p3_demo");
+    generated_from("examples/p3.packet", Language::Python, &dir);
+    let out = harness::run(
+        Command::new("python3").arg(fs::canonicalize("examples/p3_demo.py").unwrap()).env("PYTHONPATH", &dir),
+        "p3_demo.py",
+    )
+    .unwrap();
+    assert!(out.contains("INIT from a Windows client, version 157.17, session flags 0x14d1"), "{}", out);
+    assert!(out.contains("login: screen name 'someguy', password *********"), "{}", out);
+    assert!(out.contains("ACK reply: 5afa0d00031010a40d"), "{}", out);
+}
+
+#[test]
+fn rust_p3_demo() {
+    if harness::which("rustc").is_none() {
+        eprintln!("skipping: rustc not found");
+        return;
+    }
+    let dir = harness::work_dir(Language::Rust, "p3_demo");
+    generated_from("examples/p3.packet", Language::Rust, &dir);
+    fs::copy("examples/p3_demo.rs", dir.join("p3_demo.rs")).unwrap();
+    harness::run(
+        Command::new("rustc").current_dir(&dir).args([
+            "--edition",
+            "2021",
+            "-D",
+            "warnings",
+            "p3_demo.rs",
+            "-o",
+            "demo",
+        ]),
+        "rustc",
+    )
+    .unwrap();
+    let out = harness::run(&mut Command::new(dir.join("demo")), "p3 demo").unwrap();
+    assert!(out.contains("type 0x23 tx 0x7f valid 1 crc ok true"), "{}", out);
+    assert!(out.contains("type 0x20 tx 0x10 valid 1 crc ok true"), "{}", out);
+    assert!(out.contains("DATA Dd: 14 atoms, screen name someguy"), "{}", out);
 }

@@ -21,7 +21,9 @@ fn assert_error(src: &str, needle: &str) {
 
 #[test]
 fn examples_compile() {
-    for file in ["examples/oscar.packet", "examples/network.packet", "tests/specs/features.packet"] {
+    for file in
+        ["examples/oscar.packet", "examples/p3.packet", "examples/network.packet", "tests/specs/features.packet"]
+    {
         let src = std::fs::read_to_string(file).unwrap();
         if let Err(e) = compile(&src) {
             panic!("{}:\n{}", file, e.render(file, &src));
