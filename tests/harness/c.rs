@@ -4,7 +4,7 @@ use std::path::Path;
 use std::process::Command;
 
 use packet_builder::Language;
-use packet_builder::generators::c_generator::{ident, len_ident};
+use packet_builder::generators::c::{ident, len_ident};
 use packet_builder::ir::{Member, Module, Packet, ValueType};
 
 use super::{Case, Target, packet, quote, run, set_literal, which};

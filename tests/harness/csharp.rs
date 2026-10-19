@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use packet_builder::generators::net_generator::{namespace, prop_name};
+use packet_builder::generators::csharp::{namespace, prop_name};
 use packet_builder::ir::{Member, Module, ValueType};
 use packet_builder::{GenOptions, Language};
 
