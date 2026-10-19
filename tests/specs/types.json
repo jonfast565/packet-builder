@@ -1,0 +1,300 @@
+{
+  "spec": "types.packet",
+  "cases": [
+    {
+      "name": "C and assembly type names",
+      "packet": "Aliases",
+      "hex": "41ff0102feff3412fffff9ffffff78563412ffffffff7f020104030201000000800807060504030201ffffffffffffffff",
+      "expect": {
+        "c": 65,
+        "uc": 255,
+        "uc2": 1,
+        "b": 2,
+        "s": -2,
+        "us": 4660,
+        "us2": 65535,
+        "i": -7,
+        "ui": 305419896,
+        "ui2": 4294967295,
+        "hw": 127,
+        "w": 258,
+        "dw": 16909060,
+        "dw2": 2147483648,
+        "qw": 72623859790382856,
+        "qw2": 18446744073709551615
+      }
+    },
+    {
+      "name": "every string kind",
+      "packet": "Strings",
+      "hex": "41494d0000000000036162630568656c6c6f030068c3a97a6967007461696c",
+      "expect": {
+        "name": "AIM",
+        "len": 3,
+        "exact": "abc",
+        "pascal": "hello",
+        "wide": "hé",
+        "c": "zig",
+        "rest": "tail"
+      }
+    },
+    {
+      "name": "char[8] without a terminator uses all 8 bytes",
+      "packet": "Strings",
+      "hex": "4142434445464748036162630568656c6c6f030068c3a97a6967007461696c",
+      "expect": {
+        "name": "ABCDEFGH"
+      }
+    },
+    {
+      "name": "char[8] ignores bytes after the first NUL",
+      "packet": "Strings",
+      "hex": "41420058595a0000036162630568656c6c6f030068c3a97a6967007461696c",
+      "expect": {
+        "name": "AB"
+      },
+      "encoded": "4142000000000000036162630568656c6c6f030068c3a97a6967007461696c"
+    },
+    {
+      "name": "empty strings",
+      "packet": "Strings",
+      "hex": "00000000000000000000000000",
+      "expect": {
+        "name": "",
+        "exact": "",
+        "pascal": "",
+        "wide": "",
+        "c": "",
+        "rest": ""
+      }
+    },
+    {
+      "name": "multi-byte UTF-8 everywhere",
+      "packet": "Strings",
+      "hex": "e697a5e69cac000002c3bc03e282ac030068c3a97a696700e29c93",
+      "expect": {
+        "name": "日本",
+        "exact": "ü",
+        "pascal": "€",
+        "rest": "✓"
+      }
+    },
+    {
+      "name": "invalid UTF-8 byte",
+      "packet": "Strings",
+      "hex": "41494d00000000000361ff630568656c6c6f030068c3a97a6967007461696c",
+      "error": true
+    },
+    {
+      "name": "overlong UTF-8 encoding",
+      "packet": "Strings",
+      "hex": "41494d000000000003c080410568656c6c6f030068c3a97a6967007461696c",
+      "error": true
+    },
+    {
+      "name": "UTF-8 encoded surrogate",
+      "packet": "Strings",
+      "hex": "41494d000000000003eda0800568656c6c6f030068c3a97a6967007461696c",
+      "error": true
+    },
+    {
+      "name": "truncated UTF-8 sequence",
+      "packet": "Strings",
+      "hex": "41494d00000000000361626302e282030068c3a97a6967007461696c",
+      "error": true
+    },
+    {
+      "name": "invalid UTF-8 after the NUL in char[8] is ignored",
+      "packet": "Strings",
+      "hex": "4f4b00ffffffffff036162630568656c6c6f030068c3a97a6967007461696c",
+      "expect": {
+        "name": "OK"
+      },
+      "encoded": "4f4b000000000000036162630568656c6c6f030068c3a97a6967007461696c"
+    },
+    {
+      "name": "cstring without a terminator",
+      "packet": "Strings",
+      "hex": "41494d0000000000036162630568656c6c6f030068c3a97a6967",
+      "error": true
+    },
+    {
+      "name": "length prefix beyond the data",
+      "packet": "Strings",
+      "hex": "41494d0000000000036162633068656c6c6f",
+      "error": true
+    },
+    {
+      "name": "name longer than char[8]",
+      "packet": "Strings",
+      "hex": "41494d0000000000036162630568656c6c6f030068c3a97a6967007461696c",
+      "set": {
+        "name": "TOOLONGNAME"
+      },
+      "encode_error": true
+    },
+    {
+      "name": "name that fits char[8] is padded",
+      "packet": "Strings",
+      "hex": "41494d0000000000036162630568656c6c6f030068c3a97a6967007461696c",
+      "set": {
+        "name": "AOL"
+      },
+      "encoded": "414f4c0000000000036162630568656c6c6f030068c3a97a6967007461696c"
+    },
+    {
+      "name": "exact string must match its length field",
+      "packet": "Strings",
+      "hex": "41494d0000000000036162630568656c6c6f030068c3a97a6967007461696c",
+      "set": {
+        "exact": "abcd"
+      },
+      "encode_error": true
+    },
+    {
+      "name": "prefix too small for the string",
+      "packet": "Strings",
+      "hex": "41494d0000000000036162630568656c6c6f030068c3a97a6967007461696c",
+      "set": {
+        "pascal": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      },
+      "encode_error": true
+    },
+    {
+      "name": "prefix written from the string length",
+      "packet": "Strings",
+      "hex": "41494d0000000000036162630568656c6c6f030068c3a97a6967007461696c",
+      "set": {
+        "pascal": "hi there"
+      },
+      "encoded": "41494d000000000003616263086869207468657265030068c3a97a6967007461696c"
+    },
+    {
+      "name": "field align and align directive",
+      "packet": "FieldAlign",
+      "hex": "010000000403020105000000000000000706",
+      "expect": {
+        "a": 1,
+        "b": 16909060,
+        "c": 5,
+        "d": 1543
+      }
+    },
+    {
+      "name": "padding content is ignored and re-encoded as zeros",
+      "packet": "FieldAlign",
+      "hex": "01eeeeee0403020105000000000000000706",
+      "expect": {
+        "b": 16909060
+      },
+      "encoded": "010000000403020105000000000000000706"
+    },
+    {
+      "name": "truncated in the padding",
+      "packet": "FieldAlign",
+      "hex": "010000000403020105000000",
+      "error": true
+    },
+    {
+      "name": "C struct layout",
+      "packet": "CStruct",
+      "hex": "0100000002000000030000000000000004000000000000000500000000000000",
+      "expect": {
+        "a": 1,
+        "b": 2,
+        "c": 3,
+        "d": 4,
+        "e": 5
+      }
+    },
+    {
+      "name": "C struct without its tail padding",
+      "packet": "CStruct",
+      "hex": "01000000020000000300000000000000040000000000000005",
+      "error": true
+    },
+    {
+      "name": "packed to 2 bytes",
+      "packet": "Packed2",
+      "hex": "0100020000000300",
+      "expect": {
+        "a": 1,
+        "b": 2,
+        "c": 3
+      }
+    },
+    {
+      "name": "nested struct alignment",
+      "packet": "Outer",
+      "hex": "090000000000000001000000020000000300000000000000040000000000000005000000000000000700000000000000",
+      "expect": {
+        "tag": 9,
+        "inner": {
+          "a": 1,
+          "e": 5
+        },
+        "n": 7
+      }
+    },
+    {
+      "name": "array of aligned structs",
+      "packet": "Items",
+      "hex": "020000000100020103000403",
+      "expect": {
+        "count": 2,
+        "items": [
+          {
+            "a": 1,
+            "b": 258
+          },
+          {
+            "a": 3,
+            "b": 772
+          }
+        ]
+      }
+    },
+    {
+      "name": "data-dependent padding (n=1)",
+      "packet": "Dyn",
+      "hex": "01aa000007000000686900000900",
+      "expect": {
+        "n": 1,
+        "data": "aa",
+        "v": 7,
+        "s": "hi",
+        "w": 9
+      }
+    },
+    {
+      "name": "data-dependent padding (n=2)",
+      "packet": "Dyn",
+      "hex": "02aabb0007000000780000000900",
+      "expect": {
+        "n": 2,
+        "data": "aabb",
+        "s": "x",
+        "w": 9
+      }
+    },
+    {
+      "name": "data-dependent padding (n=3, none needed)",
+      "packet": "Dyn",
+      "hex": "03aaaaaa07000000616263000900",
+      "expect": {
+        "n": 3,
+        "s": "abc",
+        "w": 9
+      }
+    },
+    {
+      "name": "align from mid-byte",
+      "packet": "BitAlign",
+      "hex": "a0ff",
+      "expect": {
+        "a": 5,
+        "b": 255
+      }
+    }
+  ]
+}

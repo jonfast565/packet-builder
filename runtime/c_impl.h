@@ -23,6 +23,7 @@ const char *pb_strerror(int rc) {
     case PB_ERR_LENGTH: return "invalid length";
     case PB_ERR_RANGE: return "value out of range";
     case PB_ERR_NOMEM: return "out of memory";
+    case PB_ERR_TEXT: return "invalid string";
     default: return "unknown error";
     }
 }
@@ -76,6 +77,75 @@ PB_FN int pb_skip_bits(pb_reader *r, size_t bits) {
     if (bits > pb_remaining_bits(r)) return PB_ERR_EOF;
     r->pos += bits;
     return PB_OK;
+}
+
+PB_FN size_t pb_reader_position(const pb_reader *r) { return r->pos; }
+PB_FN size_t pb_writer_position(const pb_writer *w) { return w->pos; }
+
+/* Padding needed after `offset` bits to reach a multiple of `unit` bits. */
+PB_FN size_t pb_pad(size_t offset, size_t unit) { return (unit - offset % unit) % unit; }
+
+/* Strict UTF-8 validation (no overlong forms, surrogates or values > U+10FFFF). */
+PB_FN int pb_utf8_valid(const uint8_t *s, size_t n) {
+    size_t i = 0;
+    while (i < n) {
+        uint8_t c = s[i];
+        size_t len, k;
+        uint32_t cp;
+        if (c < 0x80) { i++; continue; }
+        if (c >= 0xC2 && c <= 0xDF) { len = 2; cp = c & 0x1F; }
+        else if (c >= 0xE0 && c <= 0xEF) { len = 3; cp = c & 0x0F; }
+        else if (c >= 0xF0 && c <= 0xF4) { len = 4; cp = c & 0x07; }
+        else return 0;
+        if (i + len > n) return 0;
+        for (k = 1; k < len; k++) {
+            if ((s[i + k] & 0xC0) != 0x80) return 0;
+            cp = (cp << 6) | (s[i + k] & 0x3F);
+        }
+        if ((len == 3 && (cp < 0x800 || (cp >= 0xD800 && cp <= 0xDFFF))) || (len == 4 && (cp < 0x10000 || cp > 0x10FFFF)))
+            return 0;
+        i += len;
+    }
+    return 1;
+}
+
+/* Copy n bytes into a new NUL-terminated string (cut at the first NUL when
+ * until_nul is set) and validate it as UTF-8. */
+PB_FN int pb_text(const uint8_t *src, size_t n, int until_nul, char **out, size_t *out_len) {
+    char *s;
+    if (until_nul) {
+        const uint8_t *nul = n ? (const uint8_t *)memchr(src, 0, n) : NULL;
+        if (nul) n = (size_t)(nul - src);
+    }
+    if (!pb_utf8_valid(src, n)) return PB_ERR_TEXT;
+    s = (char *)malloc(n + 1);
+    if (!s) return PB_ERR_NOMEM;
+    if (n) memcpy(s, src, n);
+    s[n] = 0;
+    *out = s;
+    *out_len = n;
+    return PB_OK;
+}
+
+PB_FN int pb_read_text(pb_reader *r, size_t n, int until_nul, char **out, size_t *out_len) {
+    int rc;
+    if (n > pb_remaining_bits(r) / 8) return PB_ERR_EOF;
+    rc = pb_text(r->data + (r->pos >> 3), n, until_nul, out, out_len);
+    if (rc == PB_OK) r->pos += n * 8;
+    return rc;
+}
+
+/* A NUL-terminated string; the terminator is consumed. */
+PB_FN int pb_read_ctext(pb_reader *r, char **out, size_t *out_len) {
+    size_t start = r->pos >> 3;
+    const uint8_t *nul = start < r->len ? (const uint8_t *)memchr(r->data + start, 0, r->len - start) : NULL;
+    size_t n;
+    int rc;
+    if (!nul) return PB_ERR_EOF;
+    n = (size_t)(nul - (r->data + start));
+    rc = pb_text(r->data + start, n, 0, out, out_len);
+    if (rc == PB_OK) r->pos += (n + 1) * 8;
+    return rc;
 }
 
 /* Validate a decoded element count against the data that is left. */
@@ -165,6 +235,16 @@ PB_FN int pb_write_zero_bits(pb_writer *w, int64_t bits) {
     for (; bits > 32; bits -= 32) PB_CHECK(pb_write_bits(w, 0, 32));
     if (bits > 0) PB_CHECK(pb_write_bits(w, 0, (unsigned)bits));
     return PB_OK;
+}
+
+PB_FN int pb_check_fits(size_t len, int64_t size) {
+    return (size < 0 || (uint64_t)len > (uint64_t)size) ? PB_ERR_LENGTH : PB_OK;
+}
+
+PB_FN int pb_check_text(const char *s, size_t len, int allow_nul) {
+    if (len && !s) return PB_ERR_TEXT;
+    if (!allow_nul && len && memchr(s, 0, len)) return PB_ERR_TEXT;
+    return pb_utf8_valid((const uint8_t *)s, len) ? PB_OK : PB_ERR_TEXT;
 }
 
 PB_FN int pb_check_len(size_t actual, int64_t expected) {

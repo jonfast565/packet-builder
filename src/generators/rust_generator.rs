@@ -1,7 +1,7 @@
 //! Rust backend: one self-contained module, no external crates.
 
 use crate::generators::common::{ExprLang, GenOptions, Mode, Out, emit_expr, is_calc, mask};
-use crate::ir::{AggOp, ArithOp, BitPart, Codec, Count, Func, Module, Packet, Step, Ty, ValueType};
+use crate::ir::{AggOp, ArithOp, BitPart, Codec, Count, Func, Module, Packet, Step, StrMode, Ty, ValueType};
 use crate::models::parsing_models::Endianness;
 
 pub struct RustGenerator;
@@ -32,6 +32,7 @@ pub fn scalar_type(ty: &ValueType) -> String {
         ValueType::Float { width } => format!("f{}", width),
         ValueType::Mac => "[u8; 6]".into(),
         ValueType::Packet(n) => n.clone(),
+        ValueType::Str => "String".into(),
     }
 }
 
@@ -189,6 +190,7 @@ fn read_elem(codec: &Codec, ty: &ValueType) -> String {
         Codec::Float { endian, .. } => return format!("f64::from_bits(pb_r.read_uint(8, {})?)", little(endian)),
         Codec::Mac => return "pb_r.read_mac()?".into(),
         Codec::Packet(n) => return format!("{}::decode_from(pb_r)?", n),
+        Codec::Str(_) => unreachable!("strings are handled by emit_string_decode"),
     };
     if signed { format!("pb_sext({}, {}) as {}", raw, width, st) } else { format!("{} as {}", raw, st) }
 }
@@ -215,6 +217,7 @@ fn write_elem(out: &mut Out, codec: &Codec, ty: &ValueType, v: &str, field: &str
         Codec::Float { endian, .. } => out.line(format!("pb_w.write_uint({}.to_bits(), 8, {});", v, little(endian))),
         Codec::Mac => out.line(format!("pb_w.write_bytes(&{});", v)),
         Codec::Packet(_) => out.line(format!("{}.encode_to(pb_w)?;", v)),
+        Codec::Str(_) => unreachable!("strings are handled by emit_string_encode"),
     }
 }
 
@@ -240,6 +243,9 @@ fn emit_packet(out: &mut Out, p: &Packet) {
     out.line("");
     out.open(format!("pub fn decode_from(pb_r: &mut PbReader) -> Result<{}, PbError> {{", name));
     out.line(format!("let mut p = {}::default();", name));
+    if p.uses_align() {
+        out.line("let pb_start = pb_r.position_bits();");
+    }
     let lang = Lang { packet: p, mode: Mode::Decode };
     for step in &p.steps {
         emit_decode_step(out, p, &lang, step);
@@ -257,6 +263,9 @@ fn emit_packet(out: &mut Out, p: &Packet) {
     out.line("");
     out.open("pub fn encode_to(&self, pb_w: &mut PbWriter) -> Result<(), PbError> {");
     out.line("let p = self;");
+    if p.uses_align() {
+        out.line("let pb_start = pb_w.position_bits();");
+    }
     let lang = Lang { packet: p, mode: Mode::Encode };
     for &c in &p.encode_calcs {
         let m = &p.members[c];
@@ -285,6 +294,28 @@ fn emit_decode_step(out: &mut Out, p: &Packet, lang: &Lang, step: &Step) {
             if let crate::ir::MemberKind::Calculated(e) = &m.kind {
                 out.line(format!("p.{} = {};", ident(&m.name), store_value(emit_expr(lang, e), &m.ty)));
             }
+        }
+        Step::Align { bytes } => {
+            out.line(format!("pb_r.skip_bits(pb_pad(pb_r.position_bits() - pb_start, {}))?;", bytes * 8))
+        }
+        Step::Field { member: Some(mi), codec: Codec::Str(mode), array, .. } => {
+            let m = &p.members[*mi];
+            let raw = match (mode, array) {
+                (StrMode::CString, _) => format!("pb_r.read_cstring(\"{}\")?", m.name),
+                (StrMode::Prefixed { prefix, .. }, _) => {
+                    let len = read_elem(prefix, &ValueType::Int { width: 64, signed: false });
+                    format!(
+                        "{{ let pb_n = {} as i64; pb_r.read_bytes(pb_count(pb_n, 8, pb_r, \"{}\")?)? }}",
+                        len, m.name
+                    )
+                }
+                (_, Some(Count::Expr(e))) => {
+                    format!("pb_r.read_bytes(pb_count({}, 8, pb_r, \"{}\")?)?", emit_expr(lang, e), m.name)
+                }
+                _ => "pb_r.read_bytes(pb_r.remaining_bits() / 8)?".to_string(),
+            };
+            let raw = if *mode == StrMode::Padded { format!("pb_until_nul({})", raw) } else { raw };
+            out.line(format!("p.{} = pb_utf8({}, \"{}\")?;", ident(&m.name), raw, m.name));
         }
         Step::Field { member: None, codec, array, .. } => {
             // padding
@@ -371,6 +402,38 @@ fn emit_part_decode(out: &mut Out, p: &Packet, part: &BitPart) {
 fn emit_encode_step(out: &mut Out, p: &Packet, lang: &Lang, step: &Step) {
     match step {
         Step::Calc { .. } => {}
+        Step::Align { bytes } => {
+            out.line(format!("pb_w.write_zero_bits(pb_pad(pb_w.position_bits() - pb_start, {}));", bytes * 8))
+        }
+        Step::Field { member: Some(mi), codec: Codec::Str(mode), array, .. } => {
+            let m = &p.members[*mi];
+            out.open("{");
+            out.line(format!("let pb_b = p.{}.as_bytes();", ident(&m.name)));
+            match (mode, array) {
+                (StrMode::CString, _) => {
+                    out.line(format!("pb_check_no_nul(pb_b, \"{}\")?;", m.name));
+                    out.line("pb_w.write_bytes(pb_b);");
+                    out.line("pb_w.write_bytes(&[0]);");
+                }
+                (StrMode::Prefixed { prefix, width }, _) => {
+                    out.line(format!("pb_check_u(pb_b.len() as u64, {}, \"{}\")?;", width, m.name));
+                    write_elem(out, prefix, &ValueType::Int { width: 64, signed: false }, "pb_b.len()", &m.name);
+                    out.line("pb_w.write_bytes(pb_b);");
+                }
+                (StrMode::Padded, Some(Count::Expr(e))) => {
+                    out.line(format!("let pb_n = {};", emit_expr(lang, e)));
+                    out.line(format!("pb_check_fits(pb_b.len(), pb_n, \"{}\")?;", m.name));
+                    out.line("pb_w.write_bytes(pb_b);");
+                    out.line("pb_w.write_zero_bits((pb_n as usize - pb_b.len()) * 8);");
+                }
+                (_, Some(Count::Expr(e))) => {
+                    out.line(format!("pb_check_len(pb_b.len(), {}, \"{}\")?;", emit_expr(lang, e), m.name));
+                    out.line("pb_w.write_bytes(pb_b);");
+                }
+                _ => out.line("pb_w.write_bytes(pb_b);"),
+            }
+            out.close("}");
+        }
         Step::Field { member: None, codec, array, .. } => {
             let bits = codec.bits();
             match array {

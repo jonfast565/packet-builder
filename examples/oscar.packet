@@ -144,8 +144,7 @@ packet IcbmSend be {
   header SnacHeader,
   cookie bytes[8],          // random message id, echoed in acks
   channel uint16,           // 1 plain text, 2 rendezvous, 4 ICQ
-  screen_name_length uint8,
-  screen_name bytes[screen_name_length],
+  screen_name string(uint8),  // length-prefixed: one length byte, then the name
   tlvs Tlv[]                // 0x0002 message data, 0x0006 store if offline, ...
 }
 
@@ -154,8 +153,7 @@ packet IcbmReceive be {
   header SnacHeader,
   cookie bytes[8],
   channel uint16,
-  screen_name_length uint8,
-  screen_name bytes[screen_name_length],
+  screen_name string(uint8),
   warning_level uint16,     // sender's warning level in tenths of a percent
   user_tlv_count uint16,
   user_tlvs Tlv[user_tlv_count],

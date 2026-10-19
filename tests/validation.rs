@@ -161,3 +161,75 @@ fn parse_errors_are_located() {
     let rendered = err.render("test.packet", src);
     assert!(rendered.contains("test.packet:3"), "{}", rendered);
 }
+
+#[test]
+fn type_aliases_follow_the_word_size() {
+    let m = compile("packet P be { a half word, b word, c double word, d quad word }").unwrap();
+    assert_eq!(m.packets[0].fixed_bits, Some(8 + 16 + 32 + 64));
+    let m = compile("wordsize 32\npacket P be { a half word, b word, c double word }").unwrap();
+    assert_eq!(m.packets[0].fixed_bits, Some(16 + 32 + 64));
+}
+
+#[test]
+fn quad_words_need_16_bit_words() {
+    assert_error("wordsize 32\npacket P { a qword }", "quad word would be 128 bits");
+    assert_error("wordsize 24\npacket P { a word }", "wordsize must be 16 or 32");
+}
+
+#[test]
+fn type_names_are_not_reserved_as_field_names() {
+    assert!(compile("packet P { word uint16, string uint8, byte char, int int }").is_ok());
+}
+
+#[test]
+fn packets_cannot_shadow_builtin_types() {
+    assert_error("packet word { a uint8 }", "built-in type name");
+    assert_error("packet u8 { a uint8 }", "built-in type name");
+}
+
+#[test]
+fn strings_that_size_themselves_take_no_length() {
+    assert_error("packet P { s cstring[4] }", "already determines its own length");
+    assert_error("packet P { s string(uint8)[2] }", "already determines its own length");
+}
+
+#[test]
+fn string_prefixes_must_be_unsigned_integers() {
+    assert_error("packet P { s string(int8) }", "must be an unsigned integer type");
+    assert!(compile("packet P { s string(u16 le) }").is_ok());
+}
+
+#[test]
+fn strings_must_be_byte_aligned() {
+    assert_error("packet P { a u4, s string[2], _ u4 }", "strings must be byte aligned");
+    assert!(compile("packet P { a u4, align 1, s char[2] }").is_ok());
+}
+
+#[test]
+fn strings_cannot_be_used_in_expressions() {
+    assert_error("packet P { s char[4], calc n uint8 = s }", "is a string");
+}
+
+#[test]
+fn rest_of_input_strings_must_be_last() {
+    assert_error("packet P { s string, a uint8 }", "must be the last field");
+}
+
+#[test]
+fn alignment_values_are_checked() {
+    assert_error("packet P { a uint8 align 0 }", "between 1 and 4096");
+    assert_error("packet P align 8192 { a uint8 }", "between 1 and 4096");
+    assert_error("packet P { rest bytes, align 4 }", "follows a field that consumes the rest of the input");
+}
+
+#[test]
+fn c_struct_layout_is_computed() {
+    let m = compile("packet S le align 8 { a uint8, b uint32, c uint16, d uint64, e uint8 }").unwrap();
+    assert_eq!(m.packets[0].fixed_bits, Some(32 * 8));
+    assert_eq!(m.packets[0].alignment, 8);
+    let m = compile("packet S le align 2 { a uint8, b uint32, c uint8 }").unwrap();
+    assert_eq!(m.packets[0].fixed_bits, Some(8 * 8));
+    // Without `align`, nothing is padded.
+    let m = compile("packet S le { a uint8, b uint32, c uint8 }").unwrap();
+    assert_eq!(m.packets[0].fixed_bits, Some(6 * 8));
+}

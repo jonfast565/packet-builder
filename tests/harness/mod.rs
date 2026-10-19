@@ -194,11 +194,13 @@ pub fn accessor(module: &Module, p: &Packet, path: &str, name: impl Fn(&Packet, 
     resolve_path(module, p, path).into_iter().map(|(owner, m)| name(owner, m)).collect::<Vec<_>>().join(".")
 }
 
-/// Integer literal for a `set` value.
+/// Literal for a `set` value: a number, or a double-quoted string literal
+/// (valid in every target language for printable text).
 pub fn set_literal(v: &Value) -> String {
     match v {
         Value::Number(n) => n.to_string(),
-        other => panic!("set values must be numbers, got {}", other),
+        Value::String(s) => quote(s),
+        other => panic!("set values must be numbers or strings, got {}", other),
     }
 }
 

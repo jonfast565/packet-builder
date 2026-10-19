@@ -11,7 +11,8 @@ enum {
     PB_ERR_EOF = -1,     /* input ended in the middle of a field */
     PB_ERR_LENGTH = -2,  /* a length is negative, too large, or does not match */
     PB_ERR_RANGE = -3,   /* a value does not fit in its bit width */
-    PB_ERR_NOMEM = -4    /* allocation failed */
+    PB_ERR_NOMEM = -4,   /* allocation failed */
+    PB_ERR_TEXT = -5     /* a string is not valid UTF-8, or contains a NUL where none is allowed */
 };
 
 /* Reads integers of any bit width (MSB-first) and byte-aligned values. */

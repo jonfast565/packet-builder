@@ -18,6 +18,7 @@ fn value_expr(m: &Member, place: &str) -> String {
         ValueType::Float { .. } => format!("strconv.FormatFloat(float64({}), 'g', -1, 64)", v),
         ValueType::Mac => format!("hx({}[:])", v),
         ValueType::Packet(n) => format!("dump{}(&{})", n, v),
+        ValueType::Str => format!("js({})", v),
     };
     match &m.array {
         None => elem(place),
@@ -41,9 +42,10 @@ impl Target for GoTarget {
 
     fn harness(&self, module: &Module, cases: &[Case]) -> String {
         let mut s = String::from(
-            "package main\n\nimport (\n\t\"encoding/hex\"\n\t\"fmt\"\n\t\"strconv\"\n\t\"strings\"\n\n\t. \"harness/packets\"\n)\n\n",
+            "package main\n\nimport (\n\t\"encoding/hex\"\n\t\"encoding/json\"\n\t\"fmt\"\n\t\"strconv\"\n\t\"strings\"\n\n\t. \"harness/packets\"\n)\n\n",
         );
         s.push_str("var _ = strings.Join\n\n");
+        s.push_str("func js(v string) string { b, _ := json.Marshal(v); return string(b) }\n\n");
         s.push_str("func hx(b []byte) string { return \"\\\"\" + hex.EncodeToString(b) + \"\\\"\" }\n\n");
         for p in &module.packets {
             let _ = writeln!(s, "func dump{}(p *{}) string {{", p.name, p.name);

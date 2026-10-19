@@ -64,6 +64,20 @@
             pos += bits;
         }
 
+        public long PositionBits => pos;
+
+        /// <summary>Bytes before a NUL terminator; the terminator is consumed.</summary>
+        public byte[] ReadCString(string field)
+        {
+            long start = pos >> 3;
+            int end = Array.IndexOf(data, (byte)0, (int)start);
+            if (end < 0) throw new PbException($"unexpected end of data: string `{field}` has no NUL terminator");
+            var outp = new byte[end - start];
+            Array.Copy(data, start, outp, 0, outp.Length);
+            pos = (end + 1) * 8L;
+            return outp;
+        }
+
         /// <summary>Validate a decoded element count against the data that is left.</summary>
         public int Count(long n, long elemBits, string field)
         {
@@ -81,6 +95,8 @@
         private long pos; // in bits
 
         public byte[] ToArray() => buf.ToArray();
+
+        public long PositionBits => pos;
 
         public void WriteBits(ulong value, int width)
         {
@@ -121,6 +137,41 @@
 
     internal static class Pb
     {
+        private static readonly System.Text.UTF8Encoding StrictUtf8 = new System.Text.UTF8Encoding(false, true);
+
+        /// <summary>Padding needed after offset bits to reach a multiple of unit bits.</summary>
+        public static long Pad(long offset, long unit) => (unit - offset % unit) % unit;
+
+        public static string Utf8(byte[] raw, bool untilNul, string field)
+        {
+            int n = raw.Length;
+            if (untilNul)
+            {
+                int nul = Array.IndexOf(raw, (byte)0);
+                if (nul >= 0) n = nul;
+            }
+            try { return StrictUtf8.GetString(raw, 0, n); }
+            catch (ArgumentException) { throw new PbException($"invalid UTF-8 in string field `{field}`"); }
+        }
+
+        public static byte[] Utf8Bytes(string s)
+        {
+            try { return StrictUtf8.GetBytes(s); }
+            catch (ArgumentException) { throw new PbException("string is not valid Unicode (unpaired surrogate)"); }
+        }
+
+        public static void CheckFits(long length, long size, string field)
+        {
+            if (length > size)
+                throw new PbException($"string field `{field}` is {length} byte(s), longer than its size {size}");
+        }
+
+        public static void CheckNoNul(byte[] data, string field)
+        {
+            if (Array.IndexOf(data, (byte)0) >= 0)
+                throw new PbException($"string field `{field}` contains a NUL byte");
+        }
+
         public static long Sext(ulong v, int width)
         {
             if (width < 64 && ((v >> (width - 1)) & 1) == 1) v |= ulong.MaxValue << width;

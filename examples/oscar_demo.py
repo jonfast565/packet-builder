@@ -57,7 +57,7 @@ def main():
             print("server ready, families:", ", ".join("0x%04x" % f for f in families))
         elif kind == (0x0004, 0x0007):
             im = IcbmReceive.decode(frame.payload)
-            sender = im.screen_name.decode("ascii")
+            sender = im.screen_name
             print("message from %s (warning level %.1f%%): %s"
                   % (sender, im.warning_percent, message_text(im.tlvs)))
             reply = (frame.sequence, im.cookie, sender)
@@ -71,8 +71,7 @@ def main():
         header=SnacHeader(family=0x0004, subtype=0x0006, request_id=0x30),
         cookie=cookie,
         channel=1,
-        screen_name_length=len(sender),
-        screen_name=sender.encode("ascii"),
+        screen_name=sender,
         tlvs=[Tlv(type=0x0002, length=len(fragments), value=fragments),
               Tlv(type=0x0006, length=0, value=b"")],
     )

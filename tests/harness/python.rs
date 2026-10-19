@@ -17,6 +17,7 @@ fn value_expr(m: &Member, place: &str) -> String {
         ValueType::Float { .. } => format!("repr(float({}))", v),
         ValueType::Mac => format!("hx({})", v),
         ValueType::Packet(n) => format!("dump_{}({})", n, v),
+        ValueType::Str => format!("json.dumps({})", v),
     };
     match &m.array {
         None => elem(place),

@@ -17,6 +17,9 @@ class PbReader:
     def remaining_bits(self):
         return len(self.data) * 8 - self.pos
 
+    def position_bits(self):
+        return self.pos
+
     def _need(self, bits):
         if bits > self.remaining_bits():
             raise PbError(
@@ -53,6 +56,14 @@ class PbReader:
         self._need(bits)
         self.pos += bits
 
+    def read_cstring(self, field):
+        start = self.pos >> 3
+        end = self.data.find(b"\0", start)
+        if end < 0:
+            raise PbError("unexpected end of data: string `%s` has no NUL terminator" % field)
+        self.pos = (end + 1) * 8
+        return self.data[start:end]
+
 
 class PbWriter:
     """Builds a byte buffer; integers may be written at any bit position."""
@@ -62,6 +73,9 @@ class PbWriter:
     def __init__(self):
         self.buf = bytearray()
         self.pos = 0  # in bits
+
+    def position_bits(self):
+        return self.pos
 
     def write_bits(self, value, width):
         left = width
@@ -91,6 +105,40 @@ class PbWriter:
 
     def finish(self):
         return bytes(self.buf)
+
+
+def _pb_pad(offset, unit):
+    """Padding needed after `offset` bits to reach a multiple of `unit` bits."""
+    return (unit - offset % unit) % unit
+
+
+def _pb_utf8(raw, field):
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        raise PbError("invalid UTF-8 in string field `%s`" % field) from None
+
+
+def _pb_utf8_bytes(text, field):
+    try:
+        return text.encode("utf-8")
+    except UnicodeEncodeError:
+        raise PbError("string field `%s` is not valid Unicode" % field) from None
+
+
+def _pb_until_nul(raw):
+    end = raw.find(b"\0")
+    return raw if end < 0 else raw[:end]
+
+
+def _pb_check_fits(length, size, field):
+    if length > size:
+        raise PbError("string field `%s` is %d byte(s), longer than its size %d" % (field, length, size))
+
+
+def _pb_check_no_nul(data, field):
+    if b"\0" in data:
+        raise PbError("string field `%s` contains a NUL byte" % field)
 
 
 def _pb_wrap(v):

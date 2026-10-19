@@ -61,6 +61,17 @@ pub struct Packet {
     pub min_bits: u64,
     /// True if the last field consumes the rest of the input.
     pub open_ended: bool,
+    /// Encoded size in bits when it does not depend on the data.
+    pub fixed_bits: Option<u64>,
+    /// Alignment in bytes of the packet when nested (from `packet P align N`).
+    pub alignment: u64,
+}
+
+impl Packet {
+    /// True if decoding/encoding needs the packet's start position.
+    pub fn uses_align(&self) -> bool {
+        self.steps.iter().any(|s| matches!(s, Step::Align { .. }))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -88,6 +99,8 @@ pub enum ValueType {
     Mac,
     /// Another packet.
     Packet(String),
+    /// Text (UTF-8).
+    Str,
 }
 
 impl ValueType {
@@ -97,7 +110,7 @@ impl ValueType {
             ValueType::Int { width, .. } => storage_for(*width),
             ValueType::Float { width } => *width,
             ValueType::Mac => 48,
-            ValueType::Packet(_) => 0,
+            ValueType::Packet(_) | ValueType::Str => 0,
         }
     }
 
@@ -154,6 +167,21 @@ pub enum Codec {
     },
     Mac,
     Packet(String),
+    Str(StrMode),
+}
+
+/// How a string's length is determined. For `Padded` and `Exact` the byte
+/// count is the step's `array` count.
+#[derive(Debug, Clone, PartialEq)]
+pub enum StrMode {
+    /// `char[n]`: n bytes; the text ends at the first NUL, encoding pads with NULs.
+    Padded,
+    /// `string[n]` / `string[]`: exactly the given bytes.
+    Exact,
+    /// `string(uint8)`: a length prefix (written automatically), then the bytes.
+    Prefixed { prefix: Box<Codec>, width: u32 },
+    /// `cstring`: bytes up to a terminating NUL.
+    CString,
 }
 
 impl Codec {
@@ -163,7 +191,7 @@ impl Codec {
             Codec::Bits { width } => *width,
             Codec::Float { width, .. } => *width,
             Codec::Mac => 48,
-            Codec::Packet(_) => 0,
+            Codec::Packet(_) | Codec::Str(_) => 0,
         }
     }
 
@@ -172,7 +200,7 @@ impl Codec {
     /// arrays are at least one byte (enforced by the analysis).
     pub fn min_elem_bits(&self) -> u64 {
         match self {
-            Codec::Packet(_) => 8,
+            Codec::Packet(_) | Codec::Str(_) => 8,
             c => c.bits() as u64,
         }
     }
@@ -186,6 +214,9 @@ pub enum Step {
     Bitfield { container: Codec, container_width: u32, parts: Vec<BitPart> },
     /// Evaluate a calculated member (decode only).
     Calc { member: usize },
+    /// Skip (decode) or zero-fill (encode) to the next multiple of `bytes`
+    /// bytes counted from the start of the packet.
+    Align { bytes: u64 },
 }
 
 #[derive(Debug, Clone)]
@@ -381,7 +412,43 @@ pub fn analyze(list: &PacketExprList) -> Result<Module, Vec<Diagnostic>> {
 
     // Packet names
     let mut by_name = HashMap::<String, usize>::new();
+    const BUILTIN: &[&str] = &[
+        "int8",
+        "uint8",
+        "int16",
+        "uint16",
+        "int32",
+        "uint32",
+        "int64",
+        "uint64",
+        "float32",
+        "float64",
+        "macaddress",
+        "datetime",
+        "bytes",
+        "char",
+        "uchar",
+        "byte",
+        "short",
+        "ushort",
+        "int",
+        "uint",
+        "halfword",
+        "word",
+        "dword",
+        "doubleword",
+        "qword",
+        "quadword",
+        "string",
+        "cstring",
+    ];
     for (i, p) in list.packets.iter().enumerate() {
+        let looks_like_bits = p.name.len() > 1
+            && (p.name.starts_with('u') || p.name.starts_with('i'))
+            && p.name[1..].chars().all(|c| c.is_ascii_digit());
+        if BUILTIN.contains(&p.name.as_str()) || looks_like_bits {
+            diags.push(Diagnostic::new(format!("packet name `{}` is a built-in type name", p.name), p.span));
+        }
         if by_name.insert(p.name.clone(), i).is_some() {
             diags.push(Diagnostic::new(format!("packet `{}` is declared more than once", p.name), p.span));
         }
@@ -463,6 +530,7 @@ fn packet_order(list: &PacketExprList, by_name: &HashMap<String, usize>) -> Resu
 
 fn value_type(t: &TypeNode) -> ValueType {
     match t {
+        TypeNode::Str | TypeNode::CStr | TypeNode::PrefixedStr { .. } => ValueType::Str,
         TypeNode::Float32 => ValueType::Float { width: 32 },
         TypeNode::Float64 => ValueType::Float { width: 64 },
         TypeNode::MacAddress => ValueType::Mac,
@@ -491,7 +559,48 @@ fn type_label(t: &TypeNode) -> String {
         TypeNode::Bytes => "bytes".into(),
         TypeNode::Bits { width, signed } => format!("{}{}", if *signed { "i" } else { "u" }, width),
         TypeNode::Packet(n) => n.clone(),
+        TypeNode::Char => "char".into(),
+        TypeNode::Str => "string".into(),
+        TypeNode::CStr => "cstring".into(),
+        TypeNode::PrefixedStr { prefix, .. } => format!("string({})", type_label(prefix)),
     }
+}
+
+/// Value type of a declared field: `char[n]` is a string.
+fn field_value_type(f: &crate::models::parsing_models::TypeExpr) -> ValueType {
+    if f.expr == TypeNode::Char && f.array.is_some() { ValueType::Str } else { value_type(&f.expr) }
+}
+
+/// Natural alignment in bytes of a type, as a C compiler would lay it out.
+fn natural_align(t: &TypeNode, done: &HashMap<String, Packet>) -> u64 {
+    match t {
+        TypeNode::Packet(n) => done.get(n).map(|p| p.alignment).unwrap_or(1),
+        TypeNode::Bits { width, .. } => {
+            let bytes = (*width / 8) as u64;
+            if width % 8 == 0 && bytes.is_power_of_two() { bytes } else { 1 }
+        }
+        TypeNode::MacAddress | TypeNode::Bytes | TypeNode::Char | TypeNode::Str | TypeNode::CStr => 1,
+        TypeNode::PrefixedStr { prefix, .. } => natural_align(prefix, done),
+        other => other.bit_width().map(|b| (b / 8) as u64).unwrap_or(1),
+    }
+}
+
+/// Insert an alignment step unless the offset is known to be aligned already.
+fn emit_align(bytes: u64, steps: &mut Vec<Step>, align: &mut Align, exact: &mut Option<u64>, min_bits: &mut u64) {
+    if bytes <= 1 && align.is_aligned() {
+        return;
+    }
+    let bits = bytes * 8;
+    if let Some(x) = *exact {
+        let pad = (bits - x % bits) % bits;
+        if pad == 0 {
+            return;
+        }
+        *exact = Some(x + pad);
+        *min_bits += pad;
+    }
+    steps.push(Step::Align { bytes });
+    *align = Align::START;
 }
 
 /// What is known about the current bit offset: it is congruent to `offset`
@@ -564,7 +673,7 @@ fn analyze_packet(p: &PacketExpr, done: &HashMap<String, Packet>) -> Result<Pack
                 if f.id == "_" {
                     continue;
                 }
-                ctx.declare(&f.id, value_type(&f.expr), MemberKind::Stored, f.span);
+                ctx.declare(&f.id, field_value_type(f), MemberKind::Stored, f.span);
             }
             PacketItem::Bitfield(b) => {
                 for m in &b.members {
@@ -581,7 +690,12 @@ fn analyze_packet(p: &PacketExpr, done: &HashMap<String, Packet>) -> Result<Pack
             }
             PacketItem::Calculated(c) => {
                 let ty = match &c.data_type {
-                    TypeNode::MacAddress | TypeNode::Bytes | TypeNode::Packet(_) => {
+                    TypeNode::MacAddress
+                    | TypeNode::Bytes
+                    | TypeNode::Packet(_)
+                    | TypeNode::Str
+                    | TypeNode::CStr
+                    | TypeNode::PrefixedStr { .. } => {
                         ctx.diags.push(Diagnostic::new(
                             format!("calculated field `{}` must have a numeric type", c.name),
                             c.span,
@@ -592,6 +706,7 @@ fn analyze_packet(p: &PacketExpr, done: &HashMap<String, Packet>) -> Result<Pack
                 };
                 ctx.declare(&c.name, ty, MemberKind::Calculated(TExpr::IntLit(0)), c.span);
             }
+            PacketItem::Align(..) => {}
         }
     }
 
@@ -606,6 +721,7 @@ fn analyze_packet(p: &PacketExpr, done: &HashMap<String, Packet>) -> Result<Pack
             };
             if let Some(&idx) = ctx.names.get(&f.id)
                 && f.id != "_"
+                && field_value_type(f) != ValueType::Str
             {
                 ctx.members[idx].array = count.clone();
             }
@@ -635,8 +751,31 @@ fn analyze_packet(p: &PacketExpr, done: &HashMap<String, Packet>) -> Result<Pack
     let mut min_bits: u64 = 0;
     let mut open_ended = false;
     let mut field_no = 0usize;
-    let stored_items: Vec<usize> =
-        p.items.iter().enumerate().filter(|(_, it)| !matches!(it, PacketItem::Calculated(_))).map(|(i, _)| i).collect();
+    // Exact bit offset from the packet start while it does not depend on data.
+    let mut exact: Option<u64> = Some(0);
+    // Alignment of this packet when nested (C struct rules under `align N`).
+    let mut alignment: u64 = 1;
+    // Padding requested before a field: its explicit `align N`, and under
+    // `packet P align N` its natural alignment. None when nothing applies, so
+    // that packed bit fields are left alone.
+    let natural = |t: &TypeNode, explicit: Option<u64>, alignment: &mut u64| -> Option<u64> {
+        let mut a = explicit;
+        if let Some(pack) = p.align {
+            let n = natural_align(t, done).min(pack).max(1);
+            *alignment = (*alignment).max(n);
+            if n > 1 {
+                a = Some(a.unwrap_or(1).max(n));
+            }
+        }
+        a
+    };
+    let stored_items: Vec<usize> = p
+        .items
+        .iter()
+        .enumerate()
+        .filter(|(_, it)| matches!(it, PacketItem::Field(_) | PacketItem::Bitfield(_)))
+        .map(|(i, _)| i)
+        .collect();
     let last_stored = stored_items.last().copied();
 
     ctx.schedule_calcs(&mut steps, &available, &mut scheduled);
@@ -644,12 +783,22 @@ fn analyze_packet(p: &PacketExpr, done: &HashMap<String, Packet>) -> Result<Pack
     for (item_idx, item) in p.items.iter().enumerate() {
         match item {
             PacketItem::Calculated(_) => {}
+            PacketItem::Align(bytes, span) => {
+                if open_ended {
+                    ctx.diags
+                        .push(Diagnostic::new("`align` follows a field that consumes the rest of the input", *span));
+                }
+                emit_align(*bytes, &mut steps, &mut align, &mut exact, &mut min_bits);
+            }
             PacketItem::Field(f) => {
                 let count = field_counts[field_no].clone();
                 field_no += 1;
                 let is_last = Some(item_idx) == last_stored;
                 let member = if f.id == "_" { None } else { ctx.names.get(&f.id).copied() };
-                let ty = value_type(&f.expr);
+                let ty = field_value_type(f);
+                if let Some(pad) = natural(&f.expr, f.align, &mut alignment) {
+                    emit_align(pad, &mut steps, &mut align, &mut exact, &mut min_bits);
+                }
 
                 if open_ended {
                     ctx.diags.push(Diagnostic::new(
@@ -708,25 +857,43 @@ fn analyze_packet(p: &PacketExpr, done: &HashMap<String, Packet>) -> Result<Pack
                     }
                 }
 
-                let codec = ctx.codec_for(&f.expr, f.endianness.clone(), &default_endian, align, f.span, &f.id);
-                let elem_bits = match &codec {
-                    Codec::Packet(n) => ctx.done.get(n).map(|x| x.min_bits).unwrap_or(0),
-                    c => c.bits() as u64,
+                let codec = if ty == ValueType::Str {
+                    ctx.string_codec(f, &default_endian, align)
+                } else {
+                    ctx.codec_for(&f.expr, f.endianness.clone(), &default_endian, align, f.span, &f.id)
                 };
-                // Advance alignment.
+                let (elem_bits, elem_fixed) = match &codec {
+                    Codec::Packet(n) => {
+                        let nested = ctx.done.get(n);
+                        (nested.map(|x| x.min_bits).unwrap_or(0), nested.and_then(|x| x.fixed_bits))
+                    }
+                    Codec::Str(StrMode::Padded | StrMode::Exact) => (8, Some(8)),
+                    Codec::Str(StrMode::Prefixed { width, .. }) => (*width as u64, None),
+                    Codec::Str(StrMode::CString) => (8, None),
+                    c => (c.bits() as u64, Some(c.bits() as u64)),
+                };
+                // Advance alignment and the exact offset.
                 match &count {
                     None => {
                         min_bits += elem_bits;
                         align = align.advance(elem_bits);
+                        exact = exact.and_then(|x| elem_fixed.map(|b| x + b));
                     }
                     Some(Count::Expr(e)) => match e.const_int() {
                         Some(n) if n >= 0 => {
                             min_bits += elem_bits * n as u64;
                             align = align.advance(elem_bits.wrapping_mul(n as u64));
+                            exact = exact.and_then(|x| elem_fixed.map(|b| x + b * n as u64));
                         }
-                        _ => align = align.advance_multiple(elem_bits.wrapping_mul(const_factor(e))),
+                        _ => {
+                            align = align.advance_multiple(elem_bits.wrapping_mul(const_factor(e)));
+                            exact = None;
+                        }
                     },
-                    Some(Count::Remaining) => align = align.advance_multiple(elem_bits),
+                    Some(Count::Remaining) => {
+                        align = align.advance_multiple(elem_bits);
+                        exact = None;
+                    }
                 }
 
                 steps.push(Step::Field { member, ty, codec, array: count });
@@ -735,6 +902,15 @@ fn analyze_packet(p: &PacketExpr, done: &HashMap<String, Packet>) -> Result<Pack
                 }
             }
             PacketItem::Bitfield(b) => {
+                if open_ended {
+                    ctx.diags.push(Diagnostic::new(
+                        format!("field `{}` follows a field that consumes the rest of the input", b.id),
+                        b.span,
+                    ));
+                }
+                if let Some(pad) = natural(&b.container, b.align, &mut alignment) {
+                    emit_align(pad, &mut steps, &mut align, &mut exact, &mut min_bits);
+                }
                 let (cwidth, _) = match b.container.integer_info() {
                     Some(info) if !matches!(b.container, TypeNode::Bytes) => info,
                     _ => {
@@ -770,10 +946,16 @@ fn analyze_packet(p: &PacketExpr, done: &HashMap<String, Packet>) -> Result<Pack
                 }
                 min_bits += cwidth as u64;
                 align = align.advance(cwidth as u64);
+                exact = exact.map(|x| x + cwidth as u64);
                 steps.push(Step::Bitfield { container: codec, container_width: cwidth, parts });
             }
         }
         ctx.schedule_calcs(&mut steps, &available, &mut scheduled);
+    }
+
+    // C-style tail padding: the size is a multiple of the packet's alignment.
+    if p.align.is_some() && !open_ended {
+        emit_align(alignment, &mut steps, &mut align, &mut exact, &mut min_bits);
     }
 
     // Calculated fields that could never be evaluated.
@@ -832,7 +1014,17 @@ fn analyze_packet(p: &PacketExpr, done: &HashMap<String, Packet>) -> Result<Pack
     if !ctx.diags.is_empty() {
         return Err(ctx.diags);
     }
-    Ok(Packet { name: p.name.clone(), members: ctx.members, steps, encode_calcs, min_bits, open_ended })
+    let fixed_bits = if open_ended { None } else { exact };
+    Ok(Packet {
+        name: p.name.clone(),
+        members: ctx.members,
+        steps,
+        encode_calcs,
+        min_bits,
+        open_ended,
+        fixed_bits,
+        alignment: if p.align.is_some() { alignment } else { 1 },
+    })
 }
 
 impl<'a> Ctx<'a> {
@@ -897,6 +1089,12 @@ impl<'a> Ctx<'a> {
                 }
                 Codec::Mac
             }
+            TypeNode::Str | TypeNode::CStr | TypeNode::PrefixedStr { .. } => {
+                // Strings go through string_codec; reaching here means a
+                // string type was used where only integers are allowed.
+                self.diags.push(Diagnostic::new(format!("`{}` cannot have a string type here", name), span));
+                Codec::Bytes { nbytes: 1, endian }
+            }
             TypeNode::Bits { width, .. } => {
                 if aligned && width % 8 == 0 {
                     Codec::Bytes { nbytes: width / 8, endian }
@@ -923,6 +1121,56 @@ impl<'a> Ctx<'a> {
                 }
                 Codec::Bytes { nbytes: width / 8, endian }
             }
+        }
+    }
+
+    fn string_codec(
+        &mut self,
+        f: &crate::models::parsing_models::TypeExpr,
+        default_endian: &Endianness,
+        align: Align,
+    ) -> Codec {
+        if !align.is_aligned() {
+            self.diags.push(
+                Diagnostic::new(
+                    format!("string `{}` starts {}; strings must be byte aligned", f.id, align.describe()),
+                    f.span,
+                )
+                .with_note("add `_ uN` padding or `align 1` before this field"),
+            );
+        }
+        if f.endianness.is_some() && !matches!(f.expr, TypeNode::PrefixedStr { .. }) {
+            self.diags.push(Diagnostic::new(format!("string `{}` cannot have a byte order", f.id), f.span));
+        }
+        match &f.expr {
+            TypeNode::Char => Codec::Str(StrMode::Padded),
+            TypeNode::Str => Codec::Str(StrMode::Exact),
+            TypeNode::CStr | TypeNode::PrefixedStr { .. } if f.array.is_some() => {
+                self.diags.push(
+                    Diagnostic::new(
+                        format!("`{}` already determines its own length and cannot take [..]", f.id),
+                        f.span,
+                    )
+                    .with_note("use char[n] or string[n] for strings whose length comes from elsewhere"),
+                );
+                Codec::Str(StrMode::CString)
+            }
+            TypeNode::CStr => Codec::Str(StrMode::CString),
+            TypeNode::PrefixedStr { prefix, endianness } => {
+                let width = match prefix.integer_info() {
+                    Some((w, false)) if !matches!(**prefix, TypeNode::Bytes | TypeNode::Char) => w,
+                    _ => {
+                        self.diags.push(Diagnostic::new(
+                            format!("the length prefix of `{}` must be an unsigned integer type", f.id),
+                            f.span,
+                        ));
+                        8
+                    }
+                };
+                let codec = self.codec_for(prefix, endianness.clone(), default_endian, align, f.span, &f.id);
+                Codec::Str(StrMode::Prefixed { prefix: Box::new(codec), width })
+            }
+            _ => Codec::Str(StrMode::Exact),
         }
     }
 
@@ -994,6 +1242,7 @@ impl<'a> Ctx<'a> {
             ValueType::Float { .. } => Ok(Ty::Float),
             ValueType::Mac => Err(format!("`{}` is a mac address and cannot be used in an expression", name)),
             ValueType::Packet(_) => Err(format!("`{}` is a nested packet and cannot be used in an expression", name)),
+            ValueType::Str => Err(format!("`{}` is a string and cannot be used in an expression", name)),
         }
     }
 
@@ -1108,7 +1357,9 @@ impl<'a> Ctx<'a> {
             return true;
         }
         let name = &self.members[idx].name;
-        self.packet.items.iter().any(|it| matches!(it, PacketItem::Field(f) if &f.id == name && f.array.is_some()))
+        self.packet.items.iter().any(
+            |it| matches!(it, PacketItem::Field(f) if &f.id == name && f.array.is_some() && field_value_type(f) != ValueType::Str),
+        )
     }
 }
 
@@ -1122,4 +1373,111 @@ pub fn coerce(e: TExpr, to: Ty) -> TExpr {
         return e;
     }
     TExpr::Convert { e: Box::new(e), to }
+}
+
+// ---------------------------------------------------------------------------
+// Layout report
+// ---------------------------------------------------------------------------
+
+/// One row of a packet's layout, for display.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LayoutRow {
+    /// Bit offset from the packet start, when it does not depend on the data.
+    pub offset_bits: Option<u64>,
+    /// Size in bits, when it does not depend on the data.
+    pub size_bits: Option<u64>,
+    /// Member name, `_` for padding, or the name of a bitfield member.
+    pub name: String,
+    pub kind: String,
+    /// Indented under the previous row (bitfield members).
+    pub nested: bool,
+}
+
+impl Module {
+    /// Field-by-field layout of `packet`, including padding inserted by alignment.
+    pub fn layout(&self, packet: &Packet) -> Vec<LayoutRow> {
+        let mut rows = Vec::new();
+        let mut offset = Some(0u64);
+        for step in &packet.steps {
+            match step {
+                Step::Calc { .. } => {}
+                Step::Align { bytes } => {
+                    let unit = bytes * 8;
+                    let size = offset.map(|o| (unit - o % unit) % unit);
+                    if size != Some(0) {
+                        rows.push(LayoutRow {
+                            offset_bits: offset,
+                            size_bits: size,
+                            name: "_".into(),
+                            kind: format!("padding to {} byte(s)", bytes),
+                            nested: false,
+                        });
+                    }
+                    offset = offset.zip(size).map(|(o, s)| o + s);
+                }
+                Step::Field { member, ty, codec, array } => {
+                    let elem = match codec {
+                        Codec::Packet(n) => self.packets.iter().find(|p| &p.name == n).and_then(|p| p.fixed_bits),
+                        Codec::Str(StrMode::Padded | StrMode::Exact) => Some(8),
+                        Codec::Str(_) => None,
+                        c => Some(c.bits() as u64),
+                    };
+                    let (size, suffix) = match array {
+                        None => (elem, String::new()),
+                        Some(Count::Expr(e)) => match e.const_int() {
+                            Some(n) if n >= 0 => (elem.map(|b| b * n as u64), format!("[{}]", n)),
+                            _ => (None, "[n]".into()),
+                        },
+                        Some(Count::Remaining) => (None, "[]".into()),
+                    };
+                    let kind = match (ty, codec) {
+                        (_, Codec::Str(StrMode::Padded)) => format!("char{}", suffix),
+                        (_, Codec::Str(StrMode::Exact)) => format!("string{}", suffix),
+                        (_, Codec::Str(StrMode::CString)) => "cstring".into(),
+                        (_, Codec::Str(StrMode::Prefixed { width, .. })) => format!("string(u{} prefix)", width),
+                        (ValueType::Int { width: 8, signed: false }, _) if array.is_some() => {
+                            format!("bytes{}", suffix)
+                        }
+                        (ValueType::Int { width, signed }, _) => {
+                            format!("{}{}{}", if *signed { "i" } else { "u" }, width, suffix)
+                        }
+                        (ValueType::Float { width }, _) => format!("float{}{}", width, suffix),
+                        (ValueType::Mac, _) => format!("macaddress{}", suffix),
+                        (ValueType::Packet(n), _) => format!("{}{}", n, suffix),
+                        (ValueType::Str, _) => "string".into(),
+                    };
+                    let name = member.map(|m| packet.members[m].name.clone()).unwrap_or_else(|| "_".into());
+                    rows.push(LayoutRow { offset_bits: offset, size_bits: size, name, kind, nested: false });
+                    offset = offset.zip(size).map(|(o, s)| o + s);
+                }
+                Step::Bitfield { container_width, parts, .. } => {
+                    rows.push(LayoutRow {
+                        offset_bits: offset,
+                        size_bits: Some(*container_width as u64),
+                        name: "(bitfield)".into(),
+                        kind: format!("u{} container", container_width),
+                        nested: false,
+                    });
+                    for part in parts {
+                        let m = &packet.members[part.member];
+                        rows.push(LayoutRow {
+                            offset_bits: offset.map(|o| o + (*container_width - part.shift - part.width) as u64),
+                            size_bits: Some(part.width as u64),
+                            name: m.name.clone(),
+                            kind: format!(
+                                "{}{} (bits {}..{})",
+                                if part.signed { "i" } else { "u" },
+                                part.width,
+                                part.shift + part.width - 1,
+                                part.shift
+                            ),
+                            nested: true,
+                        });
+                    }
+                    offset = offset.map(|o| o + *container_width as u64);
+                }
+            }
+        }
+        rows
+    }
 }

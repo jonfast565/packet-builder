@@ -1,7 +1,9 @@
 //! Go backend: one file, standard library only (Go 1.18+ for generics).
 
 use crate::generators::common::{ExprLang, GenOptions, Mode, Out, emit_expr, is_calc, mask, pascal_case};
-use crate::ir::{AggOp, ArithOp, Codec, Count, Func, Member, MemberKind, Module, Packet, Step, TExpr, Ty, ValueType};
+use crate::ir::{
+    AggOp, ArithOp, Codec, Count, Func, Member, MemberKind, Module, Packet, Step, StrMode, TExpr, Ty, ValueType,
+};
 use crate::models::parsing_models::Endianness;
 
 pub struct GoGenerator;
@@ -25,6 +27,7 @@ pub fn scalar_type(ty: &ValueType) -> String {
         ValueType::Float { width } => format!("float{}", width),
         ValueType::Mac => "[6]byte".into(),
         ValueType::Packet(n) => n.clone(),
+        ValueType::Str => "string".into(),
     }
 }
 
@@ -45,6 +48,7 @@ impl GoGenerator {
         out.line("import (");
         out.line("\t\"fmt\"");
         out.line("\t\"math\"");
+        out.line("\t\"unicode/utf8\"");
         out.line(")");
         out.line("");
         out.buf.push_str(RUNTIME);
@@ -173,6 +177,7 @@ fn read_elem(codec: &Codec, ty: &ValueType) -> String {
         Codec::Float { endian, .. } => return format!("math.Float64frombits(pbR.ReadUint(8, {}))", little(endian)),
         Codec::Mac => return "pbR.ReadMac()".into(),
         Codec::Packet(n) => return format!("pbDecode{}(pbR)", n),
+        Codec::Str(_) => unreachable!("strings are handled separately"),
     };
     match ty {
         ValueType::Int { width, signed: true } => format!("{}(pbSext({}, {}))", st, raw, width),
@@ -203,6 +208,7 @@ fn write_elem(out: &mut Out, codec: &Codec, ty: &ValueType, v: &str, field: &str
         }
         Codec::Mac => out.line(format!("pbW.WriteBytes({}[:])", v)),
         Codec::Packet(_) => out.line(format!("{}.EncodeTo(pbW)", v)),
+        Codec::Str(_) => unreachable!("strings are handled separately"),
     }
 }
 
@@ -236,6 +242,9 @@ fn emit_packet(out: &mut Out, p: &Packet) {
     out.line("");
 
     out.open(format!("func pbDecode{}(pbR *PbReader) (p {}) {{", name, name));
+    if p.uses_align() {
+        out.line("pbStart := pbR.PositionBits()");
+    }
     let lang = Lang { packet: p, mode: Mode::Decode };
     for step in &p.steps {
         emit_decode_step(out, p, &lang, step);
@@ -254,6 +263,9 @@ fn emit_packet(out: &mut Out, p: &Packet) {
     out.line("");
 
     out.open(format!("func (p *{}) EncodeTo(pbW *PbWriter) error {{", name));
+    if p.uses_align() {
+        out.line("pbStart := pbW.PositionBits()");
+    }
     let lang = Lang { packet: p, mode: Mode::Encode };
     for &c in &p.encode_calcs {
         let m = &p.members[c];
@@ -270,6 +282,29 @@ fn emit_packet(out: &mut Out, p: &Packet) {
 
 fn emit_decode_step(out: &mut Out, p: &Packet, lang: &Lang, step: &Step) {
     match step {
+        Step::Align { bytes } => out.line(format!("pbR.SkipBits(pbPad(pbR.PositionBits()-pbStart, {}))", bytes * 8)),
+        Step::Field { member: Some(mi), codec: Codec::Str(mode), array, .. } => {
+            let m = &p.members[*mi];
+            let raw = match (mode, array) {
+                (StrMode::CString, _) => format!("pbR.ReadCString(\"{}\")", m.name),
+                (StrMode::Prefixed { prefix, .. }, _) => format!(
+                    "pbR.ReadBytes(pbR.Count(int64({}), 8, \"{}\"))",
+                    read_elem(prefix, &ValueType::Int { width: 64, signed: false }),
+                    m.name
+                ),
+                (_, Some(Count::Expr(e))) => {
+                    format!("pbR.ReadBytes(pbR.Count({}, 8, \"{}\"))", emit_expr(lang, e), m.name)
+                }
+                _ => "pbR.ReadBytes(pbR.RemainingBits()/8)".to_string(),
+            };
+            out.line(format!(
+                "p.{} = pbR.Text({}, {}, \"{}\")",
+                field_name(&m.name),
+                raw,
+                *mode == StrMode::Padded,
+                m.name
+            ));
+        }
         Step::Calc { member } => {
             let m = &p.members[*member];
             if let MemberKind::Calculated(e) = &m.kind {
@@ -344,6 +379,39 @@ fn emit_decode_step(out: &mut Out, p: &Packet, lang: &Lang, step: &Step) {
 
 fn emit_encode_step(out: &mut Out, p: &Packet, lang: &Lang, step: &Step) {
     match step {
+        Step::Align { bytes } => {
+            out.line(format!("pbW.WriteZeroBits(int64(pbPad(pbW.PositionBits()-pbStart, {})))", bytes * 8))
+        }
+        Step::Field { member: Some(mi), codec: Codec::Str(mode), array, .. } => {
+            let m = &p.members[*mi];
+            out.open("{");
+            out.line(format!("pbW.CheckUTF8(p.{}, \"{}\")", field_name(&m.name), m.name));
+            out.line(format!("pbB := []byte(p.{})", field_name(&m.name)));
+            match (mode, array) {
+                (StrMode::CString, _) => {
+                    out.line(format!("pbW.CheckNoNul(pbB, \"{}\")", m.name));
+                    out.line("pbW.WriteBytes(pbB)");
+                    out.line("pbW.WriteBytes([]byte{0})");
+                }
+                (StrMode::Prefixed { prefix, width }, _) => {
+                    out.line(format!("pbW.CheckU(uint64(len(pbB)), {}, \"{}\")", width, m.name));
+                    write_elem(out, prefix, &ValueType::Int { width: 64, signed: false }, "len(pbB)", &m.name);
+                    out.line("pbW.WriteBytes(pbB)");
+                }
+                (StrMode::Padded, Some(Count::Expr(e))) => {
+                    out.line(format!("pbN := {}", emit_expr(lang, e)));
+                    out.line(format!("pbW.CheckFits(len(pbB), pbN, \"{}\")", m.name));
+                    out.line("pbW.WriteBytes(pbB)");
+                    out.line("pbW.WriteZeroBits((pbN - int64(len(pbB))) * 8)");
+                }
+                (_, Some(Count::Expr(e))) => {
+                    out.line(format!("pbW.CheckLen(len(pbB), {}, \"{}\")", emit_expr(lang, e), m.name));
+                    out.line("pbW.WriteBytes(pbB)");
+                }
+                _ => out.line("pbW.WriteBytes(pbB)"),
+            }
+            out.close("}");
+        }
         Step::Calc { .. } => {}
         Step::Field { member: None, codec, array, .. } => {
             let bits = codec.bits();

@@ -41,6 +41,7 @@ fn dump_member(s: &mut String, m: &Member, place: &str) {
         ValueType::Float { .. } => format!("try w.print(\"{{d}}\", .{{@as(f64, {})}});", v),
         ValueType::Mac => format!("try hx(w, &{});", v),
         ValueType::Packet(n) => format!("try dump{}(w, &{});", n, v),
+        ValueType::Str => format!("try std.json.stringify({}, .{{}}, w);", v),
     };
     match &m.array {
         None => {
@@ -105,7 +106,12 @@ impl Target for ZigTarget {
                 let m = super::resolve_path(module, p, name).last().unwrap().1;
                 if fits(&m.ty, v) {
                     let path = super::accessor(module, p, name, |_, m| ident(&m.name));
-                    let _ = writeln!(s, "        p.{} = {};", path, set_literal(v));
+                    if v.is_string() {
+                        let _ = writeln!(s, "        allocator.free(p.{});", path);
+                        let _ = writeln!(s, "        p.{} = try allocator.dupe(u8, {});", path, set_literal(v));
+                    } else {
+                        let _ = writeln!(s, "        p.{} = {};", path, set_literal(v));
+                    }
                 } else {
                     compile_time_reject = true;
                 }

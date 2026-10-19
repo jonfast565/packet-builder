@@ -46,9 +46,30 @@ Real protocol descriptions live in [`examples/`](examples):
 ## Usage
 
 ```sh
-cargo run -- examples/oscar.packet -o out            # all languages
-cargo run -- examples/oscar.packet -o out -l rust,go # a subset
-cargo run -- examples/oscar.packet -p oscar          # file stem / Go package / C# namespace
+cargo run -- examples/oscar.packet -o out              # generate every language
+cargo run -- generate examples/oscar.packet -l rust,go # a subset (`gen` for short)
+cargo run -- examples/oscar.packet -p oscar            # file stem / Go package / C# namespace
+cargo run -- examples/oscar.packet -l python --stdout  # print instead of writing files
+cargo run -- check examples/*.packet                   # validate only
+cargo run -- layout tests/specs/types.packet -k CStruct
+cargo run -- languages
+cargo run -- --help
+```
+
+`layout` prints where every field ends up, including padding inserted by
+alignment:
+
+```
+packet CStruct: 32 byte(s), alignment 8
+    offset    size  field                    type
+         0       1  a                        u8
+         1       3  _                        padding to 4 byte(s)
+         4       4  b                        u32
+         8       2  c                        u16
+        10       6  _                        padding to 8 byte(s)
+        16       8  d                        u64
+        24       1  e                        u8
+        25       7  _                        padding to 8 byte(s)
 ```
 
 Errors are reported with the offending source location:
@@ -80,7 +101,27 @@ fields. `//` starts a comment.
 | `macaddress` | 6 bytes |
 | `datetime` | 64-bit signed integer |
 | `bytes` | a byte buffer (always used with a length, or as the last field) |
+| `char[n]`, `string[n]`, `string(uint8)`, `cstring` | text, see [Strings](#strings) |
 | `OtherPacket` | another packet from the same file, decoded in place |
+
+C and assembly-style names are aliases for the types above:
+
+| alias | same as |
+|-------|---------|
+| `char` (single) | `uint8` (`char[n]` is a string) |
+| `unsigned char`, `uchar`, `byte` | `uint8` |
+| `short` / `unsigned short`, `ushort` | `int16` / `uint16` |
+| `int` / `unsigned int`, `uint` | `int32` / `uint32` |
+| `half word`, `halfword` | half a word, unsigned |
+| `word` | one word, unsigned |
+| `double word`, `doubleword`, `dword` | two words, unsigned |
+| `quad word`, `quadword`, `qword` | four words, unsigned |
+
+A word is 16 bits by default (x86 naming: half word 8, word 16, double word
+32, quad word 64). Start a file with `wordsize 32` for ARM-style naming (half
+word 16, word 32, double word 64); a quad word would then be 128 bits, so it
+is rejected. Type names are not reserved: a field may be called `word` or
+`string`.
 
 A field may override the byte order: `b uint16 le`. A `uN` whose width is a
 multiple of 8 and that starts on a byte boundary also honours the byte order,
@@ -127,6 +168,47 @@ boundary, and every packet must be a whole number of bytes. The checker tracks
 variable-length arrays too: `u12[n * 2]` is always a whole number of bytes,
 while `u12[n]` might not be.
 
+### Strings
+
+Strings hold UTF-8 text. Invalid UTF-8 (including overlong forms and
+surrogates) is a decode error in every language, and strings that don't fit
+are encode errors.
+
+| syntax | on the wire | decode | encode |
+|--------|-------------|--------|--------|
+| `name char[16]` | exactly 16 bytes (the count may be any expression) | text up to the first NUL | NUL-padded to 16 bytes; error if longer |
+| `name string[len]` | exactly `len` bytes | all of them | length must equal `len` |
+| `name string(uint8)` | a length (any unsigned integer type, e.g. `string(uint16 le)`), then the bytes | | the length is written from the string; error if it doesn't fit |
+| `name cstring` | bytes up to a NUL terminator | error if there's no terminator | NUL appended; error if the text contains NUL |
+| `name string`, `name string[]` | the rest of the input (last field only) | | |
+
+```
+packet Login be {
+  user char[16],
+  password_length uint8,
+  password string[password_length],
+  client string(uint16),
+  motd cstring
+}
+```
+
+### Alignment
+
+Alignment is in bytes and counted from the start of the packet. The padding
+is skipped when decoding and written as zeros when encoding. If the offset
+depends on the data, the padding is computed at run time.
+
+* `b uint32 align 4`: pad before this field to a multiple of 4.
+* `align 8` on its own line inside a packet: pad to a multiple of 8 at that point.
+* `packet P le align 8 { ... }`: lay the packet out like a C struct compiled
+  with `#pragma pack(8)`. Each field is aligned to the smaller of its natural
+  alignment and 8, and the packet is padded to a multiple of its own
+  alignment. Nested packets use their alignment, so arrays of them match C
+  arrays of structs.
+
+Without any `align`, nothing is padded and fields follow each other exactly
+(including bit fields).
+
 ### Arrays
 
 | syntax | meaning |
@@ -136,7 +218,9 @@ while `u12[n]` might not be.
 | `x Tlv[]`, `x bytes[]`, `x bytes` | repeat until the input ends (last field only); a trailing partial element is an error |
 | `x Opt[flag]` | an optional field: a count of 0 or 1 taken from a flag |
 
-`uint8` arrays and `bytes` are byte buffers in every language. Lengths are
+`uint8` arrays and `bytes` are byte buffers in every language. Strings are
+native strings (`String`, `string`, `str`; `[]const u8` in Zig; in C a
+NUL-terminated `char *` plus a `_len` member). Lengths are
 validated before anything is allocated: a negative length, or one larger than
 the remaining input, is a decode error. When encoding, an array whose length
 does not match its length expression is an encode error.
@@ -198,6 +282,7 @@ cargo test
 
 * `tests/validation.rs` checks that malformed descriptions are rejected with
   the right message.
+* `tests/cli.rs` covers the command line.
 * `tests/codegen.rs` is the cross-language suite. For every
   `tests/specs/*.json` file it generates a parser in each language, writes a
   driver program in that language, **compiles it with the real toolchain**,

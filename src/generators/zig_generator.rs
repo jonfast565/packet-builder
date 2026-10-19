@@ -2,7 +2,9 @@
 //! `i12`, ...), so out-of-range values are rejected by the compiler.
 
 use crate::generators::common::{ExprLang, GenOptions, Mode, Out, emit_expr, is_calc, mask};
-use crate::ir::{AggOp, ArithOp, Codec, Count, Func, LogicOp, Member, MemberKind, Module, Packet, Step, Ty, ValueType};
+use crate::ir::{
+    AggOp, ArithOp, Codec, Count, Func, LogicOp, Member, MemberKind, Module, Packet, Step, StrMode, Ty, ValueType,
+};
 use crate::models::parsing_models::Endianness;
 
 pub struct ZigGenerator;
@@ -111,6 +113,7 @@ pub fn scalar_type(ty: &ValueType) -> String {
         ValueType::Float { width } => format!("f{}", width),
         ValueType::Mac => "[6]u8".into(),
         ValueType::Packet(n) => n.clone(),
+        ValueType::Str => "[]const u8".into(),
     }
 }
 
@@ -128,12 +131,13 @@ fn default_value(m: &Member) -> String {
         (None, ValueType::Float { .. }) => "0".into(),
         (None, ValueType::Mac) => "[_]u8{0} ** 6".into(),
         (None, ValueType::Packet(_)) => ".{}".into(),
+        (None, ValueType::Str) => "\"\"".into(),
     }
 }
 
 /// Members that own heap memory (and so need deinit).
 fn owns_memory(m: &Member) -> bool {
-    m.array.is_some() || matches!(m.ty, ValueType::Packet(_))
+    m.array.is_some() || matches!(m.ty, ValueType::Packet(_) | ValueType::Str)
 }
 
 impl ZigGenerator {
@@ -266,6 +270,7 @@ fn read_elem(codec: &Codec, ty: &ValueType) -> String {
         Codec::Float { endian, .. } => format!("@as(f64, @bitCast(try pb_r.readUint(8, {})))", little(endian)),
         Codec::Mac => "try pb_r.readMac()".into(),
         Codec::Packet(n) => format!("try {}.decodeFrom(allocator, pb_r)", n),
+        Codec::Str(_) => unreachable!("strings are handled separately"),
     }
 }
 
@@ -283,6 +288,7 @@ fn write_elem(out: &mut Out, codec: &Codec, v: &str) {
         }
         Codec::Mac => out.line(format!("try pb_w.writeBytes(&{});", v)),
         Codec::Packet(_) => out.line(format!("try {}.encodeTo(pb_w);", v)),
+        Codec::Str(_) => unreachable!("strings are handled separately"),
     }
 }
 
@@ -311,10 +317,15 @@ fn emit_packet(out: &mut Out, p: &Packet) {
                 out.line(format!("for (self.{}) |*pb_e| @constCast(pb_e).deinit(allocator);", id));
                 out.line(format!("allocator.free(self.{});", id));
             }
-            (Some(_), _) => out.line(format!("allocator.free(self.{});", id)),
+            (Some(_), _) | (None, ValueType::Str) => out.line(format!("allocator.free(self.{});", id)),
             _ => out.line(format!("self.{}.deinit(allocator);", id)),
         }
-        out.line(format!("self.{} = {};", id, if m.array.is_some() { "&.{}" } else { ".{}" }));
+        let empty = match (&m.array, &m.ty) {
+            (Some(_), _) => "&.{}",
+            (None, ValueType::Str) => "\"\"",
+            _ => ".{}",
+        };
+        out.line(format!("self.{} = {};", id, empty));
     }
     out.close("}");
     out.line("");
@@ -345,6 +356,9 @@ fn emit_packet(out: &mut Out, p: &Packet) {
         out.line(format!("var p: {} = .{{}};", name));
         if allocates {
             out.line("errdefer p.deinit(allocator);");
+        }
+        if p.uses_align() {
+            out.line("const pb_start = pb_r.positionBits();");
         }
     } else {
         out.line(format!("const p: {} = .{{}};", name));
@@ -390,6 +404,9 @@ fn emit_packet(out: &mut Out, p: &Packet) {
     } else {
         out.line("_ = self;");
     }
+    if p.uses_align() {
+        out.line("const pb_start = pb_w.positionBits();");
+    }
     if !uses(&body.buf, "pb_w") {
         out.line("_ = pb_w;");
     }
@@ -414,6 +431,37 @@ fn uses(code: &str, name: &str) -> bool {
 
 fn emit_decode_step(out: &mut Out, p: &Packet, lang: &Lang, step: &Step) {
     match step {
+        Step::Align { bytes } => {
+            out.line(format!("try pb_r.skipBits(pbPad(pb_r.positionBits() - pb_start, {}));", bytes * 8))
+        }
+        Step::Field { member: Some(mi), codec: Codec::Str(mode), array, .. } => {
+            let m = &p.members[*mi];
+            let target = format!("p.{}", ident(&m.name));
+            let padded = *mode == StrMode::Padded;
+            match (mode, array) {
+                (StrMode::CString, _) => out.line(format!("{} = try pb_r.readCText(allocator);", target)),
+                (StrMode::Prefixed { prefix, .. }, _) => {
+                    out.open("{");
+                    out.line(format!(
+                        "const pb_n = {};",
+                        read_elem(prefix, &ValueType::Int { width: 64, signed: false })
+                    ));
+                    out.line(format!(
+                        "{} = try pb_r.readText(allocator, try pb_r.count(@bitCast(pb_n), 8), false);",
+                        target
+                    ));
+                    out.close("}");
+                }
+                (_, Some(Count::Expr(e))) => out.line(format!(
+                    "{} = try pb_r.readText(allocator, try pb_r.count({}, 8), {});",
+                    target,
+                    emit_expr(lang, e),
+                    padded
+                )),
+                _ => out
+                    .line(format!("{} = try pb_r.readText(allocator, pb_r.remainingBits() / 8, {});", target, padded)),
+            }
+        }
         Step::Calc { member } => {
             let m = &p.members[*member];
             if let MemberKind::Calculated(e) = &m.kind {
@@ -506,6 +554,38 @@ fn emit_decode_step(out: &mut Out, p: &Packet, lang: &Lang, step: &Step) {
 
 fn emit_encode_step(out: &mut Out, p: &Packet, lang: &Lang, step: &Step) {
     match step {
+        Step::Align { bytes } => {
+            out.line(format!("try pb_w.writeZeroBits(@intCast(pbPad(pb_w.positionBits() - pb_start, {})));", bytes * 8))
+        }
+        Step::Field { member: Some(mi), codec: Codec::Str(mode), array, .. } => {
+            let m = &p.members[*mi];
+            let s = format!("p.{}", ident(&m.name));
+            out.line(format!("try pbCheckText({}, {});", s, !matches!(mode, StrMode::CString)));
+            match (mode, array) {
+                (StrMode::CString, _) => {
+                    out.line(format!("try pb_w.writeBytes({});", s));
+                    out.line("try pb_w.writeBits(0, 8);");
+                }
+                (StrMode::Prefixed { prefix, width }, _) => {
+                    out.line(format!("try pbCheckPrefix({}.len, {});", s, width));
+                    write_elem(out, prefix, &format!("@as(u64, {}.len)", s));
+                    out.line(format!("try pb_w.writeBytes({});", s));
+                }
+                (StrMode::Padded, Some(Count::Expr(e))) => {
+                    out.open("{");
+                    out.line(format!("const pb_n = {};", emit_expr(lang, e)));
+                    out.line(format!("try pbCheckFits({}.len, pb_n);", s));
+                    out.line(format!("try pb_w.writeBytes({});", s));
+                    out.line(format!("try pb_w.writeZeroBits((pb_n - @as(i64, @intCast({}.len))) * 8);", s));
+                    out.close("}");
+                }
+                (_, Some(Count::Expr(e))) => {
+                    out.line(format!("try pbCheckLen({}.len, {});", s, emit_expr(lang, e)));
+                    out.line(format!("try pb_w.writeBytes({});", s));
+                }
+                _ => out.line(format!("try pb_w.writeBytes({});", s)),
+            }
+        }
         Step::Calc { .. } => {}
         Step::Field { member: None, codec, array, .. } => {
             let bits = codec.bits();

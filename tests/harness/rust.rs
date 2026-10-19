@@ -17,6 +17,7 @@ fn value_expr(m: &Member, place: &str) -> String {
         ValueType::Float { .. } => format!("format!(\"{{:?}}\", {})", v),
         ValueType::Mac => format!("pb_hex(&{})", v),
         ValueType::Packet(n) => format!("dump_{}(&{})", n, v),
+        ValueType::Str => format!("pb_q(&{})", v),
     };
     match &m.array {
         None => elem(place),
@@ -42,7 +43,7 @@ impl Target for RustTarget {
         let mut s = String::from("#![allow(non_snake_case)]\nmod packets;\nuse packets::*;\n\n");
         s.push_str("fn pb_hex(b: &[u8]) -> String { format!(\"\\\"{}\\\"\", b.iter().map(|x| format!(\"{:02x}\", x)).collect::<String>()) }\n");
         s.push_str("fn pb_unhex(s: &str) -> Vec<u8> { (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect() }\n");
-        s.push_str("fn pb_q(s: &str) -> String { format!(\"{:?}\", s) }\n\n");
+        s.push_str("fn pb_q(s: &str) -> String {\n    let mut o = String::from(\"\\\"\");\n    for c in s.chars() {\n        match c {\n            '\"' => o.push_str(\"\\\\\\\"\"),\n            '\\\\' => o.push_str(\"\\\\\\\\\"),\n            c if (c as u32) < 0x20 => o.push_str(&format!(\"\\\\u{:04x}\", c as u32)),\n            c => o.push(c),\n        }\n    }\n    o.push('\"');\n    o\n}\n\n");
         for p in &module.packets {
             let _ = writeln!(s, "fn dump_{}(p: &{}) -> String {{", p.name, p.name);
             s.push_str("    let mut parts: Vec<String> = Vec::new();\n");
@@ -63,7 +64,7 @@ impl Target for RustTarget {
                     s,
                     "            p.{} = {};",
                     super::accessor(module, p, name, |_, m| ident(&m.name)),
-                    set_literal(v)
+                    if v.is_string() { format!("{}.to_string()", set_literal(v)) } else { set_literal(v) }
                 );
             }
             let _ = writeln!(s, "            let v = dump_{}(&p);", p.name);

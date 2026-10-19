@@ -1,6 +1,7 @@
 // ---- packet-builder runtime -------------------------------------------------
 
 var _ = math.Sqrt
+var _ = utf8.Valid
 
 // PbError is returned when data cannot be decoded or a value cannot be encoded.
 type PbError struct{ Msg string }
@@ -96,6 +97,42 @@ func (r *PbReader) SkipBits(bits int) {
 	}
 }
 
+func (r *PbReader) PositionBits() int { return r.pos }
+
+// ReadCString returns the bytes before a NUL terminator and consumes it.
+func (r *PbReader) ReadCString(field string) []byte {
+	if r.err != nil {
+		return nil
+	}
+	start := r.pos >> 3
+	for i := start; i < len(r.data); i++ {
+		if r.data[i] == 0 {
+			r.pos = (i + 1) * 8
+			out := make([]byte, i-start)
+			copy(out, r.data[start:i])
+			return out
+		}
+	}
+	r.err = pbErrorf("unexpected end of data: string `%s` has no NUL terminator", field)
+	return nil
+}
+
+// Text validates raw as UTF-8; untilNul cuts it at the first NUL byte.
+func (r *PbReader) Text(raw []byte, untilNul bool, field string) string {
+	if untilNul {
+		for i, b := range raw {
+			if b == 0 {
+				raw = raw[:i]
+				break
+			}
+		}
+	}
+	if r.err == nil && !utf8.Valid(raw) {
+		r.err = pbErrorf("invalid UTF-8 in string field `%s`", field)
+	}
+	return string(raw)
+}
+
 // Count validates a decoded element count against the data that is left.
 func (r *PbReader) Count(n int64, elemBits int, field string) int {
 	if r.err != nil {
@@ -125,6 +162,28 @@ func NewPbWriter() *PbWriter { return &PbWriter{} }
 func (w *PbWriter) Err() error { return w.err }
 
 func (w *PbWriter) Bytes() []byte { return w.buf }
+
+func (w *PbWriter) PositionBits() int { return w.pos }
+
+func (w *PbWriter) CheckFits(length int, size int64, field string) {
+	if w.err == nil && int64(length) > size {
+		w.err = pbErrorf("string field `%s` is %d byte(s), longer than its size %d", field, length, size)
+	}
+}
+
+func (w *PbWriter) CheckUTF8(s string, field string) {
+	if w.err == nil && !utf8.ValidString(s) {
+		w.err = pbErrorf("invalid UTF-8 in string field `%s`", field)
+	}
+}
+
+func (w *PbWriter) CheckNoNul(data []byte, field string) {
+	for _, b := range data {
+		if w.err == nil && b == 0 {
+			w.err = pbErrorf("string field `%s` contains a NUL byte", field)
+		}
+	}
+}
 
 func (w *PbWriter) WriteBits(value uint64, width int) {
 	for left := width; left > 0; {
@@ -189,6 +248,9 @@ func (w *PbWriter) CheckI(v int64, width int, field string) {
 type pbNumber interface {
 	~int8 | ~uint8 | ~int16 | ~uint16 | ~int32 | ~uint32 | ~int64 | ~uint64 | ~float32 | ~float64
 }
+
+// pbPad is the padding needed after offset bits to reach a multiple of unit bits.
+func pbPad(offset, unit int) int { return (unit - offset%unit) % unit }
 
 func pbSext(v uint64, width int) int64 {
 	if width < 64 && (v>>uint(width-1))&1 == 1 {

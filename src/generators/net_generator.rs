@@ -1,7 +1,7 @@
 //! C# backend: one file, no dependencies beyond the base class library.
 
 use crate::generators::common::{ExprLang, GenOptions, Mode, Out, emit_expr, is_calc, mask, pascal_case};
-use crate::ir::{AggOp, ArithOp, Codec, Count, Func, Member, MemberKind, Module, Packet, Step, Ty, ValueType};
+use crate::ir::{AggOp, ArithOp, Codec, Count, Func, Member, MemberKind, Module, Packet, Step, StrMode, Ty, ValueType};
 use crate::models::parsing_models::Endianness;
 
 pub struct CSharpGenerator;
@@ -41,6 +41,7 @@ pub fn scalar_type(ty: &ValueType) -> String {
         ValueType::Float { .. } => "double".into(),
         ValueType::Mac => "byte[]".into(),
         ValueType::Packet(n) => n.clone(),
+        ValueType::Str => "string".into(),
     }
 }
 
@@ -186,6 +187,7 @@ fn read_elem(codec: &Codec, ty: &ValueType) -> String {
         }
         Codec::Mac => return "pbR.ReadBytes(6)".into(),
         Codec::Packet(n) => return format!("{}.DecodeFrom(pbR)", n),
+        Codec::Str(_) => unreachable!("strings are handled separately"),
     };
     match ty {
         ValueType::Int { width, signed: true } => format!("unchecked(({})Pb.Sext({}, {}))", st, raw, width),
@@ -222,6 +224,7 @@ fn write_elem(out: &mut Out, codec: &Codec, ty: &ValueType, v: &str, field: &str
         )),
         Codec::Mac => out.line(format!("pbW.WriteBytes({});", v)),
         Codec::Packet(_) => out.line(format!("{}.EncodeTo(pbW);", v)),
+        Codec::Str(_) => unreachable!("strings are handled separately"),
     }
 }
 
@@ -230,6 +233,7 @@ fn default_value(m: &Member) -> Option<String> {
         (Some(_), ty) => Some(format!("Array.Empty<{}>()", scalar_type(ty))),
         (None, ValueType::Mac) => Some("new byte[6]".into()),
         (None, ValueType::Packet(n)) => Some(format!("new {}()", n)),
+        (None, ValueType::Str) => Some("\"\"".into()),
         _ => None,
     }
 }
@@ -252,6 +256,9 @@ fn emit_packet(out: &mut Out, p: &Packet) {
     out.line(format!("public static {} DecodeFrom(PbReader pbR)", name));
     out.open("{");
     out.line(format!("var p = new {}();", name));
+    if p.uses_align() {
+        out.line("long pbStart = pbR.PositionBits;");
+    }
     let lang = Lang { packet: p, mode: Mode::Decode };
     for step in &p.steps {
         emit_decode_step(out, p, &lang, step);
@@ -269,6 +276,9 @@ fn emit_packet(out: &mut Out, p: &Packet) {
     out.line("public void EncodeTo(PbWriter pbW)");
     out.open("{");
     out.line("var p = this;");
+    if p.uses_align() {
+        out.line("long pbStart = pbW.PositionBits;");
+    }
     let lang = Lang { packet: p, mode: Mode::Encode };
     for &c in &p.encode_calcs {
         let m = &p.members[c];
@@ -285,6 +295,29 @@ fn emit_packet(out: &mut Out, p: &Packet) {
 
 fn emit_decode_step(out: &mut Out, p: &Packet, lang: &Lang, step: &Step) {
     match step {
+        Step::Align { bytes } => out.line(format!("pbR.SkipBits(Pb.Pad(pbR.PositionBits - pbStart, {}));", bytes * 8)),
+        Step::Field { member: Some(mi), codec: Codec::Str(mode), array, .. } => {
+            let m = &p.members[*mi];
+            let raw = match (mode, array) {
+                (StrMode::CString, _) => format!("pbR.ReadCString(\"{}\")", m.name),
+                (StrMode::Prefixed { prefix, .. }, _) => format!(
+                    "pbR.ReadBytes(pbR.Count(unchecked((long){}), 8, \"{}\"))",
+                    read_elem(prefix, &ValueType::Int { width: 64, signed: false }),
+                    m.name
+                ),
+                (_, Some(Count::Expr(e))) => {
+                    format!("pbR.ReadBytes(pbR.Count({}, 8, \"{}\"))", emit_expr(lang, e), m.name)
+                }
+                _ => "pbR.ReadBytes(pbR.RemainingBits / 8)".to_string(),
+            };
+            out.line(format!(
+                "p.{} = Pb.Utf8({}, {}, \"{}\");",
+                prop_name(&p.name, &m.name),
+                raw,
+                *mode == StrMode::Padded,
+                m.name
+            ));
+        }
         Step::Calc { member } => {
             let m = &p.members[*member];
             if let MemberKind::Calculated(e) = &m.kind {
@@ -361,6 +394,38 @@ fn emit_decode_step(out: &mut Out, p: &Packet, lang: &Lang, step: &Step) {
 
 fn emit_encode_step(out: &mut Out, p: &Packet, lang: &Lang, step: &Step) {
     match step {
+        Step::Align { bytes } => {
+            out.line(format!("pbW.WriteZeroBits(Pb.Pad(pbW.PositionBits - pbStart, {}));", bytes * 8))
+        }
+        Step::Field { member: Some(mi), codec: Codec::Str(mode), array, .. } => {
+            let m = &p.members[*mi];
+            out.open("{");
+            out.line(format!("var pbB = Pb.Utf8Bytes(p.{});", prop_name(&p.name, &m.name)));
+            match (mode, array) {
+                (StrMode::CString, _) => {
+                    out.line(format!("Pb.CheckNoNul(pbB, \"{}\");", m.name));
+                    out.line("pbW.WriteBytes(pbB);");
+                    out.line("pbW.WriteBytes(new byte[1]);");
+                }
+                (StrMode::Prefixed { prefix, width }, _) => {
+                    out.line(format!("Pb.CheckU((ulong)pbB.Length, {}, \"{}\");", width, m.name));
+                    write_elem(out, prefix, &ValueType::Int { width: 64, signed: false }, "pbB.Length", &m.name);
+                    out.line("pbW.WriteBytes(pbB);");
+                }
+                (StrMode::Padded, Some(Count::Expr(e))) => {
+                    out.line(format!("long pbN = {};", emit_expr(lang, e)));
+                    out.line(format!("Pb.CheckFits(pbB.Length, pbN, \"{}\");", m.name));
+                    out.line("pbW.WriteBytes(pbB);");
+                    out.line("pbW.WriteZeroBits((pbN - pbB.Length) * 8);");
+                }
+                (_, Some(Count::Expr(e))) => {
+                    out.line(format!("Pb.CheckLen(pbB.Length, {}, \"{}\");", emit_expr(lang, e), m.name));
+                    out.line("pbW.WriteBytes(pbB);");
+                }
+                _ => out.line("pbW.WriteBytes(pbB);"),
+            }
+            out.close("}");
+        }
         Step::Calc { .. } => {}
         Step::Field { member: None, codec, array, .. } => {
             let bits = codec.bits();

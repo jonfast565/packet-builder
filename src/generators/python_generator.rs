@@ -1,7 +1,9 @@
 //! Python backend: a single module using only the standard library.
 
 use crate::generators::common::{ExprLang, GenOptions, Mode, Out, emit_expr, is_calc, mask};
-use crate::ir::{AggOp, ArithOp, Codec, Count, Func, LogicOp, Member, MemberKind, Module, Packet, Step, Ty, ValueType};
+use crate::ir::{
+    AggOp, ArithOp, Codec, Count, Func, LogicOp, Member, MemberKind, Module, Packet, Step, StrMode, Ty, ValueType,
+};
 use crate::models::parsing_models::Endianness;
 
 pub struct PythonGenerator;
@@ -174,6 +176,7 @@ fn read_elem(codec: &Codec, ty: &ValueType) -> String {
         }
         Codec::Mac => return "pb_r.read_bytes(6)".into(),
         Codec::Packet(n) => return format!("{}.decode_from(pb_r)", n),
+        Codec::Str(_) => unreachable!("strings are handled separately"),
     };
     match ty {
         ValueType::Int { width, signed: true } => format!("_pb_sext({}, {})", raw, width),
@@ -201,6 +204,7 @@ fn write_elem(out: &mut Out, codec: &Codec, ty: &ValueType, v: &str, field: &str
         }
         Codec::Mac => out.line(format!("pb_w.write_bytes(bytes({}))", v)),
         Codec::Packet(_) => out.line(format!("{}.encode_to(pb_w)", v)),
+        Codec::Str(_) => unreachable!("strings are handled separately"),
     }
 }
 
@@ -210,6 +214,7 @@ fn annotation(m: &Member) -> String {
         ValueType::Float { .. } => "float".to_string(),
         ValueType::Mac => "bytes".to_string(),
         ValueType::Packet(n) => n.clone(),
+        ValueType::Str => "str".to_string(),
     };
     match &m.array {
         Some(_) if m.ty.is_byte() => "bytes = b\"\"".into(),
@@ -219,6 +224,7 @@ fn annotation(m: &Member) -> String {
             ValueType::Float { .. } => "float = 0.0".into(),
             ValueType::Mac => "bytes = bytes(6)".into(),
             ValueType::Packet(n) => format!("{} = field(default_factory=lambda: {}())", n, n),
+            ValueType::Str => "str = \"\"".into(),
         },
     }
 }
@@ -241,6 +247,9 @@ fn emit_packet(out: &mut Out, p: &Packet) {
     out.line("@classmethod");
     out.open(format!("def decode_from(cls, pb_r) -> \"{}\":", p.name));
     out.line("p = cls()");
+    if p.uses_align() {
+        out.line("pb_start = pb_r.position_bits()");
+    }
     let lang = Lang { packet: p, mode: Mode::Decode };
     for step in &p.steps {
         emit_decode_step(out, p, &lang, step);
@@ -255,6 +264,9 @@ fn emit_packet(out: &mut Out, p: &Packet) {
     out.close("");
     out.open("def encode_to(self, pb_w) -> None:");
     out.line("p = self");
+    if p.uses_align() {
+        out.line("pb_start = pb_w.position_bits()");
+    }
     let lang = Lang { packet: p, mode: Mode::Encode };
     for &c in &p.encode_calcs {
         let m = &p.members[c];
@@ -271,6 +283,26 @@ fn emit_packet(out: &mut Out, p: &Packet) {
 
 fn emit_decode_step(out: &mut Out, p: &Packet, lang: &Lang, step: &Step) {
     match step {
+        Step::Align { bytes } => {
+            out.line(format!("pb_r.skip_bits(_pb_pad(pb_r.position_bits() - pb_start, {}))", bytes * 8))
+        }
+        Step::Field { member: Some(mi), codec: Codec::Str(mode), array, .. } => {
+            let m = &p.members[*mi];
+            let raw = match (mode, array) {
+                (StrMode::CString, _) => format!("pb_r.read_cstring(\"{}\")", m.name),
+                (StrMode::Prefixed { prefix, .. }, _) => format!(
+                    "pb_r.read_bytes(_pb_count({}, 8, pb_r, \"{}\"))",
+                    read_elem(prefix, &ValueType::Int { width: 64, signed: false }),
+                    m.name
+                ),
+                (_, Some(Count::Expr(e))) => {
+                    format!("pb_r.read_bytes(_pb_count({}, 8, pb_r, \"{}\"))", emit_expr(lang, e), m.name)
+                }
+                _ => "pb_r.read_bytes(pb_r.remaining_bits() // 8)".to_string(),
+            };
+            let raw = if *mode == StrMode::Padded { format!("_pb_until_nul({})", raw) } else { raw };
+            out.line(format!("p.{} = _pb_utf8({}, \"{}\")", ident(&m.name), raw, m.name));
+        }
         Step::Calc { member } => {
             let m = &p.members[*member];
             if let MemberKind::Calculated(e) = &m.kind {
@@ -334,6 +366,34 @@ fn emit_decode_step(out: &mut Out, p: &Packet, lang: &Lang, step: &Step) {
 
 fn emit_encode_step(out: &mut Out, p: &Packet, lang: &Lang, step: &Step) {
     match step {
+        Step::Align { bytes } => {
+            out.line(format!("pb_w.write_zero_bits(_pb_pad(pb_w.position_bits() - pb_start, {}))", bytes * 8))
+        }
+        Step::Field { member: Some(mi), codec: Codec::Str(mode), array, .. } => {
+            let m = &p.members[*mi];
+            out.line(format!("pb_b = _pb_utf8_bytes(p.{}, \"{}\")", ident(&m.name), m.name));
+            match (mode, array) {
+                (StrMode::CString, _) => {
+                    out.line(format!("_pb_check_no_nul(pb_b, \"{}\")", m.name));
+                    out.line("pb_w.write_bytes(pb_b + b\"\\0\")");
+                }
+                (StrMode::Prefixed { prefix, width }, _) => {
+                    out.line(format!("_pb_check_u(len(pb_b), {}, \"{}\")", width, m.name));
+                    write_elem(out, prefix, &ValueType::Int { width: 64, signed: false }, "len(pb_b)", &m.name);
+                    out.line("pb_w.write_bytes(pb_b)");
+                }
+                (StrMode::Padded, Some(Count::Expr(e))) => {
+                    out.line(format!("pb_n = {}", emit_expr(lang, e)));
+                    out.line(format!("_pb_check_fits(len(pb_b), pb_n, \"{}\")", m.name));
+                    out.line("pb_w.write_bytes(pb_b + bytes(pb_n - len(pb_b)))");
+                }
+                (_, Some(Count::Expr(e))) => {
+                    out.line(format!("_pb_check_len(len(pb_b), {}, \"{}\")", emit_expr(lang, e), m.name));
+                    out.line("pb_w.write_bytes(pb_b)");
+                }
+                _ => out.line("pb_w.write_bytes(pb_b)"),
+            }
+        }
         Step::Calc { .. } => {}
         Step::Field { member: None, codec, array, .. } => {
             let bits = codec.bits();

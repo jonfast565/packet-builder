@@ -1,0 +1,15 @@
+{
+  "spec": "words32.packet",
+  "cases": [
+    {
+      "name": "32-bit words",
+      "packet": "Words32",
+      "hex": "0102030405060708090a0b0c0d0e",
+      "expect": {
+        "h": 258,
+        "w": 50595078,
+        "d": 506664896818842894
+      }
+    }
+  ]
+}

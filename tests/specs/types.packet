@@ -1,0 +1,91 @@
+// C-style and assembly-style type names, strings and alignment.
+// Uses the default 16-bit word: half word 8, word 16, double word 32, quad word 64.
+
+packet Aliases le {
+  c char,
+  uc unsigned char,
+  uc2 uchar,
+  b byte,
+  s short,
+  us unsigned short,
+  us2 ushort,
+  i int,
+  ui unsigned int,
+  ui2 uint,
+  hw half word,
+  w word,
+  dw double word,
+  dw2 dword,
+  qw quad word,
+  qw2 qword
+}
+
+// Every kind of string.
+packet Strings be {
+  name char[8],             // fixed size, NUL padded
+  len uint8,
+  exact string[len],        // length from another field
+  pascal string(uint8),     // length-prefixed
+  wide string(uint16 le),   // little-endian 16-bit prefix
+  c cstring,                // NUL terminated
+  rest string               // rest of the input
+}
+
+// Field alignment and a standalone align directive.
+packet FieldAlign le {
+  a uint8,
+  b uint32 align 4,         // 3 bytes of padding first
+  c uint8,
+  align 8,                  // offset 9 -> 16
+  d uint16
+}
+
+// C struct layout: natural alignment, capped at 8, plus tail padding.
+packet CStruct le align 8 {
+  a uint8,                  // offset 0
+  b uint32,                 // offset 4
+  c uint16,                 // offset 8
+  d uint64,                 // offset 16
+  e uint8                   // offset 24, size 32
+}
+
+// The same packed to 2 bytes (#pragma pack(2)).
+packet Packed2 le align 2 {
+  a uint8,                  // offset 0
+  b uint32,                 // offset 2
+  c uint8                   // offset 6, size 8
+}
+
+// A nested struct is aligned to its own alignment.
+packet Outer le align 8 {
+  tag uint8,                // offset 0
+  inner CStruct,            // offset 8
+  n uint8                   // offset 40, size 48
+}
+
+packet Item4 le align 4 {
+  a uint8,
+  b uint16                  // offset 2, size 4
+}
+
+packet Items le {
+  count uint8,
+  items Item4[count] align 4
+}
+
+// Padding that depends on the data.
+packet Dyn le {
+  n uint8,
+  data bytes[n],
+  v uint32 align 4,
+  s cstring,
+  align 4,
+  w uint16
+}
+
+// Alignment also works from the middle of a byte.
+packet BitAlign be {
+  a u3,
+  align 1,
+  b uint8
+}

@@ -36,6 +36,7 @@ fn value_expr(m: &Member, place: &str) -> String {
         ValueType::Float { .. } => format!("((double){}).ToString(\"R\", CultureInfo.InvariantCulture)", v),
         ValueType::Mac => format!("Hx({})", v),
         ValueType::Packet(n) => format!("Dump{}({})", n, v),
+        ValueType::Str => format!("System.Text.Json.JsonSerializer.Serialize({})", v),
     };
     match &m.array {
         None => elem(place),

@@ -85,6 +85,18 @@ impl<'a> PbReader<'a> {
         self.pos += bits;
         Ok(())
     }
+
+    /// Bytes up to (not including) a NUL terminator, which is consumed.
+    pub fn read_cstring(&mut self, field: &str) -> Result<Vec<u8>, PbError> {
+        let start = self.pos >> 3;
+        match self.data[start..].iter().position(|b| *b == 0) {
+            Some(n) => {
+                self.pos += (n + 1) * 8;
+                Ok(self.data[start..start + n].to_vec())
+            }
+            None => Err(PbError(format!("unexpected end of data: string `{}` has no NUL terminator", field))),
+        }
+    }
 }
 
 /// Builds a byte buffer; integers may be written at any bit position.
@@ -97,6 +109,10 @@ pub struct PbWriter {
 impl PbWriter {
     pub fn new() -> Self {
         PbWriter::default()
+    }
+
+    pub fn position_bits(&self) -> usize {
+        self.pos
     }
 
     pub fn write_bits(&mut self, value: u64, width: u32) {
@@ -138,6 +154,36 @@ impl PbWriter {
     pub fn finish(self) -> Vec<u8> {
         self.buf
     }
+}
+
+/// Padding needed after `offset` bits to reach a multiple of `unit` bits.
+fn pb_pad(offset: usize, unit: usize) -> usize {
+    (unit - offset % unit) % unit
+}
+
+fn pb_utf8(raw: Vec<u8>, field: &str) -> Result<String, PbError> {
+    String::from_utf8(raw).map_err(|_| PbError(format!("invalid UTF-8 in string field `{}`", field)))
+}
+
+fn pb_until_nul(mut raw: Vec<u8>) -> Vec<u8> {
+    if let Some(n) = raw.iter().position(|b| *b == 0) {
+        raw.truncate(n);
+    }
+    raw
+}
+
+fn pb_check_fits(len: usize, size: i64, field: &str) -> Result<(), PbError> {
+    if size < 0 || len as u64 > size as u64 {
+        return Err(PbError(format!("string field `{}` is {} byte(s), longer than its size {}", field, len, size)));
+    }
+    Ok(())
+}
+
+fn pb_check_no_nul(bytes: &[u8], field: &str) -> Result<(), PbError> {
+    if bytes.contains(&0) {
+        return Err(PbError(format!("string field `{}` contains a NUL byte", field)));
+    }
+    Ok(())
 }
 
 fn pb_sext(v: u64, width: u32) -> i64 {

@@ -280,8 +280,7 @@
         },
         "cookie": "3132333435363738",
         "channel": 1,
-        "screen_name_length": 7,
-        "screen_name": "6578616d706c65",
+        "screen_name": "example",
         "tlvs": [
           {
             "type": 2,
@@ -341,8 +340,7 @@
           "version_info": []
         },
         "channel": 1,
-        "screen_name_length": 9,
-        "screen_name": "61696d627564647931",
+        "screen_name": "aimbuddy1",
         "warning_level": 25,
         "warning_percent": 2.5,
         "user_tlv_count": 2,
@@ -371,6 +369,21 @@
       "name": "SNAC(04,07) TLV running past the end",
       "packet": "IcbmReceive",
       "hex": "0004000700000000002f313233343536373800010961696d62756464793100190002000100020010000300043b9aca000002001805010001010101000f0000000048656c6c6f2c2041",
+      "error": true
+    },
+    {
+      "name": "SNAC(04,06) screen name longer than 255 bytes",
+      "packet": "IcbmSend",
+      "hex": "0004000600000000001031323334353637380001076578616d706c650002001805010001010101000f0000000048656c6c6f2c2041494d2100060000",
+      "set": {
+        "screen_name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "encode_error": true
+    },
+    {
+      "name": "SNAC(04,06) screen name length prefix past the end",
+      "packet": "IcbmSend",
+      "hex": "0004000600000000001031323334353637380001406578616d",
       "error": true
     },
     {

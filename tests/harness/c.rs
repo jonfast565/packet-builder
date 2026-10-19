@@ -24,6 +24,7 @@ fn dump_member(s: &mut String, p: &Packet, m: &Member) {
         ValueType::Float { .. } => format!("printf(\"%.17g\", (double){});", v),
         ValueType::Mac => format!("hx({}, 6);", v),
         ValueType::Packet(n) => format!("dump_{}(&{});", n, v),
+        ValueType::Str => format!("js({}, p->{});", v, len_ident(p, m)),
     };
     match &m.array {
         None => {
@@ -58,6 +59,8 @@ impl Target for CTarget {
         let mut s = String::from(
             "#define PACKETS_IMPLEMENTATION\n#include \"packets.h\"\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n\n",
         );
+        s.push_str("__attribute__((unused)) static char *dupstr(const char *s) { size_t n = strlen(s); char *d = malloc(n + 1); memcpy(d, s, n + 1); return d; }\n");
+        s.push_str("__attribute__((unused)) static void js(const char *s, size_t n) { putchar('\"'); for (size_t i = 0; i < n; i++) { unsigned char c = (unsigned char)s[i]; if (c == '\"' || c == '\\\\') printf(\"\\\\%c\", c); else if (c < 0x20) printf(\"\\\\u%04x\", c); else putchar(c); } putchar('\"'); }\n");
         s.push_str("static void hx(const uint8_t *b, size_t n) { printf(\"\\\"\"); for (size_t i = 0; i < n; i++) printf(\"%02x\", b[i]); printf(\"\\\"\"); }\n");
         s.push_str("static size_t unhex(const char *h, uint8_t *out) { size_t n = strlen(h) / 2; for (size_t i = 0; i < n; i++) { unsigned v; sscanf(h + 2 * i, \"%2x\", &v); out[i] = (uint8_t)v; } return n; }\n\n");
         for p in &module.packets {
@@ -89,12 +92,23 @@ impl Target for CTarget {
             s.push_str("        if (rc != PB_OK) { printf(\"{\\\"ok\\\":false,\\\"error\\\":\\\"%s\\\"}\\n\", pb_strerror(rc)); }\n");
             s.push_str("        else {\n");
             for (name, v) in &c.set {
-                let _ = writeln!(
-                    s,
-                    "            p.{} = {};",
-                    super::accessor(module, p, name, |_, m| ident(&m.name)),
-                    set_literal(v)
-                );
+                let path = super::accessor(module, p, name, |_, m| ident(&m.name));
+                if v.is_string() {
+                    let len = super::accessor(module, p, name, |o, m| {
+                        if m.name == name.rsplit('.').next().unwrap() { len_ident(o, m) } else { ident(&m.name) }
+                    });
+                    let _ = writeln!(
+                        s,
+                        "            free(p.{}); p.{} = dupstr({}); p.{} = strlen(p.{});",
+                        path,
+                        path,
+                        set_literal(v),
+                        len,
+                        path
+                    );
+                } else {
+                    let _ = writeln!(s, "            p.{} = {};", path, set_literal(v));
+                }
             }
             s.push_str("            printf(\"{\\\"ok\\\":true,\\\"value\\\":\");\n");
             let _ = writeln!(s, "            dump_{}(&p);", p.name);

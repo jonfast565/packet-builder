@@ -68,6 +68,17 @@ pub enum TypeNode {
     MacAddress,
     DateTime,
     Bytes, // opaque blob; element type is a byte
+    /// `char`: one 8-bit character. `char[n]` is a fixed-size, NUL-padded string.
+    Char,
+    /// `string[n]` (exactly n bytes) or `string` / `string[]` (rest of input).
+    Str,
+    /// NUL-terminated string.
+    CStr,
+    /// `string(uint8)`: a string preceded by its length in bytes.
+    PrefixedStr {
+        prefix: Box<TypeNode>,
+        endianness: Option<Endianness>,
+    },
     /// Arbitrary-width integer: `u3`, `i12`, ...
     Bits {
         width: u32,
@@ -92,6 +103,8 @@ pub struct TypeExpr {
     pub expr: TypeNode,
     pub array: Option<ArrayLength>,
     pub endianness: Option<Endianness>,
+    /// `align N`: pad to a multiple of N bytes (from the packet start) first.
+    pub align: Option<u64>,
     pub span: Span,
 }
 
@@ -119,6 +132,7 @@ pub struct BitfieldExpr {
     pub container: TypeNode,
     pub endianness: Option<Endianness>,
     pub order: BitOrder,
+    pub align: Option<u64>,
     pub members: Vec<BitfieldMember>,
     pub span: Span,
 }
@@ -137,6 +151,8 @@ pub enum PacketItem {
     Field(TypeExpr),
     Bitfield(BitfieldExpr),
     Calculated(CalculatedField),
+    /// `align N` on its own: pad to a multiple of N bytes from the packet start.
+    Align(u64, Span),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -144,19 +160,24 @@ pub struct PacketExpr {
     pub name: String,
     pub items: Vec<PacketItem>,
     pub endianness: Option<Endianness>,
+    /// `packet P align N`: C-struct-like natural alignment, packed to N bytes.
+    pub align: Option<u64>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PacketExprList {
     pub packets: Vec<PacketExpr>,
+    /// Bits in a `word` (16 unless the file says `wordsize 32`).
+    pub word_size: u32,
 }
 
 impl TypeNode {
     /// Width in bits of a single element, or None for packet references.
     pub fn bit_width(&self) -> Option<u32> {
         Some(match self {
-            TypeNode::UnsignedInteger8 | TypeNode::Integer8 | TypeNode::Bytes => 8,
+            TypeNode::UnsignedInteger8 | TypeNode::Integer8 | TypeNode::Bytes | TypeNode::Char => 8,
+            TypeNode::Str | TypeNode::CStr | TypeNode::PrefixedStr { .. } => 8,
             TypeNode::UnsignedInteger16 | TypeNode::Integer16 => 16,
             TypeNode::UnsignedInteger32 | TypeNode::Integer32 | TypeNode::Float32 => 32,
             TypeNode::UnsignedInteger64 | TypeNode::Integer64 | TypeNode::Float64 | TypeNode::DateTime => 64,
@@ -169,7 +190,7 @@ impl TypeNode {
     /// (width, signed) for integer-like types.
     pub fn integer_info(&self) -> Option<(u32, bool)> {
         Some(match self {
-            TypeNode::UnsignedInteger8 | TypeNode::Bytes => (8, false),
+            TypeNode::UnsignedInteger8 | TypeNode::Bytes | TypeNode::Char => (8, false),
             TypeNode::Integer8 => (8, true),
             TypeNode::UnsignedInteger16 => (16, false),
             TypeNode::Integer16 => (16, true),

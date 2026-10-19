@@ -102,8 +102,7 @@ packet IcbmReceive be {
   header SnacHeader,
   cookie bytes[8],
   channel uint16,
-  screen_name_length uint8,
-  screen_name bytes[screen_name_length],
+  screen_name string(uint8),      // one length byte, then the name
   warning_level uint16,           // tenths of a percent
   user_tlv_count uint16,
   user_tlvs Tlv[user_tlv_count],  // count of nested packets
@@ -156,7 +155,7 @@ for frame in frames(STREAM):
     elif (header.family, header.subtype) == (0x0004, 0x0007):
         im = IcbmReceive.decode(frame.payload)
         print("message from %s (warning level %.1f%%): %s"
-              % (im.screen_name.decode(), im.warning_percent, message_text(im.tlvs)))
+              % (im.screen_name, im.warning_percent, message_text(im.tlvs)))
 ```
 
 ```
@@ -176,7 +175,7 @@ echoed back:
 send = IcbmSend(
     header=SnacHeader(family=0x0004, subtype=0x0006, request_id=0x30),
     cookie=cookie, channel=1,
-    screen_name_length=len(sender), screen_name=sender.encode("ascii"),
+    screen_name=sender,                               # length prefix is written for you
     tlvs=[Tlv(type=0x0002, length=len(fragments), value=fragments),
           Tlv(type=0x0006, length=0, value=b"")],     # store if recipient is offline
 )
@@ -196,7 +195,7 @@ while reader.remaining_bits() > 0 {
     let header = SnacHeader::decode(&frame.payload)?;
     if (header.family, header.subtype) == (0x0004, 0x0007) {
         let im = IcbmReceive::decode(&frame.payload)?;
-        println!("{} says {:?}", String::from_utf8_lossy(&im.screen_name), message_text(&im.tlvs)?);
+        println!("{} says {:?}", im.screen_name, message_text(&im.tlvs)?);
     }
 }
 ```

@@ -4,7 +4,7 @@
 use std::collections::HashSet;
 
 use crate::generators::common::{ExprLang, GenOptions, Mode, Out, emit_expr, is_calc, mask};
-use crate::ir::{AggOp, ArithOp, Codec, Count, Func, Member, MemberKind, Module, Packet, Step, Ty, ValueType};
+use crate::ir::{AggOp, ArithOp, Codec, Count, Func, Member, MemberKind, Module, Packet, Step, StrMode, Ty, ValueType};
 use crate::models::parsing_models::Endianness;
 
 pub struct CGenerator;
@@ -85,6 +85,7 @@ pub fn scalar_type(ty: &ValueType) -> String {
         ValueType::Float { .. } => "double".into(),
         ValueType::Mac => "uint8_t".into(),
         ValueType::Packet(n) => n.clone(),
+        ValueType::Str => "char".into(),
     }
 }
 
@@ -159,6 +160,10 @@ fn emit_declarations(out: &mut Out, p: &Packet) {
         let st = scalar_type(&m.ty);
         match (&m.array, &m.ty) {
             (None, ValueType::Mac) => out.line(format!("uint8_t {}[6];", id)),
+            (None, ValueType::Str) => {
+                out.line(format!("char *{}; /* UTF-8, NUL-terminated */", id));
+                out.line(format!("size_t {};", len_ident(p, m)));
+            }
             (None, _) => out.line(format!("{} {};", st, id)),
             (Some(_), ValueType::Mac) => {
                 out.line(format!("uint8_t (*{})[6];", id));
@@ -314,6 +319,7 @@ fn read_elem(out: &mut Out, codec: &Codec, ty: &ValueType, lv: &str) {
             out.line(format!("PB_TRY({}_decode_from(&{}, pb_r));", n, lv));
             return;
         }
+        Codec::Str(_) => unreachable!("strings are handled separately"),
     }
     match ty {
         ValueType::Int { width, signed: true } => out.line(format!("{} = ({})pb_sext(pb_u, {});", lv, st, width)),
@@ -345,6 +351,7 @@ fn write_elem(out: &mut Out, codec: &Codec, ty: &ValueType, v: &str) {
         )),
         Codec::Mac => out.line(format!("PB_CHECK(pb_write_bytes(pb_w, {}, 6));", v)),
         Codec::Packet(n) => out.line(format!("PB_CHECK({}_encode_to(&{}, pb_w));", n, v)),
+        Codec::Str(_) => unreachable!("strings are handled separately"),
     }
 }
 
@@ -359,6 +366,12 @@ fn emit_implementation(out: &mut Out, p: &Packet) {
         match (&m.array, &m.ty) {
             (None, ValueType::Packet(n)) => {
                 out.line(format!("{}_free(&p->{});", n, id));
+                frees += 1;
+            }
+            (None, ValueType::Str) => {
+                out.line(format!("free(p->{});", id));
+                out.line(format!("p->{} = NULL;", id));
+                out.line(format!("p->{} = 0;", len_ident(p, m)));
                 frees += 1;
             }
             (Some(_), ty) => {
@@ -404,6 +417,9 @@ fn emit_implementation(out: &mut Out, p: &Packet) {
     }
     out.line("uint64_t pb_u = 0;");
     out.line("memset(p, 0, sizeof *p);");
+    if p.uses_align() {
+        out.line("size_t pb_start = pb_reader_position(pb_r);");
+    }
     out.line("(void)pb_u;");
     out.line("(void)pb_r;");
     out.pop();
@@ -446,6 +462,9 @@ fn emit_implementation(out: &mut Out, p: &Packet) {
     }
     out.line("(void)p;");
     out.line("(void)pb_w;");
+    if p.uses_align() {
+        out.line("size_t pb_start = pb_writer_position(pb_w);");
+    }
     for step in &p.steps {
         emit_encode_step(out, p, &lang, step);
     }
@@ -455,6 +474,34 @@ fn emit_implementation(out: &mut Out, p: &Packet) {
 
 fn emit_decode_step(out: &mut Out, p: &Packet, lang: &Lang, step: &Step) {
     match step {
+        Step::Align { bytes } => {
+            out.line(format!("PB_TRY(pb_skip_bits(pb_r, pb_pad(pb_reader_position(pb_r) - pb_start, {})));", bytes * 8))
+        }
+        Step::Field { member: Some(mi), codec: Codec::Str(mode), array, .. } => {
+            let m = &p.members[*mi];
+            let target = format!("&p->{}, &p->{}", ident(&m.name), len_ident(p, m));
+            let padded = if *mode == StrMode::Padded { 1 } else { 0 };
+            match (mode, array) {
+                (StrMode::CString, _) => out.line(format!("PB_TRY(pb_read_ctext(pb_r, {}));", target)),
+                (StrMode::Prefixed { prefix, .. }, _) => {
+                    out.open("{");
+                    out.line("size_t pb_n;");
+                    read_elem(out, prefix, &ValueType::Int { width: 64, signed: false }, "pb_u");
+                    out.line("PB_TRY(pb_count(pb_r, (int64_t)pb_u, 8, &pb_n));");
+                    out.line(format!("PB_TRY(pb_read_text(pb_r, pb_n, 0, {}));", target));
+                    out.close("}");
+                }
+                (_, Some(Count::Expr(e))) => {
+                    out.open("{");
+                    out.line("size_t pb_n;");
+                    out.line(format!("PB_TRY(pb_count(pb_r, {}, 8, &pb_n));", emit_expr(lang, e)));
+                    out.line(format!("PB_TRY(pb_read_text(pb_r, pb_n, {}, {}));", padded, target));
+                    out.close("}");
+                }
+                _ => out
+                    .line(format!("PB_TRY(pb_read_text(pb_r, pb_remaining_bits(pb_r) / 8, {}, {}));", padded, target)),
+            }
+        }
         Step::Calc { member } => {
             let m = &p.members[*member];
             if let MemberKind::Calculated(e) = &m.kind {
@@ -545,6 +592,41 @@ fn emit_decode_step(out: &mut Out, p: &Packet, lang: &Lang, step: &Step) {
 
 fn emit_encode_step(out: &mut Out, p: &Packet, lang: &Lang, step: &Step) {
     match step {
+        Step::Align { bytes } => out.line(format!(
+            "PB_CHECK(pb_write_zero_bits(pb_w, (int64_t)pb_pad(pb_writer_position(pb_w) - pb_start, {})));",
+            bytes * 8
+        )),
+        Step::Field { member: Some(mi), codec: Codec::Str(mode), array, .. } => {
+            let m = &p.members[*mi];
+            let s = format!("p->{}", ident(&m.name));
+            let len = format!("p->{}", len_ident(p, m));
+            let allow_nul = if matches!(mode, StrMode::CString) { 0 } else { 1 };
+            out.line(format!("PB_CHECK(pb_check_text({}, {}, {}));", s, len, allow_nul));
+            match (mode, array) {
+                (StrMode::CString, _) => {
+                    out.line(format!("PB_CHECK(pb_write_bytes(pb_w, (const uint8_t *){}, {}));", s, len));
+                    out.line("PB_CHECK(pb_write_bits(pb_w, 0, 8));");
+                }
+                (StrMode::Prefixed { prefix, width }, _) => {
+                    out.line(format!("PB_CHECK(pb_check_u((uint64_t){}, {}));", len, width));
+                    write_elem(out, prefix, &ValueType::Int { width: 64, signed: false }, &len);
+                    out.line(format!("PB_CHECK(pb_write_bytes(pb_w, (const uint8_t *){}, {}));", s, len));
+                }
+                (StrMode::Padded, Some(Count::Expr(e))) => {
+                    out.open("{");
+                    out.line(format!("int64_t pb_n = {};", emit_expr(lang, e)));
+                    out.line(format!("PB_CHECK(pb_check_fits({}, pb_n));", len));
+                    out.line(format!("PB_CHECK(pb_write_bytes(pb_w, (const uint8_t *){}, {}));", s, len));
+                    out.line(format!("PB_CHECK(pb_write_zero_bits(pb_w, (pb_n - (int64_t){}) * 8));", len));
+                    out.close("}");
+                }
+                (_, Some(Count::Expr(e))) => {
+                    out.line(format!("PB_CHECK(pb_check_len({}, {}));", len, emit_expr(lang, e)));
+                    out.line(format!("PB_CHECK(pb_write_bytes(pb_w, (const uint8_t *){}, {}));", s, len));
+                }
+                _ => out.line(format!("PB_CHECK(pb_write_bytes(pb_w, (const uint8_t *){}, {}));", s, len)),
+            }
+        }
         Step::Calc { .. } => {}
         Step::Field { member: None, codec, array, .. } => {
             let bits = codec.bits();

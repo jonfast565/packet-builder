@@ -49,7 +49,7 @@ fn main() -> Result<(), PbError> {
                 let im = IcbmReceive::decode(&frame.payload)?;
                 println!(
                     "message from {} ({}% warning): {}",
-                    String::from_utf8_lossy(&im.screen_name),
+                    im.screen_name,
                     im.warning_percent,
                     message_text(&im.tlvs)?.unwrap_or_default()
                 );

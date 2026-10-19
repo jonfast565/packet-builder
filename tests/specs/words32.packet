@@ -1,0 +1,8 @@
+// With 32-bit words: half word 16, word 32, double word 64.
+wordsize 32
+
+packet Words32 be {
+  h half word,
+  w word,
+  d double word
+}

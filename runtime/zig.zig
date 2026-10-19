@@ -1,6 +1,6 @@
 // ---- packet-builder runtime -------------------------------------------------
 
-pub const PbError = error{ EndOfData, InvalidLength, OutOfMemory };
+pub const PbError = error{ EndOfData, InvalidLength, InvalidText, OutOfMemory };
 
 /// Reads integers of any bit width (MSB-first) and byte-aligned values.
 pub const PbReader = struct {
@@ -69,6 +69,35 @@ pub const PbReader = struct {
         self.pos += bits;
     }
 
+    pub fn positionBits(self: *const PbReader) usize {
+        return self.pos;
+    }
+
+    /// `n` bytes of UTF-8 text, cut at the first NUL when `until_nul` is set.
+    pub fn readText(self: *PbReader, allocator: std.mem.Allocator, n: usize, until_nul: bool) PbError![]u8 {
+        if (n > self.remainingBits() / 8) return PbError.EndOfData;
+        const start = self.pos >> 3;
+        var raw = self.data[start .. start + n];
+        if (until_nul) {
+            if (std.mem.indexOfScalar(u8, raw, 0)) |end| raw = raw[0..end];
+        }
+        if (!std.unicode.utf8ValidateSlice(raw)) return PbError.InvalidText;
+        const out = try allocator.dupe(u8, raw);
+        self.pos += n * 8;
+        return out;
+    }
+
+    /// UTF-8 text before a NUL terminator; the terminator is consumed.
+    pub fn readCText(self: *PbReader, allocator: std.mem.Allocator) PbError![]u8 {
+        const start = self.pos >> 3;
+        const end = std.mem.indexOfScalarPos(u8, self.data, start, 0) orelse return PbError.EndOfData;
+        const raw = self.data[start..end];
+        if (!std.unicode.utf8ValidateSlice(raw)) return PbError.InvalidText;
+        const out = try allocator.dupe(u8, raw);
+        self.pos = (end + 1) * 8;
+        return out;
+    }
+
     /// Validate a decoded element count against the data that is left.
     pub fn count(self: *const PbReader, n: i64, elem_bits: u64) PbError!usize {
         if (n < 0) return PbError.InvalidLength;
@@ -92,6 +121,10 @@ pub const PbWriter = struct {
 
     pub fn toOwnedSlice(self: *PbWriter) PbError![]u8 {
         return self.buf.toOwnedSlice();
+    }
+
+    pub fn positionBits(self: *const PbWriter) usize {
+        return self.pos;
     }
 
     pub fn writeBits(self: *PbWriter, value: u64, width: u7) PbError!void {
@@ -127,6 +160,24 @@ pub const PbWriter = struct {
         if (left > 0) try self.writeBits(0, @intCast(left));
     }
 };
+
+/// Padding needed after `offset` bits to reach a multiple of `unit` bits.
+fn pbPad(offset: usize, unit: usize) usize {
+    return (unit - offset % unit) % unit;
+}
+
+fn pbCheckText(s: []const u8, allow_nul: bool) PbError!void {
+    if (!allow_nul and std.mem.indexOfScalar(u8, s, 0) != null) return PbError.InvalidText;
+    if (!std.unicode.utf8ValidateSlice(s)) return PbError.InvalidText;
+}
+
+fn pbCheckFits(len: usize, size: i64) PbError!void {
+    if (size < 0 or len > @as(u64, @intCast(size))) return PbError.InvalidLength;
+}
+
+fn pbCheckPrefix(len: usize, width: u7) PbError!void {
+    if (width < 64 and (len >> @intCast(width)) != 0) return PbError.InvalidLength;
+}
 
 /// Reinterpret the low bits of a raw value as `T` (sign comes from `T`).
 fn pbFromBits(comptime T: type, raw: u64) T {
