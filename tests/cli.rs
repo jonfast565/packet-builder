@@ -15,8 +15,11 @@ fn out_dir(name: &str) -> std::path::PathBuf {
 #[test]
 fn generate_writes_one_file_per_language() {
     let dir = out_dir("generate");
-    let status =
-        bin().args(["examples/network.packet", "-l", "rust,go", "-p", "net", "-o"]).arg(&dir).status().unwrap();
+    let status = bin()
+        .args(["generate", "examples/network.packet", "-l", "rust,go", "-p", "net", "-o"])
+        .arg(&dir)
+        .status()
+        .unwrap();
     assert!(status.success());
     assert!(dir.join("net.rs").is_file());
     assert!(dir.join("net.go").is_file());
@@ -30,24 +33,35 @@ fn generate_subcommand_and_alias() {
         let dir = out_dir(cmd);
         let status = bin().args([cmd, "examples/oscar.packet", "-l", "python", "-o"]).arg(&dir).status().unwrap();
         assert!(status.success());
-        assert!(dir.join("packets.py").is_file());
+        assert!(dir.join("oscar.py").is_file(), "package defaults to the input file stem");
     }
 }
 
 #[test]
 fn stdout_prints_code() {
-    let out = bin().args(["examples/network.packet", "-l", "c", "--stdout"]).output().unwrap();
+    let out = bin().args(["gen", "examples/network.packet", "-l", "c", "--stdout"]).output().unwrap();
     assert!(out.status.success());
     assert!(String::from_utf8_lossy(&out.stdout).contains("typedef struct Ipv4"));
-    let out = bin().args(["examples/network.packet", "--stdout"]).output().unwrap();
+    let out = bin().args(["gen", "examples/network.packet", "--stdout"]).output().unwrap();
     assert!(!out.status.success(), "--stdout with every language must fail");
 }
 
 #[test]
 fn unknown_language_is_rejected() {
-    let out = bin().args(["examples/network.packet", "-l", "cobol"]).output().unwrap();
+    let out = bin().args(["gen", "examples/network.packet", "-l", "cobol", "-o", "unused"]).output().unwrap();
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("unknown language `cobol`"));
+}
+
+#[test]
+fn nothing_is_implied() {
+    // A subcommand, an input file and an output (directory or --stdout) are all required.
+    for args in [&[][..], &["examples/network.packet"][..], &["gen"][..], &["gen", "examples/network.packet"][..]] {
+        let out = bin().args(args).output().unwrap();
+        assert!(!out.status.success(), "{:?} must fail", args);
+    }
+    let out = bin().args(["gen", "examples/network.packet", "-l", "c", "--stdout", "-o", "x"]).output().unwrap();
+    assert!(!out.status.success(), "--stdout and --out conflict");
 }
 
 #[test]

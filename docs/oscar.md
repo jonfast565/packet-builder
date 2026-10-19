@@ -119,8 +119,8 @@ deep as you need.
 ## 4. Generating the parsers
 
 ```sh
-cargo run -- examples/oscar.packet -o out              # every language
-cargo run -- examples/oscar.packet -l go -p oscar -o oscar   # Go package "oscar"
+cargo run -- generate examples/oscar.packet -o out              # every language
+cargo run -- generate examples/oscar.packet -l go -o oscar      # Go package "oscar"
 ```
 
 ## 5. Decoding a captured session (Python)
@@ -159,7 +159,7 @@ for frame in frames(STREAM):
 ```
 
 ```
-$ cargo run -- examples/oscar.packet -l python -o examples/out
+$ cargo run -- generate examples/oscar.packet -l python -p packets -o examples/out
 $ PYTHONPATH=examples/out python3 examples/oscar_demo.py
 sign-on, protocol version 1
 server ready, families: 0x0001, 0x0002, 0x0003, 0x0004, 0x0009, 0x0013, 0x0015

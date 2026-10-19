@@ -1,6 +1,6 @@
 //! Decode a captured OSCAR (AIM) TCP stream with the generated Rust parser.
 //!
-//!     cargo run -- examples/oscar.packet -l rust -o examples/out
+//!     cargo run -- generate examples/oscar.packet -l rust -p packets -o examples/out
 //!     cp examples/oscar_demo.rs examples/out/ && cd examples/out
 //!     rustc --edition 2021 oscar_demo.rs && ./oscar_demo
 

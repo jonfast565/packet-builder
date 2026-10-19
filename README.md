@@ -6,12 +6,12 @@ already uses, and packet-builder generates a decoder and encoder for
 
 | language | output | toolchain used by the tests |
 |----------|--------|-----------------------------|
-| C        | single-header library (`packets.h`, C99) | `cc` with ASan + UBSan |
-| Rust     | one module (`packets.rs`), no dependencies | `rustc` |
-| Go       | one file (`packets.go`), standard library only (Go 1.18+) | `go vet`, `gofmt`, `go build` |
-| Python   | one module (`packets.py`), standard library only | `python3` |
-| C#       | one file (`packets.cs`), base class library only | `dotnet` / `csc` |
-| Zig      | one file (`packets.zig`, Zig 0.13) | `zig build-exe` with a leak-checking allocator |
+| C        | single-header library (`<package>.h`, C99) | `cc` with ASan + UBSan |
+| Rust     | one module (`<package>.rs`), no dependencies | `rustc` |
+| Go       | one file (`<package>.go`), standard library only (Go 1.18+) | `go vet`, `gofmt`, `go build` |
+| Python   | one module (`<package>.py`), standard library only | `python3` |
+| C#       | one file (`<package>.cs`), base class library only | `dotnet` / `csc` |
+| Zig      | one file (`<package>.zig`, Zig 0.13) | `zig build-exe` with a leak-checking allocator |
 
 ```
 packet Flap be {
@@ -51,10 +51,10 @@ Real protocol descriptions live in [`examples/`](examples):
 ## Usage
 
 ```sh
-cargo run -- examples/oscar.packet -o out              # generate every language
-cargo run -- generate examples/oscar.packet -l rust,go # a subset (`gen` for short)
-cargo run -- examples/oscar.packet -p oscar            # file stem / Go package / C# namespace
-cargo run -- examples/oscar.packet -l python --stdout  # print instead of writing files
+cargo run -- generate examples/oscar.packet -o out            # every language, files named oscar.*
+cargo run -- gen examples/oscar.packet -l rust,go -o out       # a subset (`gen` is short for `generate`)
+cargo run -- gen examples/oscar.packet -p aim -o out           # file stem / Go package / C# namespace
+cargo run -- gen examples/oscar.packet -l python --stdout      # print instead of writing files
 cargo run -- check examples/*.packet                   # validate only
 cargo run -- layout tests/specs/types.packet -k CStruct
 cargo run -- languages

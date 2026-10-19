@@ -2,7 +2,7 @@
 
 Generate the parser first:
 
-    cargo run -- examples/oscar.packet -l python -o examples/out
+    cargo run -- generate examples/oscar.packet -l python -p packets -o examples/out
     PYTHONPATH=examples/out python3 examples/oscar_demo.py
 """
 

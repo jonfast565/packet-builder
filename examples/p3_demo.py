@@ -2,7 +2,7 @@
 
 Generate the parser first:
 
-    cargo run -- examples/p3.packet -l python -o examples/out
+    cargo run -- generate examples/p3.packet -l python -p packets -o examples/out
     PYTHONPATH=examples/out python3 examples/p3_demo.py
 """
 

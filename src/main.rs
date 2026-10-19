@@ -8,19 +8,15 @@ use packet_builder::{GenOptions, Language, compile, generate_module};
 
 /// Generate binary packet parsers and serializers from packet descriptions.
 #[derive(Parser)]
-#[command(name = "packet_builder", version, about, args_conflicts_with_subcommands = true)]
+#[command(name = "packet_builder", version, about)]
 struct Cli {
     #[command(subcommand)]
-    command: Option<Command>,
-
-    /// Without a subcommand, `generate` runs with these arguments.
-    #[command(flatten)]
-    generate: GenerateArgs,
+    command: Command,
 }
 
 #[derive(Subcommand)]
 enum Command {
-    /// Generate code (the default command).
+    /// Generate code.
     #[command(visible_alias = "gen")]
     Generate(GenerateArgs),
     /// Validate packet descriptions without writing anything.
@@ -44,20 +40,20 @@ enum Command {
 #[derive(Args)]
 struct GenerateArgs {
     /// Packet description file.
-    #[arg(default_value = "examples/oscar.packet")]
     input: PathBuf,
 
-    /// Output directory.
-    #[arg(short, long, default_value = "results")]
-    out: PathBuf,
+    /// Output directory (required unless --stdout).
+    #[arg(short, long, required_unless_present = "stdout", conflicts_with = "stdout")]
+    out: Option<PathBuf>,
 
-    /// Target languages, comma separated (default: all). See `languages`.
+    /// Target languages, comma separated (all when omitted). See `languages`.
     #[arg(short, long = "lang", value_delimiter = ',', value_parser = parse_language)]
     langs: Vec<Language>,
 
     /// Output file stem; also the Go package, C# namespace and C header guard.
-    #[arg(short, long, default_value = "packets")]
-    package: String,
+    /// Taken from the input file name when omitted (`oscar.packet` → `oscar`).
+    #[arg(short, long)]
+    package: Option<String>,
 
     /// Print the generated code to stdout instead of writing files (one language only).
     #[arg(long)]
@@ -74,11 +70,10 @@ fn parse_language(s: &str) -> Result<Language, String> {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
-        Some(Command::Generate(args)) => generate(args),
-        None => generate(cli.generate),
-        Some(Command::Check { inputs }) => check(&inputs),
-        Some(Command::Layout { input, packets }) => layout(&input, &packets),
-        Some(Command::Languages) => {
+        Command::Generate(args) => generate(args),
+        Command::Check { inputs } => check(&inputs),
+        Command::Layout { input, packets } => layout(&input, &packets),
+        Command::Languages => {
             for l in Language::ALL {
                 println!("{:<8} .{}", l.name(), l.extension());
             }
@@ -96,6 +91,17 @@ fn main() -> ExitCode {
     }
 }
 
+/// A package name from the input file stem: characters that are not valid
+/// in identifiers become `_` (`my-proto.packet` → `my_proto`).
+fn package_from(input: &Path) -> String {
+    let stem = input.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let mut name: String = stem.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
+    if !name.starts_with(|c: char| c.is_ascii_alphabetic()) {
+        name.insert(0, 'p');
+    }
+    name
+}
+
 /// Read and compile a file; errors are rendered with source snippets.
 fn load(input: &Path) -> Result<Module, String> {
     let source = fs::read_to_string(input).map_err(|e| format!("cannot read {}: {}", input.display(), e))?;
@@ -105,7 +111,7 @@ fn load(input: &Path) -> Result<Module, String> {
 fn generate(args: GenerateArgs) -> Result<(), String> {
     let module = load(&args.input)?;
     let langs = if args.langs.is_empty() { Language::ALL.to_vec() } else { args.langs };
-    let opts = GenOptions { package: args.package };
+    let opts = GenOptions { package: args.package.unwrap_or_else(|| package_from(&args.input)) };
 
     if args.stdout {
         if langs.len() != 1 {
@@ -115,9 +121,10 @@ fn generate(args: GenerateArgs) -> Result<(), String> {
         return Ok(());
     }
 
-    fs::create_dir_all(&args.out).map_err(|e| format!("cannot create {}: {}", args.out.display(), e))?;
+    let out = args.out.expect("clap requires --out unless --stdout");
+    fs::create_dir_all(&out).map_err(|e| format!("cannot create {}: {}", out.display(), e))?;
     for lang in langs {
-        let path = args.out.join(format!("{}.{}", opts.package, lang.extension()));
+        let path = out.join(format!("{}.{}", opts.package, lang.extension()));
         fs::write(&path, generate_module(&module, lang, &opts))
             .map_err(|e| format!("cannot write {}: {}", path.display(), e))?;
         println!("wrote {}", path.display());

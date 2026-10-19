@@ -1,6 +1,6 @@
 //! Decode a P3 (AOL client) session with the generated Rust parser.
 //!
-//!     cargo run -- examples/p3.packet -l rust -o examples/out
+//!     cargo run -- generate examples/p3.packet -l rust -p packets -o examples/out
 //!     cp examples/p3_demo.rs examples/out/ && cd examples/out
 //!     rustc --edition 2021 p3_demo.rs && ./p3_demo
 
