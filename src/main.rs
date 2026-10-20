@@ -1,3 +1,5 @@
+mod commands;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -38,6 +40,12 @@ enum Command {
     /// Generate a Wireshark Lua dissector from the file's `dissector`
     /// declarations (or from --packet and the other options).
     Dissector(DissectorArgs),
+    /// Write a Markdown reference with bit diagrams.
+    Doc(commands::DocArgs),
+    /// Write fuzzing harnesses that round-trip every packet.
+    Fuzz(commands::FuzzArgs),
+    /// Report wire-incompatible changes between two versions of a description.
+    Diff(commands::DiffArgs),
     /// List the supported target languages.
     Languages,
 }
@@ -138,6 +146,11 @@ struct GenerateArgs {
     /// Print the generated code to stdout instead of writing files (one language only).
     #[arg(long)]
     stdout: bool,
+
+    /// Decoded byte buffers (and strings, where the language allows) refer
+    /// to the input instead of copying it.
+    #[arg(long)]
+    zero_copy: bool,
 }
 
 fn parse_language(s: &str) -> Result<Language, String> {
@@ -155,6 +168,9 @@ fn main() -> ExitCode {
         Command::Layout { input, packets } => layout(&input, &packets),
         Command::Decode(args) => decode(args),
         Command::Dissector(args) => dissector(args),
+        Command::Doc(args) => commands::doc(args),
+        Command::Fuzz(args) => commands::fuzz(args),
+        Command::Diff(args) => commands::diff(args),
         Command::Languages => {
             for l in Language::ALL {
                 println!("{:<8} .{}", l.name(), l.extension());
@@ -249,7 +265,8 @@ fn parse_number(s: &str) -> Option<u64> {
 fn generate(args: GenerateArgs) -> Result<(), String> {
     let module = load(&args.input)?;
     let langs = if args.langs.is_empty() { Language::ALL.to_vec() } else { args.langs };
-    let opts = GenOptions { package: args.package.unwrap_or_else(|| package_from(&args.input)) };
+    let opts =
+        GenOptions { package: args.package.unwrap_or_else(|| package_from(&args.input)), zero_copy: args.zero_copy };
 
     if args.stdout {
         if langs.len() != 1 {

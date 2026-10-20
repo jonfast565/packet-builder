@@ -211,6 +211,14 @@ PB_FN int pb_read_bytes(pb_reader *r, uint8_t *dst, size_t n) {
     return PB_OK;
 }
 
+/* The next n bytes as a pointer into the input (zero-copy). */
+PB_FN int pb_read_ref(pb_reader *r, size_t n, const uint8_t **out) {
+    if (n > pb_remaining_bits(r) / 8) return pb_short(r, n * 8);
+    *out = r->data + (r->pos >> 3);
+    r->pos += n * 8;
+    return PB_OK;
+}
+
 PB_FN int pb_skip_bits(pb_reader *r, size_t bits) {
     PB_NEED(r, bits);
     r->pos += bits;
@@ -329,7 +337,8 @@ PB_FN int pb_read_varint(pb_reader *r, unsigned kind, uint64_t *out) {
 
 /* Bytes up to `term` (consumed) into a new allocation. Without it: the rest
  * of the input when `optional`, otherwise an error. */
-PB_FN int pb_read_until(pb_reader *r, const uint8_t *term, size_t tlen, int optional, uint8_t **out, size_t *out_len) {
+/* pb_read_until without copying: *out points into the input (zero-copy). */
+PB_FN int pb_read_until_ref(pb_reader *r, const uint8_t *term, size_t tlen, int optional, const uint8_t **out, size_t *out_len) {
     size_t start = r->pos >> 3, end = r->limit >> 3, i, n = 0;
     int found = 0;
     for (i = start; i + tlen <= end; i++) {
@@ -343,11 +352,18 @@ PB_FN int pb_read_until(pb_reader *r, const uint8_t *term, size_t tlen, int opti
         if (!optional) return pb_short(r, pb_remaining_bits(r) + 8);
         n = end - start;
     }
-    *out = (uint8_t *)malloc(n ? n : 1);
-    if (!*out) return PB_ERR_NOMEM;
-    if (n) memcpy(*out, r->data + start, n);
+    *out = r->data + start;
     *out_len = n;
     r->pos = (start + n + (found ? tlen : 0)) * 8;
+    return PB_OK;
+}
+
+PB_FN int pb_read_until(pb_reader *r, const uint8_t *term, size_t tlen, int optional, uint8_t **out, size_t *out_len) {
+    const uint8_t *ref;
+    PB_PASS(pb_read_until_ref(r, term, tlen, optional, &ref, out_len));
+    *out = (uint8_t *)malloc(*out_len ? *out_len : 1);
+    if (!*out) return PB_ERR_NOMEM;
+    if (*out_len) memcpy(*out, ref, *out_len);
     return PB_OK;
 }
 
@@ -427,6 +443,100 @@ PB_FN int pb_read_text_until(pb_reader *r, const uint8_t *term, size_t tlen, int
     rc = pb_convert_text(raw, n, enc, 0, out, out_len);
     free(raw);
     return rc;
+}
+
+/* A growable text buffer for the *_to_json functions. */
+typedef struct pb_sb {
+    char *buf;
+    size_t len, cap;
+    int failed;
+} pb_sb;
+
+PB_FN void pb_sb_put(pb_sb *b, const char *s, size_t n) {
+    if (b->failed) return;
+    if (b->len + n + 1 > b->cap) {
+        size_t ncap = b->cap ? b->cap * 2 : 128;
+        char *nb;
+        while (ncap < b->len + n + 1) ncap *= 2;
+        nb = (char *)realloc(b->buf, ncap);
+        if (!nb) {
+            b->failed = 1;
+            return;
+        }
+        b->buf = nb;
+        b->cap = ncap;
+    }
+    memcpy(b->buf + b->len, s, n);
+    b->len += n;
+    b->buf[b->len] = 0;
+}
+
+PB_FN void pb_sb_puts(pb_sb *b, const char *s) { pb_sb_put(b, s, strlen(s)); }
+
+PB_FN void pb_sb_i64(pb_sb *b, int64_t v) {
+    char t[32];
+    snprintf(t, sizeof t, "%lld", (long long)v);
+    pb_sb_puts(b, t);
+}
+
+PB_FN void pb_sb_u64(pb_sb *b, uint64_t v) {
+    char t[32];
+    snprintf(t, sizeof t, "%llu", (unsigned long long)v);
+    pb_sb_puts(b, t);
+}
+
+PB_FN void pb_sb_f64(pb_sb *b, double v) {
+    char t[40];
+    snprintf(t, sizeof t, "%.17g", v);
+    pb_sb_puts(b, t);
+}
+
+/* Bytes as a JSON string of hex digits. */
+PB_FN void pb_sb_hex(pb_sb *b, const uint8_t *d, size_t n) {
+    static const char digits[] = "0123456789abcdef";
+    size_t i;
+    pb_sb_put(b, "\"", 1);
+    for (i = 0; i < n; i++) {
+        char t[2];
+        t[0] = digits[d[i] >> 4];
+        t[1] = digits[d[i] & 15];
+        pb_sb_put(b, t, 2);
+    }
+    pb_sb_put(b, "\"", 1);
+}
+
+/* A JSON string literal of n bytes of UTF-8. */
+PB_FN void pb_sb_str(pb_sb *b, const char *s, size_t n) {
+    size_t i;
+    pb_sb_put(b, "\"", 1);
+    for (i = 0; i < n; i++) {
+        unsigned char c = (unsigned char)s[i];
+        char t[8];
+        if (c == '"' || c == '\\') {
+            t[0] = '\\';
+            t[1] = (char)c;
+            pb_sb_put(b, t, 2);
+        } else if (c < 0x20) {
+            snprintf(t, sizeof t, "\\u%04x", c);
+            pb_sb_puts(b, t);
+        } else {
+            pb_sb_put(b, (const char *)&c, 1);
+        }
+    }
+    pb_sb_put(b, "\"", 1);
+}
+
+/* The text, or NULL when out of memory (then nothing is left to free). */
+PB_FN char *pb_sb_finish(pb_sb *b) {
+    if (b->failed) {
+        free(b->buf);
+        return NULL;
+    }
+    if (!b->buf) {
+        b->buf = (char *)malloc(1);
+        if (b->buf) b->buf[0] = 0;
+    }
+    return b->buf;
 }
 
 /* Validate a decoded element count against the data that is left. */
@@ -582,6 +692,8 @@ int pb_writer_finish(pb_writer *w) {
     }
     for (i = 0; i < w->nplaced; i++) {
         pb_placed *pl = &w->placed[i];
+        /* The output reaches the offset even when the packet is empty. */
+        if (w->len < pl->at) PB_PASS(pb_write_zero_bits(w, (int64_t)(pl->at - w->len) * 8));
         for (j = 0; j < pl->len; j++) {
             k = pl->at + j;
             if (k < w->len) {

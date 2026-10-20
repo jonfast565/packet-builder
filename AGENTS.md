@@ -21,9 +21,10 @@ source ──parser──▶ PacketExprList ──ir::analyze──▶ ir::Modul
 | `src/ir/interp/` | the reference interpreter: decodes/encodes a `Module` directly, using `runtime/rust.rs` (included as `interp::rt`). `show.rs` renders decoded values for the `decode` command. |
 | `src/pcap.rs` | pcap/pcapng reading and pcap writing (no dependencies). |
 | `src/generators/common/` | code shared by every backend (see below). |
-| `src/generators/<lang>/` | one backend per language, always split the same way: `mod.rs` (file preamble, `Backend` impl), `naming.rs` (identifiers, types, `Dialect` marker), `expr.rs` (`ExprLang` impl, `store_value`), `decode.rs` / `encode.rs` (`StepEmitter` impls), `packet.rs` (struct + method wrappers). |
+| `src/generators/<lang>/` | one backend per language, always split the same way: `mod.rs` (file preamble, `Backend` impl), `naming.rs` (identifiers, types, `Dialect` marker), `expr.rs` (`ExprLang` impl, `store_value`), `decode.rs` / `encode.rs` (`StepEmitter` impls), `packet.rs` (struct + method wrappers), `json.rs` (`to_json`), `stream.rs` (`try_decode`, `frame_len`). Decoders take a `zero_copy` flag (`GenOptions::zero_copy`; `common::buffers` finds what holds byte buffers). |
 | `src/generators/wireshark/` | the Wireshark Lua dissector generator (`dissector` command; not a `Language`): `naming.rs` (`Lua` dialect, field keys), `expr.rs`, `fields.rs` (ProtoFields, value strings), `dissect.rs` (a decode `StepEmitter` that also fills the tree; failed checks become expert warnings), `mod.rs` (file layout, frame-length functions, registration). Runtime in `runtime/wireshark.lua`. |
 | `src/ir/frame.rs` | `Module::frame_length`: a packet's size from fixed-offset header fields, for TCP reassembly and stream framing. |
+| `src/tools/` | `doc` (Markdown with bit diagrams), `fuzz` (cargo-fuzz / libFuzzer harnesses), `diff` (wire compatibility); CLI glue in `src/commands.rs`. |
 | `runtime/` | hand-written runtime support pasted into each generated file. |
 | `src/sources.rs`, `src/imports.rs` | `SourceMap` (every file gets a base offset, so a `Span` also says which file it is in; the parser adds the base) and the loader behind `compile_file`, which follows `import`s and merges the files' packets and constants. |
 | `src/language.rs`, `src/lib.rs`, `src/main.rs` | `Language` enum, library entry points (`compile` for one source, `compile_file` with imports), CLI. |
@@ -87,11 +88,13 @@ per module, and split a file when it grows past roughly 400–500 lines.
 ### Adding a backend
 
 1. Add a `Language` variant (`src/language.rs`) with its name and extension.
-2. Create `src/generators/<lang>/` with the six files above; implement
+2. Create `src/generators/<lang>/` with the files above; implement
    `Dialect`, `ExprLang for Scope<'_, X>`, two `StepEmitter`s and `Backend`.
 3. Register it in `generators::backend`.
-4. Add a test harness in `tests/harness/<lang>.rs`. Drivers print one JSON
-   line per case, including the error kind and path (see `tests/harness/mod.rs`).
+4. Add a test harness in `tests/harness/<lang>.rs`. Drivers print two JSON
+   lines per case (the decode/encode result, then what `try_decode` and
+   `frame_len` say; see `tests/harness/mod.rs`), and every spec runs with
+   and without `--zero-copy`.
 
 ### Adding a language feature
 

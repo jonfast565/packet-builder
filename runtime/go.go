@@ -4,6 +4,38 @@ var _ = math.Sqrt
 var _ = utf8.Valid
 var _ = strings.Builder{}
 var _ = sort.Ints
+var _ = strconv.Itoa
+
+// pbJSONHex returns bytes as a JSON string of hex digits (for ToJSON).
+func pbJSONHex(b []byte) string {
+	const digits = "0123456789abcdef"
+	out := make([]byte, 0, 2*len(b)+2)
+	out = append(out, '"')
+	for _, c := range b {
+		out = append(out, digits[c>>4], digits[c&15])
+	}
+	return string(append(out, '"'))
+}
+
+// pbJSONStr returns s as a JSON string literal (for ToJSON).
+func pbJSONStr(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, c := range s {
+		switch {
+		case c == '"':
+			b.WriteString(`\"`)
+		case c == '\\':
+			b.WriteString(`\\`)
+		case c < 0x20:
+			fmt.Fprintf(&b, `\u%04x`, c)
+		default:
+			b.WriteRune(c)
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
+}
 
 // PbErrorKind says what went wrong while decoding or encoding.
 type PbErrorKind int
@@ -278,6 +310,17 @@ func (r *PbReader) ReadBytes(n int) []byte {
 	return out
 }
 
+// ReadBytesRef returns the next n bytes as a slice of the input (zero-copy;
+// its capacity ends with it, so appending copies).
+func (r *PbReader) ReadBytesRef(n int) []byte {
+	if !r.need(n * 8) {
+		return []byte{}
+	}
+	start := r.pos >> 3
+	r.pos += n * 8
+	return r.data[start : start+n : start+n]
+}
+
 func (r *PbReader) ReadMac() (m [6]byte) {
 	copy(m[:], r.ReadBytes(6))
 	return m
@@ -425,6 +468,11 @@ func (r *PbReader) ReadVarint(kind int) uint64 {
 // ReadUntil returns the bytes before term and consumes both. Without the
 // terminator it returns the rest of the input when optional, else fails.
 func (r *PbReader) ReadUntil(term []byte, optional bool) []byte {
+	return append([]byte{}, r.ReadUntilRef(term, optional)...)
+}
+
+// ReadUntilRef is ReadUntil returning a slice of the input (zero-copy).
+func (r *PbReader) ReadUntilRef(term []byte, optional bool) []byte {
 	if r.err != nil {
 		return []byte{}
 	}
@@ -432,7 +480,7 @@ func (r *PbReader) ReadUntil(term []byte, optional bool) []byte {
 	for i := start; i+len(term) <= end; i++ {
 		if string(r.data[i:i+len(term)]) == string(term) {
 			r.pos = (i + len(term)) * 8
-			return append([]byte{}, r.data[start:i]...)
+			return r.data[start:i:i]
 		}
 	}
 	if !optional {
@@ -440,7 +488,7 @@ func (r *PbReader) ReadUntil(term []byte, optional bool) []byte {
 		return []byte{}
 	}
 	r.pos = r.limit
-	return append([]byte{}, r.data[start:end]...)
+	return r.data[start:end:end]
 }
 
 // Count validates a decoded element count against the data that is left.
@@ -523,6 +571,10 @@ func (w *PbWriter) Finish() ([]byte, error) {
 	}
 	sort.SliceStable(w.placed, func(i, j int) bool { return w.placed[i].at < w.placed[j].at })
 	for _, pl := range w.placed {
+		// The output reaches the offset even when the packet is empty.
+		for len(w.buf) < pl.at {
+			w.buf = append(w.buf, 0)
+		}
 		for i, b := range pl.data {
 			k := pl.at + i
 			switch {

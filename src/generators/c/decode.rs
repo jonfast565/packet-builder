@@ -51,11 +51,13 @@ pub fn term_args(term: &[u8]) -> String {
 
 pub struct Decoder<'a> {
     scope: Scope<'a, C>,
+    /// Byte buffers point into the input.
+    zero_copy: bool,
 }
 
 impl<'a> Decoder<'a> {
-    pub fn new(packet: &'a Packet) -> Self {
-        Decoder { scope: Scope::new(packet, Mode::Decode) }
+    pub fn new(packet: &'a Packet, zero_copy: bool) -> Self {
+        Decoder { scope: Scope::new(packet, Mode::Decode), zero_copy }
     }
 
     /// Statements that decode `arm` of union `u` into `place`.
@@ -71,6 +73,12 @@ impl<'a> Decoder<'a> {
                     Count::Remaining => out.line("pb_n = pb_remaining_bits(pb_r) / 8;"),
                     Count::Until(_) | Count::Terminated { .. } => unreachable!("union arms have no until or term"),
                 }
+                if self.zero_copy {
+                    out.line(format!("PB_TRY(pb_read_ref(pb_r, pb_n, &{}.data));", target));
+                    out.line(format!("{}.len = pb_n;", target));
+                    out.close("}");
+                    return;
+                }
                 out.line(format!("{}.data = pb_alloc(pb_n, 1);", target));
                 out.line(format!("if (!{}.data) {{ pb_rc = PB_ERR_NOMEM; goto pb_fail; }}", target));
                 out.line(format!("{}.len = pb_n;", target));
@@ -79,6 +87,45 @@ impl<'a> Decoder<'a> {
             }
             (Some(ty), Some(codec), None) => read_elem(&self.scope, out, codec, ty, &target),
             _ => {}
+        }
+    }
+}
+
+impl Decoder<'_> {
+    /// Zero-copy: byte buffer `target` (length `len`) points into the input.
+    fn byte_ref(&self, out: &mut Out, target: &str, len: &str, codec: &Codec, ty: &ValueType, count: &Count) {
+        match count {
+            Count::Expr(e) => {
+                out.line("size_t pb_n;");
+                out.line(format!("PB_TRY(pb_count(pb_r, {}, 8, &pb_n));", self.scope.expr(e)));
+                out.line(format!("PB_TRY(pb_read_ref(pb_r, pb_n, &{}));", target));
+                out.line(format!("{} = pb_n;", len));
+            }
+            Count::Remaining => {
+                out.line(format!("{} = pb_remaining_bits(pb_r) / 8;", len));
+                out.line(format!("PB_TRY(pb_read_ref(pb_r, {}, &{}));", len, target));
+            }
+            Count::Terminated { term, optional } => out.line(format!(
+                "PB_TRY(pb_read_until_ref(pb_r, {}, {}, &{}, &{}));",
+                term_args(term),
+                C::flag(*optional),
+                target,
+                len
+            )),
+            Count::Until(cond) => {
+                // The elements are consecutive bytes of the input.
+                out.line("size_t pb_from = pb_reader_position(pb_r);");
+                out.open("for (pb_i = 0; pb_remaining_bits(pb_r) > 0; pb_i++) {");
+                out.line("pb_at_index(&pb_r->tr, pb_i);");
+                read_elem(&self.scope, out, codec, ty, "pb_u");
+                out.open("{");
+                out.line("const uint8_t *pb_last = pb_r->data + (pb_r->pos >> 3) - 1;");
+                out.line(format!("if ({}) break;", self.scope.expr(cond)));
+                out.close("}");
+                out.close("}");
+                out.line(format!("{} = pb_r->data + (pb_from >> 3);", target));
+                out.line(format!("{} = (pb_reader_position(pb_r) - pb_from) >> 3;", len));
+            }
         }
     }
 }
@@ -246,6 +293,11 @@ impl StepEmitter for Decoder<'_> {
         out.open("{");
         out.line("size_t pb_i = 0;");
         out.line("(void)pb_i;");
+        if self.zero_copy && ty.is_byte() {
+            self.byte_ref(out, &target, &len, codec, ty, count);
+            out.close("}");
+            return;
+        }
         match count {
             Count::Expr(e) => {
                 out.line("size_t pb_n;");

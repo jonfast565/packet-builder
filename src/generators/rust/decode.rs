@@ -42,11 +42,23 @@ pub fn byte_list(bytes: &[u8]) -> String {
 
 pub struct Decoder<'a> {
     scope: Scope<'a, Rust>,
+    /// Byte buffers and strings borrow the input (`Cow::Borrowed`).
+    zero_copy: bool,
 }
 
 impl<'a> Decoder<'a> {
-    pub fn new(packet: &'a Packet) -> Self {
-        Decoder { scope: Scope::new(packet, Mode::Decode) }
+    pub fn new(packet: &'a Packet, zero_copy: bool) -> Self {
+        Decoder { scope: Scope::new(packet, Mode::Decode), zero_copy }
+    }
+
+    /// The reader method for `n` bytes: a copy, or a borrowed slice.
+    fn read_bytes(&self) -> &'static str {
+        if self.zero_copy { "read_slice" } else { "read_bytes" }
+    }
+
+    /// A byte buffer value from `read` (a slice when zero-copy).
+    fn buffer(&self, read: String) -> String {
+        if self.zero_copy { format!("Cow::Borrowed({})", read) } else { read }
     }
 
     /// Expression that decodes `arm` of union `u`.
@@ -55,10 +67,12 @@ impl<'a> Decoder<'a> {
         match (&arm.ty, &arm.codec, &arm.count) {
             (None, ..) => format!("{}::{}", u, v),
             (Some(_), _, Some(Count::Expr(e))) => {
-                format!("{}::{}(pb_r.read_bytes(pb_r.count({}, 8)?)?)", u, v, self.scope.expr(e))
+                let read = format!("pb_r.{}(pb_r.count({}, 8)?)?", self.read_bytes(), self.scope.expr(e));
+                format!("{}::{}({})", u, v, self.buffer(read))
             }
             (Some(_), _, Some(Count::Remaining)) => {
-                format!("{}::{}(pb_r.read_bytes(pb_r.remaining_bits() / 8)?)", u, v)
+                let read = format!("pb_r.{}(pb_r.remaining_bits() / 8)?", self.read_bytes());
+                format!("{}::{}({})", u, v, self.buffer(read))
             }
             (Some(ty), Some(codec), None) => format!("{}::{}({})", u, v, read_elem(&self.scope, codec, ty)),
             _ => format!("{}::{}(Default::default())", u, v),
@@ -148,20 +162,37 @@ impl StepEmitter for Decoder<'_> {
     }
 
     fn string(&self, out: &mut Out, m: &Member, mode: &StrMode, array: Option<&Count>) {
+        let zc = if self.zero_copy { "_slice" } else { "" };
+        let rb = self.read_bytes();
         let raw = match (mode, array) {
-            (StrMode::CString, _) => "pb_r.read_cstring()?".to_string(),
+            (StrMode::CString, _) => format!("pb_r.read_cstring{}()?", zc),
             (StrMode::Terminated { term, optional }, _) => {
-                format!("pb_r.read_until(&{}, {})?", byte_list(term), optional)
+                format!("pb_r.read_until{}(&{}, {})?", zc, byte_list(term), optional)
             }
             (StrMode::Prefixed { prefix, .. }, _) => {
                 let len = read_elem(&self.scope, prefix, &PREFIX_LEN);
-                format!("{{ let pb_n = {} as i64; pb_r.read_bytes(pb_r.count(pb_n, 8)?)? }}", len)
+                format!("{{ let pb_n = {} as i64; pb_r.{}(pb_r.count(pb_n, 8)?)? }}", len, rb)
             }
-            (_, Some(Count::Expr(e))) => format!("pb_r.read_bytes(pb_r.count({}, 8)?)?", self.scope.expr(e)),
-            _ => "pb_r.read_bytes(pb_r.remaining_bits() / 8)?".to_string(),
+            (_, Some(Count::Expr(e))) => format!("pb_r.{}(pb_r.count({}, 8)?)?", rb, self.scope.expr(e)),
+            _ => format!("pb_r.{}(pb_r.remaining_bits() / 8)?", rb),
         };
         let padded = *mode == StrMode::Padded;
         out.open("{");
+        if self.zero_copy {
+            out.line(format!("let pb_t = {};", raw));
+            if m.encoding == TextEncoding::Utf8 {
+                out.line(format!("p.{} = Cow::Borrowed(pb_r.utf8_slice(pb_t, {})?);", ident(&m.name), padded));
+            } else {
+                out.line(format!(
+                    "p.{} = Cow::Owned(pb_r.text(pb_t.to_vec(), {}, {})?);",
+                    ident(&m.name),
+                    m.encoding.id(),
+                    padded
+                ));
+            }
+            out.close("}");
+            return;
+        }
         if m.encoding == TextEncoding::Utf8 {
             let raw = if padded { format!("pb_until_nul({})", raw) } else { raw };
             out.line(format!("let pb_t = {};", raw));
@@ -196,7 +227,24 @@ impl StepEmitter for Decoder<'_> {
         let n = match count {
             Count::Expr(e) => format!("pb_r.count({}, {})?", self.scope.expr(e), ebits),
             Count::Terminated { term, optional } => {
-                out.line(format!("{} = pb_r.read_until(&{}, {})?;", target, byte_list(term), optional));
+                let zc = if self.zero_copy { "_slice" } else { "" };
+                let read = format!("pb_r.read_until{}(&{}, {})?", zc, byte_list(term), optional);
+                out.line(format!("{} = {};", target, self.buffer(read)));
+                return;
+            }
+            Count::Until(cond) if self.zero_copy && ty.is_byte() => {
+                // Built byte by byte: owned.
+                out.open("{");
+                out.line("let mut pb_v: Vec<u8> = Vec::new();");
+                out.open("while pb_r.remaining_bits() > 0 {");
+                out.line("pb_r.at_index(pb_v.len());");
+                out.line(format!("let pb_last = {};", read_elem(&self.scope, codec, ty)));
+                out.line(format!("let pb_stop = {};", self.scope.expr(cond)));
+                out.line("pb_v.push(pb_last);");
+                out.line("if pb_stop { break; }");
+                out.close("}");
+                out.line(format!("{} = Cow::Owned(pb_v);", target));
+                out.close("}");
                 return;
             }
             Count::Until(cond) => {
@@ -212,10 +260,11 @@ impl StepEmitter for Decoder<'_> {
             Count::Remaining => String::new(),
         };
         if ty.is_byte() {
-            match count {
-                Count::Expr(_) => out.line(format!("{} = pb_r.read_bytes({})?;", target, n)),
-                _ => out.line(format!("{} = pb_r.read_bytes(pb_r.remaining_bits() / 8)?;", target)),
-            }
+            let read = match count {
+                Count::Expr(_) => format!("pb_r.{}({})?", self.read_bytes(), n),
+                _ => format!("pb_r.{}(pb_r.remaining_bits() / 8)?", self.read_bytes()),
+            };
+            out.line(format!("{} = {};", target, self.buffer(read)));
             return;
         }
         match count {

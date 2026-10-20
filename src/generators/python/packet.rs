@@ -4,7 +4,7 @@ use super::decode::Decoder;
 use super::encode::Encoder;
 use super::naming::{annotation, ident};
 use crate::generators::common::{Out, StepEmitter, member_category, param_var};
-use crate::ir::{Arm, Packet, Union, ValueType};
+use crate::ir::{Arm, Module, Packet, Union, ValueType};
 
 /// The value an arm starts with.
 fn arm_default(arm: &Arm) -> String {
@@ -33,10 +33,11 @@ pub fn emit_union(out: &mut Out, u: &Union) {
     out.open(format!("def pb_default() -> \"{}\":", u.name));
     out.line(format!("return {}(\"{}\", {})", u.name, u.arms[0].name, arm_default(&u.arms[0])));
     out.close("");
+    super::json::emit_union_json(out, u);
     out.pop();
 }
 
-pub fn emit_packet(out: &mut Out, p: &Packet) {
+pub fn emit_packet(out: &mut Out, module: &Module, p: &Packet, zero_copy: bool) {
     out.line("@dataclass");
     out.open(format!("class {}:", p.name));
     if p.members.is_empty() {
@@ -63,7 +64,7 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     if p.needs_start(false) {
         out.line("pb_start = pb_r.position_bits()");
     }
-    Decoder::new(p).emit_steps(out);
+    Decoder::new(p, zero_copy).emit_steps(out);
     out.line("pb_r.leave()");
     out.line("return p");
     out.close("");
@@ -86,5 +87,7 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     encoder.emit_steps(out);
     out.line("pb_w.leave()");
     out.close("");
+    super::json::emit_packet_json(out, p);
+    super::stream::emit_streaming(out, module, p);
     out.pop();
 }

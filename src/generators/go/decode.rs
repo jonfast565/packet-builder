@@ -58,11 +58,18 @@ fn read_elem(codec: &Codec, ty: &ValueType) -> String {
 
 pub struct Decoder<'a> {
     scope: Scope<'a, Go>,
+    /// Byte buffers are slices of the input.
+    zero_copy: bool,
 }
 
 impl<'a> Decoder<'a> {
-    pub fn new(packet: &'a Packet) -> Self {
-        Decoder { scope: Scope::new(packet, Mode::Decode) }
+    pub fn new(packet: &'a Packet, zero_copy: bool) -> Self {
+        Decoder { scope: Scope::new(packet, Mode::Decode), zero_copy }
+    }
+
+    /// The reader method for a byte buffer: a copy, or a slice of the input.
+    fn read_bytes(&self) -> &'static str {
+        if self.zero_copy { "ReadBytesRef" } else { "ReadBytes" }
     }
 
     /// Statements that decode `arm` of union `u` into `place`.
@@ -71,10 +78,10 @@ impl<'a> Decoder<'a> {
         let target = format!("{}.{}", place, variant_name(arm));
         match (&arm.ty, &arm.codec, &arm.count) {
             (Some(_), _, Some(Count::Expr(e))) => {
-                out.line(format!("{} = pbR.ReadBytes(pbR.Count({}, 8))", target, self.scope.expr(e)))
+                out.line(format!("{} = pbR.{}(pbR.Count({}, 8))", target, self.read_bytes(), self.scope.expr(e)))
             }
             (Some(_), _, Some(Count::Remaining)) => {
-                out.line(format!("{} = pbR.ReadBytes(pbR.RemainingBits() / 8)", target))
+                out.line(format!("{} = pbR.{}(pbR.RemainingBits() / 8)", target, self.read_bytes()))
             }
             (Some(ValueType::Packet(n)), Some(codec @ Codec::Packet(r)), None) => {
                 with_args(&self.scope, out, codec, |out| {
@@ -224,7 +231,7 @@ impl Decoder<'_> {
             Count::Expr(e) => {
                 let n = format!("pbR.Count({}, {})", self.scope.expr(e), ebits);
                 if ty.is_byte() {
-                    out.line(format!("{} = pbR.ReadBytes({})", target, n));
+                    out.line(format!("{} = pbR.{}({})", target, self.read_bytes(), n));
                 } else {
                     out.open("{");
                     out.line(format!("pbN := {}", n));
@@ -237,7 +244,8 @@ impl Decoder<'_> {
                 }
             }
             Count::Terminated { term, optional } => {
-                out.line(format!("{} = pbR.ReadUntil({}, {})", target, byte_list(term), optional))
+                let read = if self.zero_copy { "ReadUntilRef" } else { "ReadUntil" };
+                out.line(format!("{} = pbR.{}({}, {})", target, read, byte_list(term), optional))
             }
             Count::Until(cond) => {
                 out.line(format!("{} = {}{{}}", target, member_type(m)));
@@ -253,7 +261,7 @@ impl Decoder<'_> {
             }
             Count::Remaining => {
                 if ty.is_byte() {
-                    out.line(format!("{} = pbR.ReadBytes(pbR.RemainingBits() / 8)", target));
+                    out.line(format!("{} = pbR.{}(pbR.RemainingBits() / 8)", target, self.read_bytes()));
                 } else {
                     out.line(format!("{} = {}{{}}", target, member_type(m)));
                     out.open("for pbR.Err() == nil && pbR.RemainingBits() > 0 {");

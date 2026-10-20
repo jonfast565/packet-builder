@@ -21,8 +21,8 @@ impl Target for InterpTarget {
     }
 
     /// The "program" is the output itself: one JSON line per case.
-    fn harness(&self, module: &Module, cases: &[Case]) -> String {
-        cases.iter().map(|c| run_case(module, c) + "\n").collect()
+    fn harness(&self, module: &Module, cases: &[Case], _zero_copy: bool) -> String {
+        cases.iter().map(|c| run_case(module, c) + "\n" + &stream_case(module, c) + "\n").collect()
     }
 
     fn build_and_run(&self, _dir: &Path, _generated: &str, harness: &str) -> Result<String, String> {
@@ -55,6 +55,32 @@ fn run_case(module: &Module, c: &Case) -> String {
         Ok(b) => format!("{{\"ok\":true,\"value\":{},\"encoded\":{}}}", dumped, Value::Bytes(b).to_json()),
         Err(e) => format!("{{\"ok\":true,\"value\":{},{}}}", dumped, error_json(&e, "encode_")),
     }
+}
+
+/// What a stream decoder sees: the bytes taken or still needed, and the
+/// frame length from the header.
+fn stream_case(module: &Module, c: &Case) -> String {
+    let data: Vec<u8> =
+        (0..c.hex.len()).step_by(2).map(|i| u8::from_str_radix(&c.hex[i..i + 2], 16).unwrap()).collect();
+    let mut r = interp::Reader::new(&data);
+    let mut line = match interp::decode_from(module, &c.packet, &mut r) {
+        Ok(_) => format!("{{\"try\":\"done\",\"n\":{}", r.position_bits().div_ceil(8)),
+        Err(e) if e.kind == interp::ErrorKind::Incomplete => {
+            format!("{{\"try\":\"incomplete\",\"n\":{}", e.needed_bits.div_ceil(8).max(1))
+        }
+        Err(_) => "{\"try\":\"error\"".to_string(),
+    };
+    let p = packet(module, &c.packet);
+    if let (true, Some(f)) = (super::has_frame(module, p), module.frame_length(p)) {
+        let frame = match interp::frame_length(module, p, &f, &data) {
+            Ok(n) if n >= 0 => n.to_string(),
+            Ok(_) => "\"error\"".into(),
+            Err(e) if e.kind == interp::ErrorKind::Incomplete => "null".into(),
+            Err(_) => "\"error\"".into(),
+        };
+        line.push_str(&format!(",\"frame\":{}", frame));
+    }
+    line + "}"
 }
 
 /// Overwrite the member at a dotted path with a JSON number or string.

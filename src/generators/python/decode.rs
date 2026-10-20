@@ -37,19 +37,28 @@ fn read_elem(scope: &Scope<'_, Python>, codec: &Codec, ty: &ValueType) -> String
 
 pub struct Decoder<'a> {
     scope: Scope<'a, Python>,
+    /// Byte buffers are memoryviews of the input.
+    zero_copy: bool,
 }
 
 impl<'a> Decoder<'a> {
-    pub fn new(packet: &'a Packet) -> Self {
-        Decoder { scope: Scope::new(packet, Mode::Decode) }
+    pub fn new(packet: &'a Packet, zero_copy: bool) -> Self {
+        Decoder { scope: Scope::new(packet, Mode::Decode), zero_copy }
+    }
+
+    /// The reader method for a byte buffer: a copy, or a memoryview.
+    fn read_bytes(&self) -> &'static str {
+        if self.zero_copy { "read_view" } else { "read_bytes" }
     }
 
     /// Expression that decodes the value of `arm`.
     fn arm_value(&self, arm: &Arm) -> String {
         match (&arm.ty, &arm.codec, &arm.count) {
             (None, ..) => "None".into(),
-            (Some(_), _, Some(Count::Expr(e))) => format!("pb_r.read_bytes(pb_r.count({}, 8))", self.scope.expr(e)),
-            (Some(_), _, Some(Count::Remaining)) => "pb_r.read_bytes(pb_r.remaining_bits() // 8)".into(),
+            (Some(_), _, Some(Count::Expr(e))) => {
+                format!("pb_r.{}(pb_r.count({}, 8))", self.read_bytes(), self.scope.expr(e))
+            }
+            (Some(_), _, Some(Count::Remaining)) => format!("pb_r.{}(pb_r.remaining_bits() // 8)", self.read_bytes()),
             (Some(ty), Some(codec), None) => read_elem(&self.scope, codec, ty),
             _ => "None".into(),
         }
@@ -184,7 +193,7 @@ impl StepEmitter for Decoder<'_> {
             Count::Expr(e) => {
                 let n = format!("pb_r.count({}, {})", self.scope.expr(e), ebits);
                 if ty.is_byte() {
-                    out.line(format!("{} = pb_r.read_bytes({})", target, n));
+                    out.line(format!("{} = pb_r.{}({})", target, self.read_bytes(), n));
                 } else {
                     out.line(format!("{} = []", target));
                     out.open(format!("for pb_i in range({}):", n));
@@ -194,7 +203,8 @@ impl StepEmitter for Decoder<'_> {
                 }
             }
             Count::Terminated { term, optional } => {
-                out.line(format!("{} = pb_r.read_until({}, {})", target, byte_list(term), Python::flag(*optional)))
+                let read = if self.zero_copy { "read_until_view" } else { "read_until" };
+                out.line(format!("{} = pb_r.{}({}, {})", target, read, byte_list(term), Python::flag(*optional)))
             }
             Count::Until(cond) => {
                 out.line(format!("{} = []", target));
@@ -209,7 +219,7 @@ impl StepEmitter for Decoder<'_> {
             }
             Count::Remaining => {
                 if ty.is_byte() {
-                    out.line(format!("{} = pb_r.read_bytes(pb_r.remaining_bits() // 8)", target));
+                    out.line(format!("{} = pb_r.{}(pb_r.remaining_bits() // 8)", target, self.read_bytes()));
                 } else {
                     out.line(format!("{} = []", target));
                     out.open("while pb_r.remaining_bits() > 0:");

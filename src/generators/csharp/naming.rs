@@ -15,7 +15,8 @@ pub fn arm_class(union: &str, arm: &Arm) -> String {
 pub fn prop_name(packet: &str, name: &str) -> String {
     let n = pascal_case(name);
     match n.as_str() {
-        "Decode" | "DecodeFrom" | "Encode" | "EncodeTo" | "GetType" | "ToString" | "Equals" | "GetHashCode" => {
+        "Decode" | "DecodeFrom" | "Encode" | "EncodeTo" | "GetType" | "ToString" | "Equals" | "GetHashCode"
+        | "ToJson" | "TryDecode" | "FrameLen" => {
             format!("{}_", n)
         }
         _ if n == packet => format!("{}_", n),
@@ -53,6 +54,11 @@ pub fn member_type(m: &Member) -> String {
         Some(_) => format!("{}[]", scalar_type(&m.ty)),
         None => scalar_type(&m.ty),
     }
+}
+
+/// A byte buffer's type: an array, or (zero-copy) a view of the input.
+pub fn bytes_type(zero_copy: bool) -> &'static str {
+    if zero_copy { "ReadOnlyMemory<byte>" } else { "byte[]" }
 }
 
 pub fn default_value(m: &Member) -> Option<String> {

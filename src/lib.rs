@@ -10,6 +10,7 @@ mod language;
 pub mod parser;
 pub mod pcap;
 pub mod sources;
+pub mod tools;
 
 pub use errors::{CompileError, FileError};
 pub use generators::common::GenOptions;

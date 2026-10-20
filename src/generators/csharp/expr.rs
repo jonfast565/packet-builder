@@ -27,10 +27,12 @@ impl ExprLang for Scope<'_, CSharp> {
     fn aggregate(&self, member: usize, op: AggOp, ty: Ty) -> String {
         let place = self.place(member);
         match (op, ty) {
-            (AggOp::Sum, Ty::Float) => format!("{}.Aggregate(0.0d, (pbA, pbV) => pbA + (double)pbV)", place),
-            (AggOp::Product, Ty::Float) => format!("{}.Aggregate(1.0d, (pbA, pbV) => pbA * (double)pbV)", place),
-            (AggOp::Sum, _) => format!("{}.Aggregate(0L, (pbA, pbV) => unchecked(pbA + (long)pbV))", place),
-            (AggOp::Product, _) => format!("{}.Aggregate(1L, (pbA, pbV) => unchecked(pbA * (long)pbV))", place),
+            (AggOp::Sum, Ty::Float) => format!("Pb.Seq({}).Aggregate(0.0d, (pbA, pbV) => pbA + (double)pbV)", place),
+            (AggOp::Product, Ty::Float) => {
+                format!("Pb.Seq({}).Aggregate(1.0d, (pbA, pbV) => pbA * (double)pbV)", place)
+            }
+            (AggOp::Sum, _) => format!("Pb.Seq({}).Aggregate(0L, (pbA, pbV) => unchecked(pbA + (long)pbV))", place),
+            (AggOp::Product, _) => format!("Pb.Seq({}).Aggregate(1L, (pbA, pbV) => unchecked(pbA * (long)pbV))", place),
         }
     }
 

@@ -4,7 +4,7 @@ use super::decode::Decoder;
 use super::encode::Encoder;
 use super::naming::{default_value, ident, member_type, owns_memory, scalar_type};
 use crate::generators::common::{Out, StepEmitter, member_category, param_var};
-use crate::ir::{Arm, Packet, Union, ValueType};
+use crate::ir::{Arm, Module, Packet, Union, ValueType};
 
 /// The Zig type an arm holds (`void` for an empty arm).
 fn arm_type(arm: &Arm) -> String {
@@ -26,7 +26,7 @@ fn arm_default(arm: &Arm) -> String {
 }
 
 /// A tagged union with a `deinit` for the arms that own memory.
-pub fn emit_union(out: &mut Out, u: &Union) {
+pub fn emit_union(out: &mut Out, u: &Union, zero_copy: bool) {
     out.open(format!("pub const {} = union(enum) {{", u.name));
     for arm in &u.arms {
         out.line(format!("{}: {},", ident(&arm.name), arm_type(arm)));
@@ -38,7 +38,7 @@ pub fn emit_union(out: &mut Out, u: &Union) {
     out.line("/// Free memory owned by a decoded value.");
     out.open(format!("pub fn deinit(self: *{}, allocator: std.mem.Allocator) void {{", u.name));
     let owning: Vec<&Arm> =
-        u.arms.iter().filter(|a| a.is_bytes() || matches!(a.ty, Some(ValueType::Packet(_)))).collect();
+        u.arms.iter().filter(|a| (a.is_bytes() && !zero_copy) || matches!(a.ty, Some(ValueType::Packet(_)))).collect();
     if owning.is_empty() {
         out.line("_ = allocator;");
     } else {
@@ -57,11 +57,12 @@ pub fn emit_union(out: &mut Out, u: &Union) {
     }
     out.line("self.* = pb_default;");
     out.close("}");
+    super::json::emit_union_json(out, u);
     out.close("};");
     out.line("");
 }
 
-pub fn emit_packet(out: &mut Out, p: &Packet) {
+pub fn emit_packet(out: &mut Out, module: &Module, p: &Packet, zero_copy: bool) {
     let name = &p.name;
     out.open(format!("pub const {} = struct {{", name));
     for m in &p.members {
@@ -73,7 +74,7 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     if !p.members.is_empty() {
         out.line("");
     }
-    let allocates = p.members.iter().any(owns_memory);
+    let allocates = p.members.iter().any(|m| owns_memory(m, zero_copy));
 
     // deinit
     out.line("/// Free memory owned by a decoded value.");
@@ -82,7 +83,7 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
         out.line("_ = self;");
         out.line("_ = allocator;");
     }
-    for m in p.members.iter().filter(|m| owns_memory(m)) {
+    for m in p.members.iter().filter(|m| owns_memory(m, zero_copy)) {
         let id = ident(&m.name);
         match (&m.array, &m.ty) {
             (Some(_), ValueType::Packet(_)) => {
@@ -126,7 +127,7 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     let mut body = Out::new("    ");
     body.push();
     body.push();
-    Decoder::new(p).emit_steps(&mut body);
+    Decoder::new(p, zero_copy).emit_steps(&mut body);
     out.open(format!("pub fn decodeFrom(allocator: std.mem.Allocator, pb_r: *PbReader{}) PbError!{} {{", decl, name));
     touch(out, &body.buf);
     // The errdefer below uses the allocator too.
@@ -188,6 +189,8 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     out.push();
     out.line("pb_w.leave();");
     out.close("}");
+    super::json::emit_packet_json(out, p);
+    super::stream::emit_streaming(out, module, p);
     out.close("};");
 }
 

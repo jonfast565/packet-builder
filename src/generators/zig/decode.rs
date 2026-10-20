@@ -36,11 +36,22 @@ fn read_elem(scope: &Scope<'_, Zig>, codec: &Codec, ty: &ValueType) -> String {
 
 pub struct Decoder<'a> {
     scope: Scope<'a, Zig>,
+    /// Byte buffers are slices of the input.
+    zero_copy: bool,
 }
 
 impl<'a> Decoder<'a> {
-    pub fn new(packet: &'a Packet) -> Self {
-        Decoder { scope: Scope::new(packet, Mode::Decode) }
+    pub fn new(packet: &'a Packet, zero_copy: bool) -> Self {
+        Decoder { scope: Scope::new(packet, Mode::Decode), zero_copy }
+    }
+
+    /// Reading `n` bytes into a byte buffer: a copy, or a slice of the input.
+    fn read_bytes(&self, n: &str) -> String {
+        if self.zero_copy {
+            format!("try pb_r.bytesSlice({})", n)
+        } else {
+            format!("try pb_r.readBytes(allocator, {})", n)
+        }
     }
 
     /// Expression that decodes `arm` (an anonymous union literal).
@@ -49,9 +60,9 @@ impl<'a> Decoder<'a> {
         let value = match (&arm.ty, &arm.codec, &arm.count) {
             (None, ..) => "{}".to_string(),
             (Some(_), _, Some(Count::Expr(e))) => {
-                format!("try pb_r.readBytes(allocator, try pb_r.count({}, 8))", self.scope.expr(e))
+                self.read_bytes(&format!("try pb_r.count({}, 8)", self.scope.expr(e)))
             }
-            (Some(_), _, Some(Count::Remaining)) => "try pb_r.readBytes(allocator, pb_r.remainingBits() / 8)".into(),
+            (Some(_), _, Some(Count::Remaining)) => self.read_bytes("pb_r.remainingBits() / 8"),
             (Some(ty), Some(codec), None) => read_elem(&self.scope, codec, ty),
             (_, _, Some(Count::Until(_) | Count::Terminated { .. })) => {
                 unreachable!("union arms have no until or term")
@@ -203,7 +214,7 @@ impl StepEmitter for Decoder<'_> {
             Count::Expr(e) => {
                 let n = format!("try pb_r.count({}, {})", self.scope.expr(e), ebits);
                 if ty.is_byte() {
-                    out.line(format!("{} = try pb_r.readBytes(allocator, {});", target, n));
+                    out.line(format!("{} = {};", target, self.read_bytes(&n)));
                 } else {
                     out.open("{");
                     out.line(format!("const pb_a = try allocator.alloc({}, {});", scalar_type(ty), n));
@@ -219,17 +230,23 @@ impl StepEmitter for Decoder<'_> {
                     out.close("}");
                 }
             }
-            Count::Terminated { term, optional } => out.line(format!(
-                "{} = try allocator.dupe(u8, try pb_r.untilSlice({}, {}));",
-                target,
-                byte_list(term),
-                optional
-            )),
+            Count::Terminated { term, optional } => {
+                let slice = format!("try pb_r.untilSlice({}, {})", byte_list(term), optional);
+                if self.zero_copy {
+                    out.line(format!("{} = {};", target, slice));
+                } else {
+                    out.line(format!("{} = try allocator.dupe(u8, {});", target, slice));
+                }
+            }
             Count::Remaining | Count::Until(_) => {
                 if ty.is_byte() && matches!(count, Count::Remaining) {
-                    out.line(format!("{} = try pb_r.readBytes(allocator, pb_r.remainingBits() / 8);", target));
+                    out.line(format!("{} = {};", target, self.read_bytes("pb_r.remainingBits() / 8")));
                 } else {
                     out.open("{");
+                    let slice = self.zero_copy && ty.is_byte();
+                    if slice {
+                        out.line("const pb_from = pb_r.positionBits();");
+                    }
                     out.line(format!("var pb_l = std.ArrayList({}).init(allocator);", scalar_type(ty)));
                     if matches!(ty, ValueType::Packet(_)) {
                         out.open("errdefer {");
@@ -246,7 +263,13 @@ impl StepEmitter for Decoder<'_> {
                         out.line(format!("if ({}) break;", self.scope.expr(cond)));
                     }
                     out.close("}");
-                    out.line(format!("{} = try pb_l.toOwnedSlice();", target));
+                    if slice {
+                        // The bytes are consecutive in the input.
+                        out.line("pb_l.deinit();");
+                        out.line(format!("{} = pb_r.data[pb_from / 8 .. pb_r.positionBits() / 8];", target));
+                    } else {
+                        out.line(format!("{} = try pb_l.toOwnedSlice();", target));
+                    }
                     out.close("}");
                 }
             }

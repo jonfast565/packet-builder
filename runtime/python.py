@@ -75,7 +75,7 @@ class PbReader(_PbTrace):
 
     def __init__(self, data):
         super().__init__()
-        self.data = bytes(data)
+        self.data = data if isinstance(data, bytes) else bytes(data)
         self.limit = len(self.data) * 8  # end of the readable data (a window inside data)
         self.windows = 0  # windows open
 
@@ -240,6 +240,19 @@ class PbReader(_PbTrace):
             v = (v >> 1) ^ (-(v & 1) & ((1 << 64) - 1))
         return v
 
+    def read_view(self, n):
+        """The next n bytes as a memoryview of the input (zero-copy)."""
+        self._need(n * 8)
+        start = self.pos >> 3
+        self.pos += n * 8
+        return memoryview(self.data)[start:start + n]
+
+    def read_until_view(self, term, optional):
+        """read_until as a memoryview of the input (zero-copy)."""
+        start = self.pos >> 3
+        n = len(self.read_until(term, optional))
+        return memoryview(self.data)[start:start + n]
+
     def read_until(self, term, optional):
         """The bytes before `term`, consuming both. Without the terminator: the
         rest of the input when `optional`, otherwise an error."""
@@ -319,6 +332,9 @@ class PbWriter(_PbTrace):
         """The output, with every placed packet written at its offset: past the
         end (zero-filling the gap), or over bytes that must already match."""
         for at, data, path in sorted(self.placed, key=lambda p: p[0]):
+            # The output reaches the offset even when the packet is empty.
+            if len(self.buf) < at:
+                self.buf += bytes(at - len(self.buf))
             for i, b in enumerate(data):
                 k = at + i
                 if k < len(self.buf):
@@ -489,6 +505,11 @@ def _pb_checksum(algo, buf, start, end, hole_start, hole_end):
     for b in data:
         x ^= b
     return x
+
+
+def _pb_json_hex(b):
+    """Bytes as a JSON string of hex digits (for to_json)."""
+    return '"' + bytes(b).hex() + '"'
 
 
 _PB_ENCODINGS = ("utf-8", "ascii", "latin-1", "utf-16-le", "utf-16-be")

@@ -93,6 +93,35 @@ impl PbTrace {
     }
 }
 
+/// `"0a0b"`: bytes as a JSON string of hex digits (for `to_json`).
+pub fn pb_json_hex(b: &[u8]) -> String {
+    format!("\"{}\"", b.iter().map(|x| format!("{:02x}", x)).collect::<String>())
+}
+
+/// A JSON string literal (for `to_json`).
+pub fn pb_json_str(s: &str) -> String {
+    let mut o = String::from("\"");
+    for c in s.chars() {
+        match c {
+            '"' => o.push_str("\\\""),
+            '\\' => o.push_str("\\\\"),
+            c if (c as u32) < 0x20 => o.push_str(&format!("\\u{:04x}", c as u32)),
+            c => o.push(c),
+        }
+    }
+    o.push('"');
+    o
+}
+
+/// Decoding from a buffer that may not hold the whole packet yet (a stream).
+#[derive(Debug, Clone, PartialEq)]
+pub enum PbStatus<T> {
+    /// The value, and the bytes it took.
+    Done(T, usize),
+    /// At least this many more bytes are needed.
+    Incomplete(usize),
+}
+
 /// Where a reader was before `PbReader::jump`.
 pub struct PbJump {
     pos: usize,
@@ -256,10 +285,15 @@ impl<'a> PbReader<'a> {
     }
 
     pub fn read_bytes(&mut self, n: usize) -> Result<Vec<u8>, PbError> {
+        Ok(self.read_slice(n)?.to_vec())
+    }
+
+    /// The next `n` bytes, borrowed from the input.
+    pub fn read_slice(&mut self, n: usize) -> Result<&'a [u8], PbError> {
         self.need(n.saturating_mul(8))?;
         let start = self.pos >> 3;
         self.pos += n * 8;
-        Ok(self.data[start..start + n].to_vec())
+        Ok(&self.data[start..start + n])
     }
 
     pub fn read_mac(&mut self) -> Result<[u8; 6], PbError> {
@@ -275,11 +309,17 @@ impl<'a> PbReader<'a> {
 
     /// Bytes up to (not including) a NUL terminator, which is consumed.
     pub fn read_cstring(&mut self) -> Result<Vec<u8>, PbError> {
+        Ok(self.read_cstring_slice()?.to_vec())
+    }
+
+    /// The bytes before a NUL, borrowed; the NUL is consumed.
+    pub fn read_cstring_slice(&mut self) -> Result<&'a [u8], PbError> {
         let start = self.pos >> 3;
-        match self.data[start..self.limit >> 3].iter().position(|b| *b == 0) {
+        let data: &'a [u8] = self.data;
+        match data[start..self.limit >> 3].iter().position(|b| *b == 0) {
             Some(n) => {
                 self.pos += (n + 1) * 8;
-                Ok(self.data[start..start + n].to_vec())
+                Ok(&data[start..start + n])
             }
             None => Err(self.short(self.remaining_bits() + 8, "the NUL-terminated string")),
         }
@@ -299,6 +339,12 @@ impl<'a> PbReader<'a> {
 
     pub fn utf8(&self, raw: Vec<u8>) -> Result<String, PbError> {
         String::from_utf8(raw).map_err(|_| self.error(PbErrorKind::Text, "invalid UTF-8".into()))
+    }
+
+    /// Borrowed UTF-8 text; `padded` ends it at the first NUL.
+    pub fn utf8_slice(&self, raw: &'a [u8], padded: bool) -> Result<&'a str, PbError> {
+        let raw = if padded { &raw[..raw.iter().position(|b| *b == 0).unwrap_or(raw.len())] } else { raw };
+        std::str::from_utf8(raw).map_err(|_| self.error(PbErrorKind::Text, "invalid UTF-8".into()))
     }
 
     /// Text in encoding `enc` (0 UTF-8, 1 ASCII, 2 Latin-1, 3 UTF-16LE,
@@ -377,17 +423,23 @@ impl<'a> PbReader<'a> {
     /// Bytes up to `term`, which is consumed. Without it: the rest of the
     /// input when `optional`, otherwise an error.
     pub fn read_until(&mut self, term: &[u8], optional: bool) -> Result<Vec<u8>, PbError> {
+        Ok(self.read_until_slice(term, optional)?.to_vec())
+    }
+
+    /// The bytes before `term`, borrowed (see `read_until`).
+    pub fn read_until_slice(&mut self, term: &[u8], optional: bool) -> Result<&'a [u8], PbError> {
         let start = self.pos >> 3;
         let end = self.limit >> 3;
-        let window = &self.data[start..end];
+        let data: &'a [u8] = self.data;
+        let window = &data[start..end];
         match window.windows(term.len()).position(|w| w == term) {
             Some(n) => {
                 self.pos += (n + term.len()) * 8;
-                Ok(window[..n].to_vec())
+                Ok(&window[..n])
             }
             None if optional => {
                 self.pos = self.limit;
-                Ok(window.to_vec())
+                Ok(window)
             }
             None => Err(self.short(self.remaining_bits() + 8, "the terminated field")),
         }
@@ -488,6 +540,10 @@ impl PbWriter {
         let mut placed = std::mem::take(&mut self.placed);
         placed.sort_by_key(|p| p.0);
         for (at, bytes, path) in placed {
+            // The output reaches the offset even when the packet is empty.
+            if self.buf.len() < at {
+                self.buf.resize(at, 0);
+            }
             for (i, b) in bytes.into_iter().enumerate() {
                 let k = at + i;
                 if k < self.buf.len() {

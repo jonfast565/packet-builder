@@ -154,6 +154,18 @@ impl Module {
         }
         let header_bytes = start / 8;
         let total = add(TExpr::IntLit((header_bytes + tail / 8) as i64), size);
+        // Keep only what the total reads, directly or through calculated members.
+        let mut needed = Vec::new();
+        total.deps(&mut needed);
+        for &c in calcs.iter().rev() {
+            if needed.contains(&c)
+                && let Some(e) = p.members[c].calc_expr()
+            {
+                e.deps(&mut needed);
+            }
+        }
+        fields.retain(|h| needed.contains(&h.member));
+        calcs.retain(|c| needed.contains(c));
         Some(FrameLength { header_bytes, fields, calcs, total })
     }
 }

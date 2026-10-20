@@ -17,6 +17,19 @@
         Constraint,
     }
 
+    /// <summary>Decoding from a buffer that may not hold the whole packet yet (a stream):
+    /// the value and the bytes it took, or how many more bytes are needed at least.</summary>
+    public sealed class PbStatus<T>
+    {
+        public bool IsDone { get; private set; }
+        public T Value { get; private set; } = default!;
+        public int Consumed { get; private set; }
+        public int Needed { get; private set; }
+
+        public static PbStatus<T> Done(T value, int consumed) => new PbStatus<T> { IsDone = true, Value = value, Consumed = consumed };
+        public static PbStatus<T> Incomplete(int needed) => new PbStatus<T> { Needed = needed };
+    }
+
     /// <summary>Thrown when data cannot be decoded or a value cannot be encoded.</summary>
     public sealed class PbException : Exception
     {
@@ -192,6 +205,23 @@
             return outp;
         }
 
+        /// <summary>The next n bytes as a view of the input (zero-copy).</summary>
+        public ReadOnlyMemory<byte> ReadMemory(long n)
+        {
+            Need(n * 8);
+            var view = new ReadOnlyMemory<byte>(data, (int)(pos >> 3), (int)n);
+            pos += n * 8;
+            return view;
+        }
+
+        /// <summary>ReadUntil as a view of the input (zero-copy).</summary>
+        public ReadOnlyMemory<byte> ReadUntilMemory(byte[] term, bool optional)
+        {
+            long start = pos >> 3;
+            int n = ReadUntil(term, optional).Length;
+            return new ReadOnlyMemory<byte>(data, (int)start, n);
+        }
+
         public void SkipBits(long bits)
         {
             Need(bits);
@@ -354,6 +384,8 @@
         {
             foreach (var (at, data, path) in placed.OrderBy(p => p.At))
             {
+                // The output reaches the offset even when the packet is empty.
+                while (buf.Count < at) buf.Add(0);
                 for (int i = 0; i < data.Length; i++)
                 {
                     long k = at + i;
@@ -403,6 +435,8 @@
             buf.AddRange(bytes);
             pos += bytes.Length * 8L;
         }
+
+        public void WriteBytes(ReadOnlyMemory<byte> bytes) => WriteBytes(bytes.ToArray());
 
         public void WriteZeroBits(long bits)
         {
@@ -505,6 +539,8 @@
             }
         }
 
+        public void CheckNoTerm(ReadOnlyMemory<byte> data, byte[] term) => CheckNoTerm(data.ToArray(), term);
+
         public void CheckNoTerm(byte[] data, byte[] term)
         {
             for (int i = 0; i + term.Length <= data.Length; i++)
@@ -559,6 +595,25 @@
         };
 
         internal static readonly string[] EncodingNames = { "UTF-8", "ASCII", "Latin-1", "UTF-16", "UTF-16" };
+
+        /// <summary>Bytes as a JSON string of hex digits (for ToJson).</summary>
+        public static string JsonHex(byte[] b) => "\"" + Convert.ToHexString(b).ToLowerInvariant() + "\"";
+
+        public static string JsonHex(ReadOnlyMemory<byte> b) => JsonHex(b.ToArray());
+
+        /// <summary>A JSON string literal (for ToJson).</summary>
+        public static string JsonStr(string s)
+        {
+            var sb = new System.Text.StringBuilder("\"");
+            foreach (char c in s)
+            {
+                if (c == '"') sb.Append("\\\"");
+                else if (c == '\\') sb.Append("\\\\");
+                else if (c < 0x20) sb.Append("\\u").Append(((int)c).ToString("x4"));
+                else sb.Append(c);
+            }
+            return sb.Append('"').ToString();
+        }
 
         // CRC parameters by algorithm number: width, polynomial (reflected for
         // reflected CRCs), initial value, reflected, final XOR.
@@ -676,6 +731,13 @@
         }
 
         public static T At<T>(T[] a, long i) where T : struct => i >= 0 && i < a.Length ? a[i] : default(T);
+
+        public static byte At(ReadOnlyMemory<byte> a, long i) => i >= 0 && i < a.Length ? a.Span[(int)i] : (byte)0;
+
+        /// <summary>The elements of an array, or of a zero-copy byte buffer.</summary>
+        public static IEnumerable<T> Seq<T>(T[] a) => a;
+
+        public static IEnumerable<byte> Seq(ReadOnlyMemory<byte> a) => a.ToArray();
     }
 
     // ---- generated packets --------------------------------------------------

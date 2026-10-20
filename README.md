@@ -68,7 +68,11 @@ cargo run -- layout tests/specs/types.packet -k CStruct
 cargo run -- decode examples/oscar.packet -k Flap --hex "2a01 1f3a 0004 00000001"
 cargo run -- decode examples/oscar.packet -k Flap --all --hex "..."   # frames back to back
 cargo run -- decode examples/oscar.packet -k Flap --pcap capture.pcapng --offset 54 --json
+cargo run -- gen examples/oscar.packet --zero-copy -o out     # decoded buffers borrow the input
 cargo run -- dissector examples/oscar.packet -o out          # Wireshark Lua dissector, out/oscar.lua
+cargo run -- doc examples/network.packet -o network.md         # Markdown reference with bit diagrams
+cargo run -- fuzz examples/oscar.packet -l rust -o fuzz       # cargo-fuzz project (or -l c: libFuzzer)
+cargo run -- diff old.packet new.packet                        # wire-incompatible changes (exit status 1)
 cargo run -- languages
 cargo run -- --help
 ```
@@ -663,6 +667,62 @@ with parameters takes them as extra arguments to each of these.
 | Python | `P.decode(data)`, `P.decode_from(PbReader(data))` | `p.encode()`, `p.encode_to(w)` | raises `PbError` |
 | C# | `P.Decode(data)`, `P.DecodeFrom(new PbReader(data))` | `p.Encode()`, `p.EncodeTo(w)` | throws `PbException` |
 | Zig | `P.decode(allocator, data)`, `P.decodeFrom(allocator, &reader)`; release with `p.deinit(allocator)` | `p.encode(allocator)`, `p.encodeTo(&writer)` | `PbError!T` |
+
+Every packet and union also gets a **JSON dump** (`to_json()` in Rust and
+Python, `ToJSON()` in Go, `ToJson()` in C#, `P_to_json(&p)` in C (a
+malloc'ed string), `p.toJson(writer)` in Zig): integers are numbers, byte
+buffers hex strings, unions `{"kind": arm, "value": ...}`.
+
+### Streams
+
+For data that arrives in pieces (a TCP stream), every packet without
+parameters can be decoded from a buffer that may end mid-packet:
+
+| language | try to decode | size from the header |
+|----------|---------------|----------------------|
+| C | `P_try_decode(&p, data, len, &used)`: `PB_OK` (used = bytes taken) or `PB_ERR_INCOMPLETE` (used = bytes still needed) | `P_frame_len(data, len, &size)` |
+| Rust | `P::try_decode(&data)?`: `PbStatus::Done(p, used)` or `PbStatus::Incomplete(needed)` | `P::frame_len(&data)?`: `Some(size)` or `None` |
+| Go | `TryDecodeP(data)`: `(p, used, nil)`, or `(nil, needed, nil)` | `FrameLenP(data)`: `(size, ok, err)` |
+| Python | `P.try_decode(data)`: `(p, used)` or `(None, needed)` | `P.frame_len(data)`: size or `None` |
+| C# | `P.TryDecode(data)`: `IsDone`, `Value`, `Consumed`, `Needed` | `P.FrameLen(data)`: size or `null` |
+| Zig | `P.tryDecode(allocator, data)`: `.done` (value, consumed) or `.incomplete` (needed) | `P.frameLen(data)`: size or `null` |
+
+A packet has a frame length when its size follows from fixed-offset header
+fields (FLAP: 6 bytes plus `length`; UDP: `length`): read that many bytes,
+then decode. The same analysis drives TCP reassembly in the Wireshark
+dissectors.
+
+### Zero-copy
+
+`generate --zero-copy` makes decoded byte buffers refer to the input
+instead of copying it; the input must then outlive the value:
+
+| language | byte buffers | strings |
+|----------|--------------|---------|
+| C | `const uint8_t *` into the input; `P_free` leaves them | copied (NUL-terminated) |
+| Rust | `Cow<'a, [u8]>`, borrowed when decoded; packets holding them get `<'a>` | `Cow<'a, str>`, borrowed when UTF-8 |
+| Go | slices of the input | copied |
+| Python | `memoryview`s of the input | copied |
+| C# | `ReadOnlyMemory<byte>` over the input | copied |
+| Zig | slices of the input; `deinit` leaves them | copied |
+
+Byte lists read with `until` are built element by element, so they stay
+copies, except in C and Zig, where they point into the input too.
+
+## Tools
+
+* `doc` writes a Markdown reference: per packet, an RFC-style bit diagram
+  of its fixed-offset fields, a field table, and the file's constants and
+  categories.
+* `fuzz` writes fuzzing harnesses (`-l rust`: a cargo-fuzz project, run with
+  `cargo +nightly fuzz run --fuzz-dir <dir> <packet>`; `-l c`: libFuzzer
+  programs, which also build with `-DPB_FUZZ_MAIN` to replay saved inputs).
+  For every packet, a value decoded from any bytes, once encoded, must
+  decode again and encode to the same bytes.
+* `diff old.packet new.packet` lists what changed on the wire. Removed,
+  added, moved or resized fields, a changed type or byte order, changed
+  constant or category values and removed union arms are incompatible (exit
+  status 1); new packets, union arms and category members are compatible.
 
 ### Errors
 

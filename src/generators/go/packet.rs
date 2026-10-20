@@ -5,7 +5,7 @@ use super::encode::Encoder;
 use super::naming::{field_name, gofmt_widths, member_type, scalar_type};
 use crate::generators::common::union::variant_name;
 use crate::generators::common::{Out, StepEmitter, magic_literal, member_category, param_var};
-use crate::ir::{Arm, Packet, Union, ValueType};
+use crate::ir::{Arm, Module, Packet, Union, ValueType};
 
 /// The Go name of an arm's kind constant (`MessageBodyText`).
 pub fn arm_kind(u: &str, arm: &Arm) -> String {
@@ -53,7 +53,7 @@ pub fn emit_union(out: &mut Out, u: &Union) {
     out.close("}");
 }
 
-pub fn emit_packet(out: &mut Out, p: &Packet) {
+pub fn emit_packet(out: &mut Out, module: &Module, p: &Packet, zero_copy: bool) {
     let name = &p.name;
     out.open(format!("type {} struct {{", name));
     let names: Vec<_> = p.members.iter().map(|m| field_name(&m.name)).collect();
@@ -109,7 +109,7 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     if p.needs_start(false) {
         out.line("pb_start := pbR.PositionBits()");
     }
-    Decoder::new(p).emit_steps(out);
+    Decoder::new(p, zero_copy).emit_steps(out);
     out.line("pbR.Leave()");
     out.line("return p");
     out.close("}");
@@ -137,4 +137,6 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     out.line("pbW.Leave()");
     out.line("return pbW.Err()");
     out.close("}");
+    super::json::emit_packet_json(out, p);
+    super::stream::emit_streaming(out, module, p);
 }

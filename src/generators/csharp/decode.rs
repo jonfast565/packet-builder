@@ -47,11 +47,18 @@ fn read_elem(scope: &Scope<'_, CSharp>, codec: &Codec, ty: &ValueType) -> String
 
 pub struct Decoder<'a> {
     scope: Scope<'a, CSharp>,
+    /// Byte buffers are views of the input.
+    zero_copy: bool,
 }
 
 impl<'a> Decoder<'a> {
-    pub fn new(packet: &'a Packet) -> Self {
-        Decoder { scope: Scope::new(packet, Mode::Decode) }
+    pub fn new(packet: &'a Packet, zero_copy: bool) -> Self {
+        Decoder { scope: Scope::new(packet, Mode::Decode), zero_copy }
+    }
+
+    /// The reader method for a byte buffer: a copy, or a view of the input.
+    fn read_bytes(&self) -> &'static str {
+        if self.zero_copy { "ReadMemory" } else { "ReadBytes" }
     }
 
     /// Expression that decodes `arm` of union `u`.
@@ -60,10 +67,10 @@ impl<'a> Decoder<'a> {
         match (&arm.ty, &arm.codec, &arm.count) {
             (None, ..) => format!("new {}()", class),
             (Some(_), _, Some(Count::Expr(e))) => {
-                format!("new {} {{ Value = pbR.ReadBytes(pbR.Count({}, 8)) }}", class, self.scope.expr(e))
+                format!("new {} {{ Value = pbR.{}(pbR.Count({}, 8)) }}", class, self.read_bytes(), self.scope.expr(e))
             }
             (Some(_), _, Some(Count::Remaining)) => {
-                format!("new {} {{ Value = pbR.ReadBytes(pbR.RemainingBits / 8) }}", class)
+                format!("new {} {{ Value = pbR.{}(pbR.RemainingBits / 8) }}", class, self.read_bytes())
             }
             (Some(ty), Some(codec), None) => {
                 format!("new {} {{ Value = {} }}", class, read_elem(&self.scope, codec, ty))
@@ -203,7 +210,7 @@ impl StepEmitter for Decoder<'_> {
             Count::Expr(e) => {
                 let n = format!("pbR.Count({}, {})", self.scope.expr(e), ebits);
                 if ty.is_byte() {
-                    out.line(format!("{} = pbR.ReadBytes({});", target, n));
+                    out.line(format!("{} = pbR.{}({});", target, self.read_bytes(), n));
                 } else {
                     out.open("{");
                     out.line(format!("int pbN = {};", n));
@@ -218,7 +225,8 @@ impl StepEmitter for Decoder<'_> {
                 }
             }
             Count::Terminated { term, optional } => {
-                out.line(format!("{} = pbR.ReadUntil({}, {});", target, byte_list(term), optional))
+                let read = if self.zero_copy { "ReadUntilMemory" } else { "ReadUntil" };
+                out.line(format!("{} = pbR.{}({}, {});", target, read, byte_list(term), optional))
             }
             Count::Until(cond) => {
                 out.open("{");
@@ -235,7 +243,7 @@ impl StepEmitter for Decoder<'_> {
             }
             Count::Remaining => {
                 if ty.is_byte() {
-                    out.line(format!("{} = pbR.ReadBytes(pbR.RemainingBits / 8);", target));
+                    out.line(format!("{} = pbR.{}(pbR.RemainingBits / 8);", target, self.read_bytes()));
                 } else {
                     out.open("{");
                     out.line(format!("var pbL = new List<{}>();", scalar_type(ty)));

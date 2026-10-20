@@ -2,14 +2,14 @@
 
 use super::decode::Decoder;
 use super::encode::Encoder;
-use super::naming::{arm_class, default_value, member_type, prop_name, scalar_type};
+use super::naming::{arm_class, bytes_type, default_value, member_type, prop_name, scalar_type};
 use crate::generators::common::{Out, StepEmitter, member_category, param_var};
-use crate::ir::{Packet, Union, ValueType};
+use crate::ir::{Module, Packet, Union, ValueType};
 
 /// A union as an abstract class with one sealed subclass per arm; arms with
 /// a value hold it in `Value`. Packet types are spelled with the namespace,
 /// since an arm's class may share a packet's name.
-pub fn emit_union(out: &mut Out, u: &Union, ns: &str) {
+pub fn emit_union(out: &mut Out, u: &Union, ns: &str, zero_copy: bool) {
     out.line("/// <summary>One arm of a union: the subclass says which.</summary>");
     out.line(format!("public abstract class {}", u.name));
     out.open("{");
@@ -27,8 +27,10 @@ pub fn emit_union(out: &mut Out, u: &Union, ns: &str) {
         match (&arm.ty, arm.is_bytes()) {
             (None, _) => out.line(format!("public sealed class {} : {} {{ }}", v, u.name)),
             (Some(_), true) => out.line(format!(
-                "public sealed class {} : {} {{ public byte[] Value {{ get; set; }} = Array.Empty<byte>(); }}",
-                v, u.name
+                "public sealed class {} : {} {{ public {} Value {{ get; set; }} = Array.Empty<byte>(); }}",
+                v,
+                u.name,
+                bytes_type(zero_copy)
             )),
             (Some(ValueType::Packet(n)), false) => out.line(format!(
                 "public sealed class {} : {} {{ public global::{}.{} Value {{ get; set; }} = new global::{}.{}(); }}",
@@ -42,10 +44,11 @@ pub fn emit_union(out: &mut Out, u: &Union, ns: &str) {
             )),
         }
     }
+    super::json::emit_union_json(out, u);
     out.close("}");
 }
 
-pub fn emit_packet(out: &mut Out, p: &Packet) {
+pub fn emit_packet(out: &mut Out, module: &Module, p: &Packet, zero_copy: bool) {
     let name = &p.name;
     out.line(format!("public sealed class {}", name));
     out.open("{");
@@ -53,7 +56,8 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
         if let Some(cat) = member_category(m) {
             out.line(format!("/// <summary>Values from <see cref=\"{}\"/>.</summary>", cat));
         }
-        let decl = format!("public {} {} {{ get; set; }}", member_type(m), prop_name(name, &m.name));
+        let ty = if m.array.is_some() && m.ty.is_byte() { bytes_type(zero_copy).into() } else { member_type(m) };
+        let decl = format!("public {} {} {{ get; set; }}", ty, prop_name(name, &m.name));
         match default_value(m) {
             Some(d) => out.line(format!("{} = {};", decl, d)),
             None => out.line(decl),
@@ -73,7 +77,7 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     if p.needs_start(false) {
         out.line("long pb_start = pbR.PositionBits;");
     }
-    Decoder::new(p).emit_steps(out);
+    Decoder::new(p, zero_copy).emit_steps(out);
     out.line("pbR.Leave();");
     out.line("return p;");
     out.close("}");
@@ -99,5 +103,7 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     encoder.emit_steps(out);
     out.line("pbW.Leave();");
     out.close("}");
+    super::json::emit_packet_json(out, p);
+    super::stream::emit_streaming(out, module, p);
     out.close("}");
 }

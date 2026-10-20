@@ -5,7 +5,7 @@ use std::process::Command;
 
 use packet_builder::Language;
 use packet_builder::generators::zig::ident;
-use packet_builder::ir::{Member, Module, ValueType};
+use packet_builder::ir::{Module, ValueType};
 
 use super::{Case, Target, packet, quote, run, set_literal, which};
 
@@ -35,33 +35,6 @@ fn fits(ty: &ValueType, v: &serde_json::Value) -> bool {
     }
 }
 
-fn dump_member(s: &mut String, m: &Member, place: &str) {
-    let elem = |v: &str| match &m.ty {
-        ValueType::Int { .. } => format!("try w.print(\"{{d}}\", .{{{}}});", v),
-        ValueType::Float { .. } => format!("try w.print(\"{{d}}\", .{{@as(f64, {})}});", v),
-        ValueType::Mac => format!("try hx(w, &{});", v),
-        ValueType::Packet(n) => format!("try dump{}(w, &{});", n, v),
-        ValueType::Str => format!("try std.json.stringify({}, .{{}}, w);", v),
-        ValueType::Union(n) => format!("try dump{}(w, &{});", n, v),
-    };
-    match &m.array {
-        None => {
-            let _ = writeln!(s, "    {}", elem(place));
-        }
-        Some(_) if m.ty.is_byte() => {
-            let _ = writeln!(s, "    try hx(w, {});", place);
-        }
-        Some(_) => {
-            let _ = writeln!(s, "    try w.writeAll(\"[\");");
-            let _ = writeln!(s, "    for ({}, 0..) |x, i| {{", place);
-            let _ = writeln!(s, "        if (i > 0) try w.writeAll(\",\");");
-            let _ = writeln!(s, "        {}", elem("x"));
-            let _ = writeln!(s, "    }}");
-            let _ = writeln!(s, "    try w.writeAll(\"]\");");
-        }
-    }
-}
-
 impl Target for ZigTarget {
     fn language(&self) -> Option<Language> {
         Some(Language::Zig)
@@ -71,51 +44,20 @@ impl Target for ZigTarget {
         zig().is_none().then(|| "zig not found (set ZIG=/path/to/zig or put it on PATH)".into())
     }
 
-    fn harness(&self, module: &Module, cases: &[Case]) -> String {
+    fn harness(&self, module: &Module, cases: &[Case], _zero_copy: bool) -> String {
         let mut s = String::from("const std = @import(\"std\");\nconst pk = @import(\"packets.zig\");\n\n");
         s.push_str("fn hx(w: anytype, b: []const u8) !void {\n    try w.writeAll(\"\\\"\");\n    for (b) |c| try w.print(\"{x:0>2}\", .{c});\n    try w.writeAll(\"\\\"\");\n}\n\n");
-        for u in &module.unions {
-            let _ = writeln!(
-                s,
-                "fn dump{}(w: anytype, v: *const pk.{}) anyerror!void {{\n    switch (v.*) {{",
-                u.name, u.name
-            );
-            for arm in &u.arms {
-                let head = format!("try w.writeAll(\"{{\\\"kind\\\":\\\"{}\\\",\\\"value\\\":\");", arm.name);
-                let (capture, value) = match (&arm.ty, arm.is_bytes()) {
-                    (None, _) => ("", "try w.writeAll(\"null\");".to_string()),
-                    (Some(_), true) => (" |x|", "try hx(w, x);".to_string()),
-                    (Some(ValueType::Packet(n)), _) => (" |*x|", format!("try dump{}(w, x);", n)),
-                    (Some(_), _) => (" |x|", "try w.print(\"{d}\", .{x});".to_string()),
-                };
-                let _ = writeln!(
-                    s,
-                    "        .{} =>{} {{\n            {}\n            {}\n            try w.writeAll(\"}}\");\n        }},",
-                    ident(&arm.name),
-                    capture,
-                    head,
-                    value
-                );
-            }
-            s.push_str("    }\n}\n\n");
-        }
-        for p in &module.packets {
-            let _ = writeln!(s, "fn dump{}(w: anytype, p: *const pk.{}) anyerror!void {{", p.name, p.name);
-            s.push_str("    try w.writeAll(\"{\");\n");
-            if p.members.is_empty() {
-                s.push_str("    _ = p;\n");
-            }
-            for (i, m) in p.members.iter().enumerate() {
-                let _ = writeln!(s, "    try w.writeAll(\"{}\\\"{}\\\":\");", if i > 0 { "," } else { "" }, m.name);
-                dump_member(&mut s, m, &format!("p.{}", ident(&m.name)));
-            }
-            s.push_str("    try w.writeAll(\"}\");\n}\n\n");
-        }
         // Zig only analyzes referenced functions; make sure all generated code compiles.
         s.push_str("comptime {\n");
         for p in &module.packets {
-            for f in ["decode", "decodeFrom", "encode", "encodeTo", "deinit"] {
+            for f in ["decode", "decodeFrom", "encode", "encodeTo", "deinit", "toJson"] {
                 let _ = writeln!(s, "    _ = &pk.{}.{};", p.name, f);
+            }
+            if p.params.is_empty() {
+                let _ = writeln!(s, "    _ = &pk.{}.tryDecode;", p.name);
+            }
+            if super::has_frame(module, p) {
+                let _ = writeln!(s, "    _ = &pk.{}.frameLen;", p.name);
             }
         }
         s.push_str("}\n\n");
@@ -166,7 +108,7 @@ impl Target for ZigTarget {
                 s.push_str("        _ = &p;\n");
             }
             s.push_str("        try w.writeAll(\"{\\\"ok\\\":true,\\\"value\\\":\");\n");
-            let _ = writeln!(s, "        try dump{}(w, &p);", p.name);
+            s.push_str("        try p.toJson(w);\n");
             if compile_time_reject {
                 s.push_str("        try w.writeAll(\",\\\"encode_error\\\":\\\"value does not fit the field type (rejected by the Zig compiler)\\\",\\\"encode_kind\\\":\\\"range\\\"}\");\n");
             } else {
@@ -175,7 +117,20 @@ impl Target for ZigTarget {
                 s.push_str("            try w.writeAll(\",\\\"encoded\\\":\");\n            try hx(w, pw.buf.items);\n            try w.writeAll(\"}\");\n");
                 s.push_str("        } else |err| {\n            try pbErr(w, \"encode_\", err, &pw.trace);\n            try w.writeAll(\"}\");\n        }\n");
             }
-            s.push_str("    } else |err| {\n        try w.writeAll(\"{\\\"ok\\\":false\");\n        try pbErr(w, \"\", err, &r.trace);\n        try w.writeAll(\"}\");\n    }\n}\n\n");
+            s.push_str("    } else |err| {\n        try w.writeAll(\"{\\\"ok\\\":false\");\n        try pbErr(w, \"\", err, &r.trace);\n        try w.writeAll(\"}\");\n    }\n");
+            s.push_str("    try w.writeAll(\"\\n\");\n");
+            let _ = writeln!(s, "    if (pk.{}.tryDecode(allocator, data)) |st| switch (st) {{", p.name);
+            s.push_str("        .done => |d| {\n            var v = d.value;\n            v.deinit(allocator);\n            try w.print(\"{{\\\"try\\\":\\\"done\\\",\\\"n\\\":{d}\", .{d.consumed});\n        },\n");
+            s.push_str(
+                "        .incomplete => |n| try w.print(\"{{\\\"try\\\":\\\"incomplete\\\",\\\"n\\\":{d}\", .{n}),\n",
+            );
+            s.push_str("    } else |_| try w.writeAll(\"{\\\"try\\\":\\\"error\\\"\");\n");
+            if super::has_frame(module, p) {
+                let _ = writeln!(s, "    if (pk.{}.frameLen(data)) |f| {{", p.name);
+                s.push_str("        if (f) |n| try w.print(\",\\\"frame\\\":{d}\", .{n}) else try w.writeAll(\",\\\"frame\\\":null\");\n");
+                s.push_str("    } else |_| try w.writeAll(\",\\\"frame\\\":\\\"error\\\"\");\n");
+            }
+            s.push_str("    try w.writeAll(\"}\");\n}\n\n");
         }
         s.push_str("pub fn main() !void {\n");
         s.push_str("    var gpa = std.heap.GeneralPurposeAllocator(.{}){};\n");

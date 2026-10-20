@@ -129,7 +129,12 @@ pub fn default_value(m: &Member) -> String {
 }
 
 /// Members that own heap memory (and so need deinit).
-pub fn owns_memory(m: &Member) -> bool {
+/// Whether a decoded member owns memory `deinit` frees (zero-copy byte
+/// buffers are slices of the input).
+pub fn owns_memory(m: &Member, zero_copy: bool) -> bool {
+    if zero_copy && m.array.is_some() && m.ty.is_byte() {
+        return false;
+    }
     m.array.is_some() || matches!(m.ty, ValueType::Packet(_) | ValueType::Str | ValueType::Union(_))
 }
 

@@ -4,8 +4,10 @@
 mod decode;
 mod encode;
 mod expr;
+mod json;
 mod naming;
 mod packet;
+mod stream;
 
 pub use naming::{ident, len_ident, scalar_type};
 pub use packet::arm_kind;
@@ -53,11 +55,13 @@ impl Backend for CGenerator {
                     && let Some(u) = module.union(n)
                 {
                     out.line("");
-                    packet::emit_union_declaration(&mut out, u);
+                    packet::emit_union_declaration(&mut out, u, opts.zero_copy);
                 }
             }
             out.line("");
-            packet::emit_declarations(&mut out, p);
+            packet::emit_declarations(&mut out, p, opts.zero_copy);
+            stream::declare_streaming(&mut out, module, p);
+            json::declare_json(&mut out, p);
         }
         out.line("");
         out.line("#ifdef __cplusplus");
@@ -71,13 +75,17 @@ impl Backend for CGenerator {
         out.line(format!("#define {}_IMPLEMENTED", guard));
         out.line("");
         out.buf.push_str(RUNTIME_IMPL);
+        json::emit_json_prototypes(&mut out, module);
         for u in &module.unions {
             out.line("");
-            packet::emit_union_free(&mut out, u);
+            packet::emit_union_free(&mut out, u, opts.zero_copy);
+            json::emit_union_json(&mut out, u);
         }
         for p in &module.packets {
             out.line("");
-            packet::emit_implementation(&mut out, p);
+            packet::emit_implementation(&mut out, p, opts.zero_copy);
+            stream::emit_streaming(&mut out, module, p);
+            json::emit_packet_json(&mut out, p);
         }
         out.line("");
         out.line(format!("#endif /* {}_IMPLEMENTED */", guard));

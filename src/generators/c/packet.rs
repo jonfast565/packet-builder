@@ -13,7 +13,7 @@ pub fn arm_kind(u: &str, arm: &Arm) -> String {
 }
 
 /// A tagged union: `kind` says which member of `u` is in use.
-pub fn emit_union_declaration(out: &mut Out, u: &Union) {
+pub fn emit_union_declaration(out: &mut Out, u: &Union, zero_copy: bool) {
     out.open("enum {");
     for (i, arm) in u.arms.iter().enumerate() {
         out.line(format!("{} = {},", arm_kind(&u.name, arm), i));
@@ -27,7 +27,7 @@ pub fn emit_union_declaration(out: &mut Out, u: &Union) {
         let id = ident(&arm.name);
         match (&arm.ty, arm.is_bytes()) {
             (None, _) => continue,
-            (Some(_), true) => out.line(format!("struct {{ uint8_t *data; size_t len; }} {};", id)),
+            (Some(_), true) => out.line(format!("struct {{ {}uint8_t *data; size_t len; }} {};", konst(zero_copy), id)),
             (Some(t), false) => out.line(format!("{} {};", scalar_type(t), id)),
         }
         members += 1;
@@ -40,13 +40,18 @@ pub fn emit_union_declaration(out: &mut Out, u: &Union) {
     out.line(format!("void {}_free({} *u);", u.name, u.name));
 }
 
-pub fn emit_union_free(out: &mut Out, u: &Union) {
+/// `const ` for byte buffers that point into the input (zero-copy).
+fn konst(zero_copy: bool) -> &'static str {
+    if zero_copy { "const " } else { "" }
+}
+
+pub fn emit_union_free(out: &mut Out, u: &Union, zero_copy: bool) {
     out.open(format!("void {}_free({} *u) {{", u.name, u.name));
     out.open("switch (u->kind) {");
     for arm in &u.arms {
         let id = ident(&arm.name);
         match (&arm.ty, arm.is_bytes()) {
-            (Some(_), true) => {
+            (Some(_), true) if !zero_copy => {
                 out.line(format!("case {}: free(u->u.{}.data); break;", arm_kind(&u.name, arm), id));
             }
             (Some(ValueType::Packet(n)), false) => {
@@ -61,7 +66,7 @@ pub fn emit_union_free(out: &mut Out, u: &Union) {
     out.close("}");
 }
 
-pub fn emit_declarations(out: &mut Out, p: &Packet) {
+pub fn emit_declarations(out: &mut Out, p: &Packet, zero_copy: bool) {
     let name = &p.name;
     out.open(format!("struct {} {{", name));
     if p.members.is_empty() {
@@ -84,8 +89,9 @@ pub fn emit_declarations(out: &mut Out, p: &Packet) {
                 out.line(format!("uint8_t (*{})[6];", id));
                 out.line(format!("size_t {};", len_ident(p, m)));
             }
-            (Some(_), _) => {
-                out.line(format!("{} *{};", st, id));
+            (Some(_), ty) => {
+                let k = if ty.is_byte() { konst(zero_copy) } else { "" };
+                out.line(format!("{}{} *{};", k, st, id));
                 out.line(format!("size_t {};", len_ident(p, m)));
             }
         }
@@ -117,7 +123,7 @@ fn touch_params(out: &mut Out, p: &Packet) {
     }
 }
 
-pub fn emit_implementation(out: &mut Out, p: &Packet) {
+pub fn emit_implementation(out: &mut Out, p: &Packet, zero_copy: bool) {
     let name = &p.name;
     let decl = param_decl(p);
     let pass: String = p.params.iter().map(|x| format!(", {}", param_var(&x.name))).collect();
@@ -166,7 +172,10 @@ pub fn emit_implementation(out: &mut Out, p: &Packet) {
                     out.line(format!("for (pb_i = 0; pb_i < p->{}; pb_i++) {}_free(&p->{}[pb_i]);", len, n, id));
                     out.close("}");
                 }
-                out.line(format!("free(p->{});", id));
+                // Zero-copy byte buffers belong to the input.
+                if !(zero_copy && ty.is_byte()) {
+                    out.line(format!("free(p->{});", id));
+                }
                 out.line(format!("p->{} = NULL;", id));
                 out.line(format!("p->{} = 0;", len));
                 frees += 1;
@@ -190,7 +199,7 @@ pub fn emit_implementation(out: &mut Out, p: &Packet) {
 
     let mut body = Out::new("    ");
     body.push();
-    Decoder::new(p).emit_steps(&mut body);
+    Decoder::new(p, zero_copy).emit_steps(&mut body);
     out.open(format!("int {}_decode_from({} *p, pb_reader *pb_r{}) {{", name, name, decl));
     out.line("int pb_rc = PB_OK;");
     out.line("uint64_t pb_u = 0;");

@@ -71,6 +71,22 @@ pub const PbTrace = struct {
     }
 };
 
+/// Bytes as a JSON string of hex digits (for `toJson`).
+pub fn pbJsonHex(w: anytype, b: []const u8) !void {
+    try w.writeAll("\"");
+    for (b) |c| try w.print("{x:0>2}", .{c});
+    try w.writeAll("\"");
+}
+
+/// Decoding from a buffer that may not hold the whole packet yet (a stream):
+/// the value and the bytes it took, or how many more bytes are needed at least.
+pub fn PbStatus(comptime T: type) type {
+    return union(enum) {
+        done: struct { value: T, consumed: usize },
+        incomplete: usize,
+    };
+}
+
 /// Where a reader was before `PbReader.jump`.
 pub const PbJump = struct { pos: usize, limit: usize, windows: usize };
 
@@ -428,6 +444,8 @@ pub const PbWriter = struct {
         }.lt;
         std.mem.sort(PbPlaced, self.placed.items, {}, byAt);
         for (self.placed.items) |pl| {
+            // The output reaches the offset even when the packet is empty.
+            if (self.buf.items.len < pl.at) try self.buf.appendNTimes(0, pl.at - self.buf.items.len);
             for (pl.data, 0..) |b, i| {
                 const k = pl.at + i;
                 if (k < self.buf.items.len) {
