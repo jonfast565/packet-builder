@@ -242,9 +242,51 @@ Calculated fields are computed after decoding and stored in the struct. They
 are not written when encoding. They may be used in array lengths (also before
 their own declaration), and are evaluated as soon as their inputs are known.
 
+### Constants
+
+Name a protocol's magic numbers instead of leaving them in comments. A
+`const` declaration sits at file level, next to the packets:
+
+```
+const FLAP_START uint8 = 0x2a "first byte of every frame"
+
+const Channel uint8 {               // a category of related values
+  signon = 1   "sign-on",
+  snac = 2     "SNAC data",
+  keep_alive = 5,
+}
+
+packet Flap be {
+  start uint8,
+  channel uint8 : Channel,          // this field's values come from Channel
+  length uint16,
+  payload bytes[length],
+  calc valid uint8 = start == FLAP_START and channel <= Channel.keep_alive
+}
+```
+
+* The type is any integer type (`uint16`, `u7`, `int8`, ...); the value is
+  any constant integer expression, may use constants declared before it, and
+  must fit the type.
+* The optional string after a value is a note. It becomes a doc comment in
+  the generated code and is listed by `layout`.
+* Expressions refer to a standalone constant by name and to a category member
+  as `Category.member`. A field may not have the same name as a standalone
+  constant.
+* `: Category` after a field or bitfield member records where its values come
+  from. Every value of the category must fit the field. `layout` shows the
+  tag, and the generated struct member gets a doc comment pointing at the
+  category. It does not restrict the values a field may hold.
+* Category names start with an uppercase letter, since they become type names.
+* Generated names change case and drop underscores, so two names that only
+  differ that way (`keep_alive` and `KeepAlive`, a category and a packet) are
+  rejected, as are names the generated code already uses (`Math`, `EOF`,
+  `INT8_MAX`, anything starting with `pb`, ...).
+
 ### Expressions
 
 * literals: `42`, `0x2a`, `0b1010`, `1.5`
+* named constants `FLAP_START`, `Channel.snac`
 * field references `x`, array elements `x[i]`, `sumof x`, `productof x`
 * `+ - * / ^`, comparisons `== != <> < <= > >=` (not chained), `and`, `or`
 * `when cond then a otherwise b`
@@ -270,6 +312,17 @@ and encode into a shared writer. Decoding ignores trailing bytes.
 | Python | `P.decode(data)`, `P.decode_from(PbReader(data))` | `p.encode()`, `p.encode_to(w)` | raises `PbError` |
 | C# | `P.Decode(data)`, `P.DecodeFrom(new PbReader(data))` | `p.Encode()`, `p.EncodeTo(w)` | throws `PbException` |
 | Zig | `P.decode(allocator, data)`, `P.decodeFrom(allocator, &reader)`; release with `p.deinit(allocator)` | `p.encode(allocator)`, `p.encodeTo(&writer)` | `PbError!T` |
+
+Named constants are exported with their declared type:
+
+| language | `const FLAP_START uint8 = 0x2a` | `Channel.snac` |
+|----------|--------------------------------|----------------|
+| C | `FLAP_START` (`#define`) | `CHANNEL_SNAC` |
+| Rust | `FLAP_START: u8` | `Channel::SNAC` |
+| Go | `FlapStart uint8` | `ChannelSnac` |
+| Python | `FLAP_START` | `Channel.SNAC` |
+| C# | `Constants.FlapStart` | `Channel.Snac` |
+| Zig | `FLAP_START: u8` | `Channel.snac` |
 
 For C, define `PACKETS_IMPLEMENTATION` (the upper-cased `-p` name followed by
 `_IMPLEMENTATION`) in exactly one `.c` file before including the header. Go and

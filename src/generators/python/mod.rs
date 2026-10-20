@@ -9,8 +9,8 @@ mod packet;
 pub use naming::ident;
 
 use crate::generators::Backend;
-use crate::generators::common::{GenOptions, Out};
-use crate::ir::Module;
+use crate::generators::common::{ConstEmitter, GenOptions, Out};
+use crate::ir::{Category, Constant, Module};
 
 pub struct PythonGenerator;
 
@@ -29,11 +29,40 @@ impl Backend for PythonGenerator {
         out.line("");
         out.line("");
         out.buf.push_str(RUNTIME);
+        self.emit_constants(&mut out, module);
         for p in &module.packets {
             out.line("");
             out.line("");
             packet::emit_packet(&mut out, p);
         }
         out.buf
+    }
+}
+
+impl ConstEmitter for PythonGenerator {
+    fn separator(&self, out: &mut Out) {
+        out.line("");
+        out.line("");
+    }
+
+    /// Upper case, so a module-level constant never shadows a builtin.
+    fn constant(&self, out: &mut Out, c: &Constant) {
+        if let Some(note) = &c.note {
+            out.line(format!("# {}", note));
+        }
+        out.line(format!("{} = {}", c.name.to_ascii_uppercase(), c.literal()));
+    }
+
+    fn category(&self, out: &mut Out, cat: &Category) {
+        out.open(format!("class {}:", ident(&cat.name)));
+        out.line(format!("\"\"\"Named `{}` values.\"\"\"", cat.name));
+        out.line("");
+        for c in &cat.members {
+            if let Some(note) = &c.note {
+                out.line(format!("# {}", note));
+            }
+            out.line(format!("{} = {}", c.name.to_ascii_uppercase(), c.literal()));
+        }
+        out.pop();
     }
 }

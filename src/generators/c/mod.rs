@@ -10,8 +10,8 @@ mod packet;
 pub use naming::{ident, len_ident, scalar_type};
 
 use crate::generators::Backend;
-use crate::generators::common::{GenOptions, Out};
-use crate::ir::Module;
+use crate::generators::common::{ConstEmitter, GenOptions, Out};
+use crate::ir::{Category, Constant, Module, ValueType};
 
 pub struct CGenerator;
 
@@ -32,6 +32,7 @@ impl Backend for CGenerator {
         out.line(format!("#define {}_H", guard));
         out.line("");
         out.buf.push_str(RUNTIME_DECL);
+        self.emit_constants(&mut out, module);
         out.line("");
         out.line("#ifdef __cplusplus");
         out.line("extern \"C\" {");
@@ -60,5 +61,34 @@ impl Backend for CGenerator {
         out.line(format!("#endif /* {}_IMPLEMENTED */", guard));
         out.line(format!("#endif /* {}_IMPLEMENTATION */", guard));
         out.buf
+    }
+}
+
+/// `#define NAME ((uint8_t)1u)`, with the note as a comment.
+fn define(out: &mut Out, name: &str, c: &Constant) {
+    if let Some(note) = &c.note {
+        out.line(format!("/* {} */", note.replace("*/", "* /")));
+    }
+    let wide = matches!(c.ty, ValueType::Int { width: 33.., .. });
+    let value = match (c.ty.is_signed(), wide) {
+        (true, true) if c.value == i64::MIN => "INT64_MIN".to_string(),
+        (true, true) => format!("{}LL", c.literal()),
+        (true, false) => c.literal(),
+        (false, true) => format!("{}ULL", c.literal()),
+        (false, false) => format!("{}u", c.literal()),
+    };
+    out.line(format!("#define {} (({}){})", name, scalar_type(&c.ty), value));
+}
+
+impl ConstEmitter for CGenerator {
+    fn constant(&self, out: &mut Out, c: &Constant) {
+        define(out, &c.name.to_ascii_uppercase(), c);
+    }
+
+    fn category(&self, out: &mut Out, cat: &Category) {
+        out.line(format!("/* {} values */", cat.name));
+        for c in &cat.members {
+            define(out, &format!("{}_{}", cat.name, c.name).to_ascii_uppercase(), c);
+        }
     }
 }

@@ -1,6 +1,14 @@
 //! Field-by-field layout report (the `layout` command).
 
-use super::model::{Codec, Count, Module, Packet, Step, StrMode, ValueType};
+use super::model::{Codec, Count, Member, Module, Packet, Step, StrMode, ValueType};
+
+/// `u8` becomes `u8 : Channel` for a member tagged with a category.
+fn with_category(kind: String, member: Option<&Member>) -> String {
+    match member.and_then(|m| m.category.as_ref()) {
+        Some(c) => format!("{} : {}", kind, c),
+        None => kind,
+    }
+}
 
 /// One row of a packet's layout, for display.
 #[derive(Debug, Clone, PartialEq)]
@@ -70,6 +78,7 @@ impl Module {
                         (ValueType::Str, _) => "string".into(),
                     };
                     let name = member.map(|m| packet.members[m].name.clone()).unwrap_or_else(|| "_".into());
+                    let kind = with_category(kind, member.map(|m| &packet.members[m]));
                     rows.push(LayoutRow { offset_bits: offset, size_bits: size, name, kind, nested: false });
                     offset = offset.zip(size).map(|(o, s)| o + s);
                 }
@@ -87,12 +96,15 @@ impl Module {
                             offset_bits: offset.map(|o| o + (*container_width - part.shift - part.width) as u64),
                             size_bits: Some(part.width as u64),
                             name: m.name.clone(),
-                            kind: format!(
-                                "{}{} (bits {}..{})",
-                                if part.signed { "i" } else { "u" },
-                                part.width,
-                                part.shift + part.width - 1,
-                                part.shift
+                            kind: with_category(
+                                format!(
+                                    "{}{} (bits {}..{})",
+                                    if part.signed { "i" } else { "u" },
+                                    part.width,
+                                    part.shift + part.width - 1,
+                                    part.shift
+                                ),
+                                Some(m),
                             ),
                             nested: true,
                         });

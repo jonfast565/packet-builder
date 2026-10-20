@@ -4,13 +4,16 @@ use super::decode::Decoder;
 use super::encode::Encoder;
 use super::expr::store_value;
 use super::naming::{default_value, ident, member_type, owns_memory, scalar_type};
-use crate::generators::common::{Out, StepEmitter};
+use crate::generators::common::{Out, StepEmitter, member_category};
 use crate::ir::{Packet, ValueType};
 
 pub fn emit_packet(out: &mut Out, p: &Packet) {
     let name = &p.name;
     out.open(format!("pub const {} = struct {{", name));
     for m in &p.members {
+        if let Some(cat) = member_category(m) {
+            out.line(format!("/// Values from `{}`.", ident(cat)));
+        }
         out.line(format!("{}: {} = {},", ident(&m.name), member_type(m), default_value(m)));
     }
     if !p.members.is_empty() {

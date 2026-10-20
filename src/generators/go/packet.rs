@@ -3,17 +3,21 @@
 use super::decode::Decoder;
 use super::encode::Encoder;
 use super::expr::store_value;
-use super::naming::{field_name, member_type};
-use crate::generators::common::{Out, StepEmitter};
+use super::naming::{field_name, gofmt_widths, member_type};
+use crate::generators::common::{Out, StepEmitter, member_category};
 use crate::ir::Packet;
 
 pub fn emit_packet(out: &mut Out, p: &Packet) {
     let name = &p.name;
     out.open(format!("type {} struct {{", name));
-    // gofmt alignment
-    let width = p.members.iter().map(|m| field_name(&m.name).len()).max().unwrap_or(0);
-    for m in &p.members {
-        out.line(format!("{:<w$} {}", field_name(&m.name), member_type(m), w = width));
+    let names: Vec<_> = p.members.iter().map(|m| field_name(&m.name)).collect();
+    let commented: Vec<_> = p.members.iter().map(|m| member_category(m).is_some()).collect();
+    let widths = gofmt_widths(&names, &commented);
+    for ((m, name), width) in p.members.iter().zip(&names).zip(widths) {
+        if let Some(cat) = member_category(m) {
+            out.line(format!("// Values: {}*", cat));
+        }
+        out.line(format!("{:<w$} {}", name, member_type(m), w = width));
     }
     out.close("}");
     out.line("");

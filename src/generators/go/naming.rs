@@ -41,3 +41,18 @@ impl Dialect for Go {
         format!("p.{}", field_name(&member.name))
     }
 }
+
+/// Column width gofmt pads each name to: a comment line starts a new
+/// alignment section, so `commented[i]` (a comment precedes line i) splits them.
+pub fn gofmt_widths(names: &[String], commented: &[bool]) -> Vec<usize> {
+    let mut widths = vec![0; names.len()];
+    let mut start = 0;
+    for end in 1..=names.len() {
+        if end == names.len() || commented[end] {
+            let w = names[start..end].iter().map(String::len).max().unwrap_or(0);
+            widths[start..end].fill(w);
+            start = end;
+        }
+    }
+    widths
+}

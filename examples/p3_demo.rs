@@ -43,17 +43,17 @@ fn main() -> Result<(), PbError> {
         println!("type 0x{:02x} tx 0x{:02x} valid {} crc ok {}", packet.r#type, packet.tx_seq, packet.valid, crc_ok);
 
         match packet.r#type {
-            0x23 => {
+            P3Type::INIT => {
                 let init = P3Init::decode(&packet.data)?;
                 println!("  INIT: platform {} version {}.{}", init.platform, init.client_major, init.client_minor);
             }
-            0x20 => {
+            P3Type::DATA => {
                 let message = P3Message::decode(&packet.data)?;
                 let stream = FdoStream::decode(&message.atoms)?;
                 let names: Vec<String> = stream
                     .atoms
                     .iter()
-                    .filter(|a| a.uncompressed == 1 && a.protocol == 3 && a.atom == 1)
+                    .filter(|a| a.uncompressed == 1 && a.protocol == FdoProtocol::DE && a.atom == 1)
                     .map(|a| String::from_utf8_lossy(&a.arg).trim_end().to_string())
                     .collect();
                 println!("  DATA {}: {} atoms, screen name {}", message.token, stream.atoms.len(), names[0]);

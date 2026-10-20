@@ -114,3 +114,33 @@ packet Words be {
   count uint8,
   words uint16[]
 }
+
+// Named constants: every backend must emit these and compile them.
+// Values cover hex/decimal/binary spellings, folded expressions, the
+// extremes of 64-bit types, negative values and keyword-like names.
+const MAGIC uint16 = 0xbeef "starts a Tagged packet; notes may contain */ and <tags> & such"
+const DOUBLE_MAGIC uint32 = MAGIC * 2
+const BITS uint8 = 0b1010
+const U64_MAX uint64 = 0xffffffffffffffff
+const I64_MIN int64 = 0 - 9223372036854775807 - 1
+const NEGATIVE int8 = 0 - 128
+
+const Kind u3 {
+  none = 0,
+  one = 1    "the first",
+  class = 2,
+  error = 7  "a Zig keyword",
+}
+
+const Color uint8 { red = 1, green = 2, blue = 3 }
+
+// Fields tagged with the categories their values come from.
+packet Tagged be {
+  magic uint16,
+  color uint8 : Color,
+  flags bitfield uint8 { kind u3 : Kind, _ u5 },
+  colors uint8[2] : Color,
+  calc is_magic uint8 = magic == MAGIC,
+  calc is_error uint8 = kind == Kind.error,
+  calc doubled uint32 = DOUBLE_MAGIC + BITS
+}

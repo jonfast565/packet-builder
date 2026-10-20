@@ -16,6 +16,9 @@ pub enum ExprNode {
     // identifiers and optional index expression (e.g., foo[expr])
     ValueReference(String, Option<Box<ExprNode>>),
 
+    // `Category.member`: a named constant from a category
+    QualifiedReference(String, String),
+
     // function call: name(args...)
     Call(String, Vec<ExprNode>),
 
@@ -105,6 +108,8 @@ pub struct TypeExpr {
     pub endianness: Option<Endianness>,
     /// `align N`: pad to a multiple of N bytes (from the packet start) first.
     pub align: Option<u64>,
+    /// `: Category`: the named constants this field's values come from.
+    pub category: Option<(String, Span)>,
     pub span: Span,
 }
 
@@ -122,6 +127,7 @@ pub struct BitfieldMember {
     pub name: String,
     pub width: u32,
     pub signed: bool,
+    pub category: Option<(String, Span)>,
     pub span: Span,
 }
 
@@ -165,9 +171,47 @@ pub struct PacketExpr {
     pub span: Span,
 }
 
+/// How a constant's value was written, so generated code can keep the spelling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Radix {
+    #[default]
+    Dec,
+    Hex,
+    Bin,
+}
+
+/// One named value: `NAME = expr "note"`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConstItem {
+    pub name: String,
+    pub value: ExprNode,
+    pub note: Option<String>,
+    pub radix: Radix,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ConstKind {
+    /// `const NAME type = value`
+    Single(ConstItem),
+    /// `const Category type { a = 1, b = 2 }`
+    Group(Vec<ConstItem>),
+}
+
+/// A file-level `const` declaration.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConstDecl {
+    pub name: String,
+    pub ty: TypeNode,
+    pub kind: ConstKind,
+    pub span: Span,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct PacketExprList {
     pub packets: Vec<PacketExpr>,
+    /// Named constants, in source order.
+    pub constants: Vec<ConstDecl>,
     /// Bits in a `word` (16 unless the file says `wordsize 32`).
     pub word_size: u32,
 }

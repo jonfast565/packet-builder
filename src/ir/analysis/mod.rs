@@ -2,12 +2,14 @@
 //!
 //! - [`analyze`] (this file): packet names and dependency order.
 //! - `packet`: per-packet passes ([`PacketBuilder`](packet::PacketBuilder)).
+//! - `consts`: named constants and categories, and `: Category` tags.
 //! - `context`: the member table and diagnostics shared by those passes.
 //! - `typecheck`, `codec`: expression and wire-format resolution.
 //! - `cursor`: what is known about the bit offset while laying out fields.
 //! - `types`: facts about source type names.
 
 mod codec;
+mod consts;
 mod context;
 mod cursor;
 mod packet;
@@ -78,9 +80,10 @@ pub fn analyze(list: &PacketExprList) -> Result<Module, Vec<Diagnostic>> {
         }
     };
 
+    let consts = consts::ConstTable::build(list, &mut diags);
     let mut done = HashMap::<String, Packet>::new();
     for idx in order {
-        match packet::PacketBuilder::new(&list.packets[idx], &done).build() {
+        match packet::PacketBuilder::new(&list.packets[idx], &done, &consts).build() {
             Ok(packet) => {
                 done.insert(packet.name.clone(), packet);
             }
@@ -93,7 +96,7 @@ pub fn analyze(list: &PacketExprList) -> Result<Module, Vec<Diagnostic>> {
     }
 
     let packets = list.packets.iter().map(|p| done.remove(&p.name).expect("analyzed")).collect();
-    Ok(Module { packets })
+    Ok(Module { packets, constants: consts.constants, categories: consts.categories })
 }
 
 fn packet_order(list: &PacketExprList, by_name: &HashMap<String, usize>) -> Result<Vec<usize>, Vec<Diagnostic>> {

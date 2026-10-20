@@ -70,6 +70,12 @@
     { "name": "rest-of-input words, partial element is an error", "packet": "Words", "hex": "02 0001 00", "error": true },
 
     { "name": "keywords as field names", "packet": "Keywords", "hex": "010203040506",
-      "expect": { "type": 1, "class": 2, "func": 3, "struct": 4, "default": 5, "string": 6 } }
+      "expect": { "type": 1, "class": 2, "func": 3, "struct": 4, "default": 5, "string": 6 } },
+
+    { "name": "named constants in expressions", "packet": "Tagged", "hex": "beef 02 e0 0103",
+      "expect": { "magic": 48879, "color": 2, "kind": 7, "colors": "0103",
+                  "is_magic": 1, "is_error": 1, "doubled": 97768 } },
+    { "name": "tags do not restrict values", "packet": "Tagged", "hex": "1234 09 20 0000",
+      "expect": { "magic": 4660, "color": 9, "kind": 1, "is_magic": 0, "is_error": 0 } }
   ]
 }

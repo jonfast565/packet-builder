@@ -2,6 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use super::consts::ConstTable;
 use crate::ast::{PacketExpr, Span};
 use crate::errors::Diagnostic;
 use crate::ir::expr::TExpr;
@@ -10,14 +11,15 @@ use crate::ir::model::{Member, MemberKind, Packet, Step, ValueType};
 pub(super) struct Ctx<'a> {
     pub packet: &'a PacketExpr,
     pub done: &'a HashMap<String, Packet>,
+    pub consts: &'a ConstTable,
     pub members: Vec<Member>,
     pub names: HashMap<String, usize>,
     pub diags: Vec<Diagnostic>,
 }
 
 impl<'a> Ctx<'a> {
-    pub fn new(packet: &'a PacketExpr, done: &'a HashMap<String, Packet>) -> Self {
-        Ctx { packet, done, members: Vec::new(), names: HashMap::new(), diags: Vec::new() }
+    pub fn new(packet: &'a PacketExpr, done: &'a HashMap<String, Packet>, consts: &'a ConstTable) -> Self {
+        Ctx { packet, done, consts, members: Vec::new(), names: HashMap::new(), diags: Vec::new() }
     }
 
     pub fn declare(&mut self, name: &str, ty: ValueType, kind: MemberKind, span: Span) {
@@ -35,7 +37,13 @@ impl<'a> Ctx<'a> {
             return;
         }
         self.names.insert(name.to_string(), self.members.len());
-        self.members.push(Member { name: name.to_string(), ty, array: None, kind });
+        if self.consts.single(name).is_some() {
+            self.diags.push(Diagnostic::new(
+                format!("field `{}` has the same name as a constant; rename one of them", name),
+                span,
+            ));
+        }
+        self.members.push(Member { name: name.to_string(), ty, array: None, kind, category: None });
     }
 
     /// Add calculated fields to the decode steps once their inputs are known.

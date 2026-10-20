@@ -9,8 +9,8 @@ mod packet;
 pub use naming::{member_type, namespace, prop_name, scalar_type};
 
 use crate::generators::Backend;
-use crate::generators::common::{GenOptions, Out};
-use crate::ir::Module;
+use crate::generators::common::{ConstEmitter, GenOptions, Out, const_pascal};
+use crate::ir::{Category, Constant, Module};
 
 pub struct CSharpGenerator;
 
@@ -27,11 +27,47 @@ impl Backend for CSharpGenerator {
         out.line(format!("namespace {}", namespace(opts)));
         out.open("{");
         out.buf.push_str(RUNTIME);
+        self.emit_constants(&mut out, module);
         for p in &module.packets {
             out.line("");
             packet::emit_packet(&mut out, p);
         }
         out.close("}");
         out.buf
+    }
+}
+
+/// `public const byte Name = 1;`, with the note as an XML doc comment.
+fn const_line(out: &mut Out, c: &Constant) {
+    if let Some(note) = &c.note {
+        let note = note.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+        out.line(format!("/// <summary>{}</summary>", note));
+    }
+    out.line(format!("public const {} {} = {};", scalar_type(&c.ty), const_pascal(&c.name), c.literal()));
+}
+
+impl ConstEmitter for CSharpGenerator {
+    fn open_constants(&self, out: &mut Out) {
+        out.line("/// <summary>Standalone named constants.</summary>");
+        out.line("public static class Constants");
+        out.open("{");
+    }
+
+    fn close_constants(&self, out: &mut Out) {
+        out.close("}");
+    }
+
+    fn constant(&self, out: &mut Out, c: &Constant) {
+        const_line(out, c);
+    }
+
+    fn category(&self, out: &mut Out, cat: &Category) {
+        out.line(format!("/// <summary>Named <c>{}</c> values.</summary>", cat.name));
+        out.line(format!("public static class {}", cat.name));
+        out.open("{");
+        for c in &cat.members {
+            const_line(out, c);
+        }
+        out.close("}");
     }
 }

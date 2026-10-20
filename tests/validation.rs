@@ -235,3 +235,69 @@ fn c_struct_layout_is_computed() {
     let m = compile("packet S le { a uint8, b uint32, c uint8 }").unwrap();
     assert_eq!(m.packets[0].fixed_bits, Some(6 * 8));
 }
+
+#[test]
+fn constants_are_resolved_in_expressions() {
+    let m = compile(
+        "const A uint8 = 0x10 \"note\"\nconst B uint16 = A * 2\nconst K u3 { x = 1, y = 2 }\n\
+         packet P { n uint8 : K, data bytes[n - A + K.y] }",
+    )
+    .unwrap();
+    assert_eq!(m.constants.len(), 2);
+    assert_eq!(m.constants[1].value, 32);
+    assert_eq!(m.constants[0].literal(), "0x10");
+    assert_eq!(m.constants[0].note.as_deref(), Some("note"));
+    assert_eq!(m.categories[0].members[1].value, 2);
+    assert_eq!(m.packets[0].members[0].category.as_deref(), Some("K"));
+}
+
+#[test]
+fn constant_values_are_checked() {
+    assert_error("const A uint8 = 256\npacket P { a uint8 }", "the value 256 of `A` does not fit its type u8");
+    assert_error("const A i4 = 8\npacket P { a uint8 }", "does not fit its type i4");
+    assert_error("const A uint8 = sqrt(4)\npacket P { a uint8 }", "must be a constant integer expression");
+    assert_error("const A uint8 = B\nconst B uint8 = 1\npacket P { a uint8 }", "unknown constant `B`");
+    assert_error("const A float64 = 1\npacket P { a uint8 }", "must have an integer type");
+    assert_error("const A bytes = 1\npacket P { a uint8 }", "must have an integer type");
+}
+
+#[test]
+fn constant_names_are_checked() {
+    assert_error(
+        "const K uint8 { a = 1, a = 2 }\npacket P { x uint8 }",
+        "`a` is declared more than once in category `K`",
+    );
+    assert_error("const K uint8 { keep_alive = 1, KeepAlive = 2 }\npacket P { x uint8 }", "declared more than once");
+    assert_error("const P uint8 = 1\npacket P { x uint8 }", "constant `P` clashes with packet `P`");
+    assert_error("const K uint8 { a = 1 }\nconst K_A uint8 = 2\npacket P { x uint8 }", "clashes with `K.a`");
+    assert_error("const K uint8 { k = 1 }\npacket P { x uint8 }", "same name as its category");
+    assert_error("const Constants uint8 { a = 1 }\npacket P { x uint8 }", "reserved by generated code");
+    assert_error("const PB_X uint8 = 1\npacket P { x uint8 }", "reserved by generated code");
+    assert_error("const x uint8 = 1\npacket P { x uint8 }", "same name as a constant");
+    assert_error("const kind uint8 { a = 1 }\npacket P { x uint8 }", "must start with an uppercase letter");
+    for name in ["EOF", "NULL", "INT8_MAX", "UINT64_C", "INTMAX_MAX", "UINT_LEAST8_MAX", "Math", "Array", "ValueError"]
+    {
+        assert_error(&format!("const {} uint8 = 1\npacket P {{ x uint8 }}", name), "reserved by generated code");
+    }
+    // Close to a reserved name is fine.
+    compile("const EOF_MARKER uint8 = 1\nconst INT8 uint8 = 2\npacket P { x uint8 }").unwrap();
+}
+
+#[test]
+fn constant_references_are_checked() {
+    assert_error("const K uint8 { a = 1 }\npacket P { x uint8, calc c uint8 = K.b }", "has no constant `b` (it has a)");
+    assert_error("packet P { x uint8, calc c uint8 = K.b }", "unknown category `K`");
+    assert_error("const K uint8 { a = 1 }\npacket P { x uint8, calc c uint8 = K }", "is a category of constants");
+}
+
+#[test]
+fn category_tags_are_checked() {
+    assert_error("packet P { x uint8 : K }", "unknown category `K`");
+    assert_error("const K uint8 = 1\npacket P { x uint8 : K }", "unknown category `K`");
+    assert_error("const K uint8 { a = 1 }\npacket P { x float32 : K }", "`x` is not an integer");
+    assert_error(
+        "const K uint8 { a = 1, b = 9 }\npacket P { f bitfield uint8 { x u3 : K, _ u5 } }",
+        "`K.b` = 9 does not fit `x` (u3)",
+    );
+    assert_error("const K int8 { a = 0 - 1 }\npacket P { x uint8 : K }", "`K.a` = -1 does not fit `x` (u8)");
+}

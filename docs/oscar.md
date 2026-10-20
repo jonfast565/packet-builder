@@ -22,16 +22,32 @@ Every message on an OSCAR connection is a FLAP frame: a `*` marker, a channel,
 a sequence number, and a length-prefixed payload.
 
 ```
+const FLAP_START uint8 = 0x2a "first byte of every FLAP frame ('*')"
+
+const Channel uint8 {
+  signon = 1        "sign-on: FlapSignon payload",
+  snac = 2          "SNAC data: Snac payload",
+  error = 3         "FLAP-level error",
+  signoff = 4       "sign-off",
+  keep_alive = 5    "keep-alive",
+}
+
 packet Flap be {
-  start uint8,              // always 0x2A ('*')
-  channel uint8,            // 1 signon, 2 SNAC data, 3 error, 4 signoff, 5 keep-alive
+  start uint8,              // always FLAP_START
+  channel uint8 : Channel,
   sequence uint16,
   length uint16,
   payload bytes[length],
-  calc valid uint8 = start == 0x2a and channel >= 1 and channel <= 5
+  calc valid uint8 = start == FLAP_START and channel >= Channel.signon and channel <= Channel.keep_alive
 }
 ```
 
+* The protocol's magic numbers are **named constants**. `Channel` is a
+  category, and `channel uint8 : Channel` notes that the field takes its
+  values from it. Expressions use them by name (`Channel.snac`), and every
+  generated file exports them: `Channel.SNAC` in Python, `Channel::SNAC` in Rust,
+  `ChannelSnac` in Go, `CHANNEL_SNAC` in C. The strings are notes that end up
+  as doc comments.
 * `bytes[length]` takes its size from a field decoded earlier. The decoder
   checks `length` against the remaining input before allocating, so a corrupt
   frame produces an error instead of a huge allocation or an over-read.
@@ -42,18 +58,25 @@ packet Flap be {
 ## 2. SNAC header: a bitfield and an optional block
 
 Channel 2 payloads start with a 10-byte SNAC header. Its 16-bit flags word
-has two meaningful bits: `0x8000` says a length-prefixed block of version TLVs
-follows the header, and `0x0001` says more replies to the same request will
+has two meaningful bits: `SnacFlag.has_version_info` (0x8000) says a
+length-prefixed block of version TLVs follows the header, and
+`SnacFlag.more_replies` (0x0001) says more replies to the same request will
 follow.
 
 ```
+const SnacFamily uint16 {
+  service = 0x0001  "generic service controls",
+  icbm = 0x0004     "ICBM: instant messages",
+  auth = 0x0017     "authorization (MD5 login)",
+}
+
 packet SnacHeader be {
-  family uint16,
-  subtype uint16,
+  family uint16 : SnacFamily,
+  subtype uint16,           // ServiceSubtype, AuthSubtype or IcbmSubtype, by family
   flags bitfield uint16 {
-    has_version_info u1,    // 0x8000
+    has_version_info u1,    // SnacFlag.has_version_info
     _ u14,
-    more_replies u1         // 0x0001
+    more_replies u1         // SnacFlag.more_replies
   },
   request_id uint32,
   version_info SnacVersionInfo[has_version_info]
@@ -65,6 +88,9 @@ packet SnacVersionInfo be {
 }
 ```
 
+* A field takes one category, so `subtype` (whose meaning depends on the
+  family) is left untagged; the subtypes are still named per family
+  (`ServiceSubtype.server_ready`, `IcbmSubtype.receive`, ...).
 * `flags bitfield uint16 { ... }` reads one big-endian 16-bit integer and
   splits it from the most significant bit down. `_ u14` names the unused bits
   explicitly. They are ignored on decode and written as zero on encode.
@@ -101,7 +127,7 @@ The incoming instant message, SNAC(04,07), shows how the pieces fit together:
 packet IcbmReceive be {
   header SnacHeader,
   cookie bytes[8],
-  channel uint16,
+  channel uint16 : IcbmChannel,   // plain_text, rendezvous, icq
   screen_name string(uint8),      // one length byte, then the name
   warning_level uint16,           // tenths of a percent
   user_tlv_count uint16,
@@ -111,9 +137,9 @@ packet IcbmReceive be {
 }
 ```
 
-The message text sits two levels deeper: TLV `0x0002` holds a list of
-fragments (`IcbmMessage`), and fragment `0x01` holds a charset header plus the
-text (`MessageText`). Each level is its own packet, so you decode exactly as
+The message text sits two levels deeper: TLV `IcbmTlv.message_data` holds a
+list of fragments (`IcbmMessage`), and fragment `FragmentId.text` holds a
+charset header plus the text (`MessageText`). Each level is its own packet, so you decode exactly as
 deep as you need.
 
 ## 4. Generating the parsers
@@ -129,7 +155,8 @@ The demo decodes what a client receives right after connecting to a BOS
 server: the sign-on frame, SNAC(01,03) *server ready*, and an incoming IM.
 
 ```python
-from packets import Flap, FlapSignon, IcbmMessage, IcbmReceive, MessageText, PbReader, ServerReady, SnacHeader
+from packets import (Channel, Flap, FlapSignon, FragmentId, IcbmMessage, IcbmReceive, IcbmSubtype,
+                     IcbmTlv, MessageText, PbReader, ServerReady, ServiceSubtype, SnacFamily, SnacHeader)
 
 def frames(stream):
     """Split a TCP byte stream into FLAP frames."""
@@ -139,20 +166,20 @@ def frames(stream):
 
 def message_text(tlvs):
     for tlv in tlvs:
-        if tlv.type == 0x0002:
+        if tlv.type == IcbmTlv.MESSAGE_DATA:
             for fragment in IcbmMessage.decode(tlv.value).fragments:
-                if fragment.id == 0x01:
+                if fragment.id == FragmentId.TEXT:
                     return MessageText.decode(fragment.data).text.decode("ascii")
 
 for frame in frames(STREAM):
-    if frame.channel == 1:
+    if frame.channel == Channel.SIGNON:
         print("sign-on, protocol version", FlapSignon.decode(frame.payload).version)
         continue
     header = SnacHeader.decode(frame.payload)   # peek at family/subtype
-    if (header.family, header.subtype) == (0x0001, 0x0003):
+    if (header.family, header.subtype) == (SnacFamily.SERVICE, ServiceSubtype.SERVER_READY):
         families = ServerReady.decode(frame.payload).families
         print("server ready, families:", ", ".join("0x%04x" % f for f in families))
-    elif (header.family, header.subtype) == (0x0004, 0x0007):
+    elif (header.family, header.subtype) == (SnacFamily.ICBM, IcbmSubtype.RECEIVE):
         im = IcbmReceive.decode(frame.payload)
         print("message from %s (warning level %.1f%%): %s"
               % (im.screen_name, im.warning_percent, message_text(im.tlvs)))
@@ -173,14 +200,15 @@ echoed back:
 
 ```python
 send = IcbmSend(
-    header=SnacHeader(family=0x0004, subtype=0x0006, request_id=0x30),
-    cookie=cookie, channel=1,
+    header=SnacHeader(family=SnacFamily.ICBM, subtype=IcbmSubtype.SEND, request_id=0x30),
+    cookie=cookie, channel=IcbmChannel.PLAIN_TEXT,
     screen_name=sender,                               # length prefix is written for you
-    tlvs=[Tlv(type=0x0002, length=len(fragments), value=fragments),
-          Tlv(type=0x0006, length=0, value=b"")],     # store if recipient is offline
+    tlvs=[Tlv(type=IcbmTlv.MESSAGE_DATA, length=len(fragments), value=fragments),
+          Tlv(type=IcbmTlv.STORE_OFFLINE, length=0, value=b"")],
 )
 payload = send.encode()
-wire = Flap(start=0x2A, channel=2, sequence=seq + 1, length=len(payload), payload=payload).encode()
+wire = Flap(start=FLAP_START, channel=Channel.SNAC, sequence=seq + 1,
+            length=len(payload), payload=payload).encode()
 ```
 
 ## 6. The same in other languages
@@ -191,9 +219,9 @@ wire = Flap(start=0x2A, channel=2, sequence=seq + 1, length=len(payload), payloa
 let mut reader = PbReader::new(&bytes);
 while reader.remaining_bits() > 0 {
     let frame = Flap::decode_from(&mut reader)?;
-    if frame.channel != 2 { continue; }
+    if frame.channel != Channel::SNAC { continue; }
     let header = SnacHeader::decode(&frame.payload)?;
-    if (header.family, header.subtype) == (0x0004, 0x0007) {
+    if (header.family, header.subtype) == (SnacFamily::ICBM, IcbmSubtype::RECEIVE) {
         let im = IcbmReceive::decode(&frame.payload)?;
         println!("{} says {:?}", im.screen_name, message_text(&im.tlvs)?);
     }
@@ -245,7 +273,7 @@ The OSCAR description models these SNACs, each with test vectors:
 
 | SNAC | packet |
 |------|--------|
-| channel 1 sign-on | `FlapSignon` (version + TLVs, e.g. the 0x0006 auth cookie) |
+| `Channel.signon` sign-on | `FlapSignon` (version + TLVs, e.g. `LoginTlv.auth_cookie`) |
 | any | `Snac` (header + raw body), `SnacHeader` |
 | (01,03) server ready | `ServerReady` |
 | (01,07) rate limits | `RateInfo`, `RateClass`, `RateGroup`, `FamilySubtype` |

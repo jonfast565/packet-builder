@@ -9,8 +9,8 @@ mod packet;
 pub use naming::{field_name, member_type, scalar_type};
 
 use crate::generators::Backend;
-use crate::generators::common::{GenOptions, Out};
-use crate::ir::Module;
+use crate::generators::common::{ConstEmitter, GenOptions, Out, const_pascal};
+use crate::ir::{Category, Constant, Module};
 
 pub struct GoGenerator;
 
@@ -30,10 +30,50 @@ impl Backend for GoGenerator {
         out.line(")");
         out.line("");
         out.buf.push_str(RUNTIME);
+        self.emit_constants(&mut out, module);
         for p in &module.packets {
             out.line("");
             packet::emit_packet(&mut out, p);
         }
         out.buf
+    }
+}
+
+/// A gofmt-aligned `const ( ... )` block; `name` gives each constant's Go name.
+fn const_block(out: &mut Out, constants: &[Constant], name: impl Fn(&Constant) -> String) {
+    let names: Vec<_> = constants.iter().map(&name).collect();
+    let types: Vec<_> = constants.iter().map(|c| scalar_type(&c.ty)).collect();
+    let commented: Vec<_> = constants.iter().map(|c| c.note.is_some()).collect();
+    let name_widths = naming::gofmt_widths(&names, &commented);
+    let type_widths = naming::gofmt_widths(&types, &commented);
+    out.open("const (");
+    for (i, c) in constants.iter().enumerate() {
+        if let Some(note) = &c.note {
+            out.line(format!("// {}", note));
+        }
+        out.line(format!(
+            "{:<nw$} {:<tw$} = {}",
+            names[i],
+            types[i],
+            c.literal(),
+            nw = name_widths[i],
+            tw = type_widths[i]
+        ));
+    }
+    out.close(")");
+}
+
+impl ConstEmitter for GoGenerator {
+    fn constant(&self, out: &mut Out, c: &Constant) {
+        const_block(out, std::slice::from_ref(c), |c| const_pascal(&c.name));
+    }
+
+    fn constants(&self, out: &mut Out, constants: &[Constant]) {
+        const_block(out, constants, |c| const_pascal(&c.name));
+    }
+
+    fn category(&self, out: &mut Out, cat: &Category) {
+        out.line(format!("// {} values.", cat.name));
+        const_block(out, &cat.members, |c| format!("{}{}", cat.name, const_pascal(&c.name)));
     }
 }

@@ -5,7 +5,7 @@ use super::decode::Decoder;
 use super::encode::Encoder;
 use super::expr::store_value;
 use super::naming::{ident, len_ident, scalar_type};
-use crate::generators::common::{Out, StepEmitter};
+use crate::generators::common::{Out, StepEmitter, member_category};
 use crate::ir::{Packet, ValueType};
 
 pub fn emit_declarations(out: &mut Out, p: &Packet) {
@@ -15,6 +15,9 @@ pub fn emit_declarations(out: &mut Out, p: &Packet) {
         out.line("char pb_empty; /* C requires at least one member */");
     }
     for m in &p.members {
+        if let Some(cat) = member_category(m) {
+            out.line(format!("/* values: {}_* */", cat.to_ascii_uppercase()));
+        }
         let id = ident(&m.name);
         let st = scalar_type(&m.ty);
         match (&m.array, &m.ty) {
