@@ -110,6 +110,10 @@ impl ExprLang for Scope<'_, Python> {
         format!("(({} - {}) // 8)", to, from)
     }
 
+    fn remaining(&self) -> String {
+        "pb_r.remaining_bytes()".into()
+    }
+
     fn checksum(&self, algo: Checksum, from: &str, to: &str, hole: Option<(&str, &str)>) -> String {
         let rw = if self.mode == Mode::Encode { "pb_w" } else { "pb_r" };
         let (hf, ht) = hole.unwrap_or(("0", "0"));

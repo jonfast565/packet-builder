@@ -52,11 +52,13 @@ pub struct Env<'a> {
     pub checksum: Option<ChecksumFn<'a>>,
     /// In an `until` condition: the element just read.
     pub last: Option<&'a Value>,
+    /// While decoding a calculated field: whole bytes left (`TExpr::Remaining`).
+    pub remaining: Option<i64>,
 }
 
 impl<'a> Env<'a> {
     pub fn new(values: &'a [Value], params: &[i64]) -> Self {
-        Env { values, params: params.to_vec(), marks: None, checksum: None, last: None }
+        Env { values, params: params.to_vec(), marks: None, checksum: None, last: None, remaining: None }
     }
 
     fn mark(&self, m: Mark) -> usize {
@@ -92,6 +94,7 @@ pub fn eval(e: &TExpr, env: &Env) -> Ev {
     match e {
         TExpr::IntLit(v) => Ev::I(*v),
         TExpr::FloatLit(v) => Ev::F(*v),
+        TExpr::Remaining => Ev::I(env.remaining.unwrap_or(0)),
         TExpr::Ref { member, ty } => scalar(&env.values[*member], *ty),
         TExpr::Index { member, index, ty } => {
             let i = eval(index, env).int();

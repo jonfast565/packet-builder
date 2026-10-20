@@ -86,6 +86,10 @@ impl ExprLang for Scope<'_, CSharp> {
         format!("(({} - {}) / 8)", to, from)
     }
 
+    fn remaining(&self) -> String {
+        "pbR.RemainingBytes".into()
+    }
+
     fn checksum(&self, algo: Checksum, from: &str, to: &str, hole: Option<(&str, &str)>) -> String {
         let rw = if self.mode == Mode::Encode { "pbW" } else { "pbR" };
         let (hf, ht) = hole.unwrap_or(("0", "0"));

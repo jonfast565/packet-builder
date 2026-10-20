@@ -108,6 +108,10 @@ impl ExprLang for Scope<'_, C> {
         format!("((int64_t)(({} - {}) / 8))", to, from)
     }
 
+    fn remaining(&self) -> String {
+        "pb_remaining_bytes(pb_r)".into()
+    }
+
     fn checksum(&self, algo: Checksum, from: &str, to: &str, hole: Option<(&str, &str)>) -> String {
         let (f, rw) =
             if self.mode == Mode::Encode { ("pb_writer_checksum", "pb_w") } else { ("pb_reader_checksum", "pb_r") };

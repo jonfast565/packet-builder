@@ -73,6 +73,14 @@ impl<'a> Ctx<'a> {
                 TExpr::IntLit(self.consts.single(name).expect("checked").value)
             }
             QualifiedReference(group, name) => TExpr::IntLit(self.consts.member(group, name)?.value),
+            ValueReference(name, None) if name == "remaining" && !self.names.contains_key(name) => {
+                if !self.allow_remaining {
+                    return Err(
+                        "`remaining` can only be used in a calculated field (`calc n uint32 = remaining`)".into()
+                    );
+                }
+                TExpr::Remaining
+            }
             ValueReference(name, index) => {
                 let idx = self.lookup(name)?;
                 let m = &self.members[idx];

@@ -110,6 +110,11 @@ pub const PbReader = struct {
         return self.limit - self.pos;
     }
 
+    /// Whole bytes left before the end of the window or input (`remaining`).
+    pub fn remainingBytes(self: *const PbReader) i64 {
+        return @intCast(self.remainingBits() / 8);
+    }
+
     pub fn positionBits(self: *const PbReader) usize {
         return self.pos;
     }

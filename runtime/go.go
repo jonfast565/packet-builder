@@ -182,6 +182,9 @@ func (r *PbReader) Err() error { return r.err }
 
 func (r *PbReader) RemainingBits() int { return r.limit - r.pos }
 
+// RemainingBytes is the whole bytes left before the end of the window or input (`remaining`).
+func (r *PbReader) RemainingBytes() int64 { return int64(r.RemainingBits() / 8) }
+
 func (r *PbReader) PositionBits() int { return r.pos }
 
 // Fail records the first error at the current position.

@@ -291,6 +291,10 @@ pub enum TExpr {
         field: Option<(String, String)>,
         ty: Ty,
     },
+    /// `remaining`: whole bytes left before the end of the enclosing window
+    /// or of the input, while decoding. Only calculated fields use it
+    /// (encoders take their stored value instead).
+    Remaining,
     /// Parameter `index` of the packet (`Packet::params`), as i64.
     Param {
         index: usize,
@@ -312,6 +316,7 @@ impl TExpr {
             | TExpr::Len { .. }
             | TExpr::Size { .. }
             | TExpr::Checksum { .. }
+            | TExpr::Remaining
             | TExpr::Param { .. } => Ty::Int,
             TExpr::FloatLit(_) => Ty::Float,
             TExpr::Ref { ty, .. }
@@ -335,6 +340,7 @@ impl TExpr {
             | TExpr::Size { .. }
             | TExpr::Checksum { .. }
             | TExpr::Last { .. }
+            | TExpr::Remaining
             | TExpr::Param { .. } => {}
             TExpr::Ref { member, .. } | TExpr::Aggregate { member, .. } | TExpr::Len { member } => out.push(*member),
             TExpr::Index { member, index, .. } => {
@@ -399,6 +405,11 @@ impl TExpr {
             }
             e => e.children().into_iter().for_each(|c| c.marks(out)),
         }
+    }
+
+    /// True if this expression reads `remaining`.
+    pub fn uses_remaining(&self) -> bool {
+        matches!(self, TExpr::Remaining) || self.children().into_iter().any(|c| c.uses_remaining())
     }
 
     /// The checksums this expression computes, with their ranges.

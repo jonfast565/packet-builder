@@ -35,6 +35,8 @@ function Reader:fail(kind, msg)
 end
 
 function Reader:remaining() return self.limit - self.pos end
+-- Whole bytes left before the end of the window or input (`remaining`).
+function Reader:remaining_bytes() return (self.limit - self.pos) // 8 end
 
 -- `bits` more bits are needed: incomplete at the end of the input, invalid
 -- inside a window.

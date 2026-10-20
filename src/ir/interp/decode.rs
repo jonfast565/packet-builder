@@ -126,7 +126,8 @@ impl Decoder<'_, '_, '_> {
             Step::Calc { member } => {
                 let m = &p.members[*member];
                 if let Some(e) = m.calc_expr() {
-                    values[*member] = store(eval(e, &self.env(values)), &m.ty);
+                    let env = Env { remaining: Some(self.r.remaining_bytes()), ..self.env(values) };
+                    values[*member] = store(eval(e, &env), &m.ty);
                 }
                 Ok(())
             }

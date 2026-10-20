@@ -1,0 +1,22 @@
+// `remaining`: calculated fields that look at how many bytes are left.
+// Used by tests/codegen.rs.
+
+packet Item(wide uint8) be {
+  a uint8,
+  b uint8[wide]
+}
+
+// Items are one byte, or two when exactly 2 * count bytes follow the count.
+packet Body be {
+  count uint8 = len(items),
+  calc wide uint8 = remaining == 2 * count,
+  items Item(wide)[count],
+  calc left uint16 = remaining        // what the items leave
+}
+
+// Inside a window, `remaining` counts to the end of the window.
+packet Frame be {
+  length uint8 = sizeof(body),
+  body Body size length,
+  trailer uint8
+}

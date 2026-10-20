@@ -485,6 +485,32 @@ Calculated fields are computed after decoding and stored in the struct. They
 are not written when encoding. They may be used in array lengths (also before
 their own declaration), and are evaluated as soon as their inputs are known.
 
+#### Bytes left: `remaining`
+
+In a calculated field, `remaining` is the number of whole bytes left before
+the end of the enclosing window (`size n`), or of the input outside any
+window. Such a field is evaluated where it is declared, and lets a layout
+depend on how much data follows when nothing else says:
+
+```
+packet RateInfo be {
+  class_count uint16 = len(classes),
+  // the groups after the classes take a multiple of 4 bytes
+  calc version uint8 = when (remaining - 35 * class_count) & 3 == 0 then 2 otherwise 1,
+  classes RateClass(version)[class_count],
+  groups RateGroup[]
+}
+```
+
+* Encoders do not recompute it: they use the stored value, so a decoded
+  value re-encodes the way it was read, and a value built by hand says which
+  layout to write (here `version`).
+* Outside a window, `remaining` also counts trailing bytes, and for
+  `try_decode` it stops where a partial buffer does; inside a window (a FLAP
+  frame's payload, say) it is exact. Use it inside one.
+* It cannot be used anywhere else: a field's length or a union selector uses
+  it through a calculated field.
+
 ### Derived fields and checksums
 
 A field can say how its value follows from the rest of the packet. Encoding

@@ -82,6 +82,10 @@ class PbReader(_PbTrace):
     def remaining_bits(self):
         return self.limit - self.pos
 
+    def remaining_bytes(self):
+        """Whole bytes left before the end of the window or input (`remaining`)."""
+        return (self.limit - self.pos) // 8
+
     def jump(self, start, offset):
         """Read from `offset` bytes after bit `start` (the packet start, or 0
         for the start of the input) until `jump_back`; windows do not apply."""

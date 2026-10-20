@@ -114,6 +114,8 @@
         }
 
         public long RemainingBits => limit - pos;
+        /// <summary>Whole bytes left before the end of the window or input (`remaining`).</summary>
+        public long RemainingBytes => (limit - pos) / 8;
 
         /// <summary>Read from <paramref name="offset"/> bytes after bit <paramref name="from"/>
         /// (the packet start, or 0 for the start of the input) until JumpBack;

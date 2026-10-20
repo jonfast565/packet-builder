@@ -1,0 +1,129 @@
+{
+  "spec": "remaining.packet",
+  "cases": [
+    {
+      "name": "two-byte items fill the window",
+      "packet": "Frame",
+      "hex": "050201020304ff",
+      "expect": {
+        "length": 5,
+        "body": {
+          "count": 2,
+          "wide": 1,
+          "items": [
+            {
+              "a": 1,
+              "b": "02"
+            },
+            {
+              "a": 3,
+              "b": "04"
+            }
+          ],
+          "left": 0
+        },
+        "trailer": 255
+      }
+    },
+    {
+      "name": "one-byte items when the window is shorter",
+      "packet": "Frame",
+      "hex": "03020102ff",
+      "expect": {
+        "length": 3,
+        "body": {
+          "count": 2,
+          "wide": 0,
+          "items": [
+            {
+              "a": 1,
+              "b": ""
+            },
+            {
+              "a": 2,
+              "b": ""
+            }
+          ],
+          "left": 0
+        },
+        "trailer": 255
+      }
+    },
+    {
+      "name": "the window's unread rest is not part of the re-encoding",
+      "packet": "Frame",
+      "hex": "070201020304aabbff",
+      "encoded": "03020102ff",
+      "expect": {
+        "length": 7,
+        "body": {
+          "count": 2,
+          "wide": 0,
+          "items": [
+            {
+              "a": 1,
+              "b": ""
+            },
+            {
+              "a": 2,
+              "b": ""
+            }
+          ],
+          "left": 4
+        },
+        "trailer": 255
+      }
+    },
+    {
+      "name": "at the top level, remaining counts to the end of the input",
+      "packet": "Body",
+      "hex": "0201020304",
+      "expect": {
+        "count": 2,
+        "wide": 1,
+        "items": [
+          {
+            "a": 1,
+            "b": "02"
+          },
+          {
+            "a": 3,
+            "b": "04"
+          }
+        ],
+        "left": 0
+      }
+    },
+    {
+      "name": "trailing bytes change the decision",
+      "packet": "Body",
+      "hex": "0201020304ffee",
+      "encoded": "020102",
+      "expect": {
+        "count": 2,
+        "wide": 0,
+        "items": [
+          {
+            "a": 1,
+            "b": ""
+          },
+          {
+            "a": 2,
+            "b": ""
+          }
+        ],
+        "left": 4
+      }
+    },
+    {
+      "name": "encoding uses the stored value instead of recomputing it",
+      "packet": "Body",
+      "hex": "0201020304",
+      "set": {
+        "wide": 0
+      },
+      "encode_error": true,
+      "encode_error_kind": "mismatch"
+    }
+  ]
+}

@@ -24,6 +24,8 @@ pub(super) struct Ctx<'a> {
     pub allow_wire: bool,
     /// While type-checking an `until` condition: the element type `last` has.
     pub last: Option<ValueType>,
+    /// While type-checking a calculated field: `remaining` is allowed.
+    pub allow_remaining: bool,
 }
 
 impl<'a> Ctx<'a> {
@@ -44,6 +46,7 @@ impl<'a> Ctx<'a> {
             diags: Vec::new(),
             allow_wire: false,
             last: None,
+            allow_remaining: false,
         }
     }
 
@@ -88,7 +91,11 @@ impl<'a> Ctx<'a> {
                 if scheduled.contains(&idx) {
                     continue;
                 }
-                if let MemberKind::Calculated(e) = &m.kind {
+                // A calculated field that reads `remaining` is evaluated
+                // where it is declared (`PacketBuilder::lay_out`).
+                if let MemberKind::Calculated(e) = &m.kind
+                    && !e.uses_remaining()
+                {
                     let mut deps = Vec::new();
                     e.deps(&mut deps);
                     if deps.iter().all(|d| *d != idx && (available.contains(d) || scheduled.contains(d))) {

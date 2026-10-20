@@ -13,7 +13,7 @@ use super::context::Ctx;
 use super::cursor::{Cursor, const_factor};
 use super::params::Sigs;
 use super::types::{field_value_type, natural_align, value_type};
-use crate::ast::{Endianness, PacketExpr, PacketItem, Span, TypeExpr, TypeNode};
+use crate::ast::{CalculatedField, Endianness, PacketExpr, PacketItem, Span, TypeExpr, TypeNode};
 use crate::errors::Diagnostic;
 use crate::ir::expr::{TExpr, Ty, coerce};
 use crate::ir::model::{Assertion, Codec, Count, MemberKind, Packet, Step, StrMode, ValueType};
@@ -169,6 +169,7 @@ impl<'a> PacketBuilder<'a> {
                 self.asserts.push((Assertion { cond: coerce(t, Ty::Bool), message }, a.span));
                 self.asserts_scheduled.push(false);
             }
+            ctx.allow_remaining = matches!(item, PacketItem::Calculated(_));
             if let PacketItem::Calculated(c) = item
                 && let Some(t) = ctx.check_expr(&c.expr, c.span)
             {
@@ -180,6 +181,7 @@ impl<'a> PacketBuilder<'a> {
                 ctx.members[idx].kind = MemberKind::Calculated(coerce(t, target));
             }
         }
+        ctx.allow_remaining = false;
     }
 
     /// Pass 4: layout, alignment and decode order.
@@ -194,7 +196,8 @@ impl<'a> PacketBuilder<'a> {
         self.schedule_calcs();
         for (item_idx, item) in p.items.iter().enumerate() {
             match item {
-                PacketItem::Calculated(_) | PacketItem::Assert(_) => {}
+                PacketItem::Calculated(c) => self.place_remaining_calc(c),
+                PacketItem::Assert(_) => {}
                 PacketItem::Align(bytes, span) => {
                     if self.open_ended {
                         self.ctx.diags.push(Diagnostic::new(
@@ -238,6 +241,20 @@ impl<'a> PacketBuilder<'a> {
         if p.align.is_some() && !self.open_ended {
             self.cursor.pad_to(self.alignment, &mut self.steps);
         }
+    }
+
+    /// A calculated field that reads `remaining` is evaluated where it is
+    /// declared, since its value depends on the position; what else it uses
+    /// must be known by then.
+    fn place_remaining_calc(&mut self, c: &CalculatedField) {
+        let idx = self.ctx.names[&c.name];
+        let Some(e) = self.ctx.members[idx].calc_expr().filter(|e| e.uses_remaining()).cloned() else {
+            return;
+        };
+        let (available, scheduled) = (self.available.clone(), self.scheduled.clone());
+        self.ctx.require_available(&e, &available, &scheduled, c.span, "value", &c.name);
+        self.scheduled.insert(idx);
+        self.steps.push(Step::Calc { member: idx });
     }
 
     /// Record where the field just laid out ended up.

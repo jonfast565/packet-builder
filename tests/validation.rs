@@ -123,6 +123,20 @@ fn calculated_fields_cannot_depend_on_themselves() {
 }
 
 #[test]
+fn remaining_is_only_for_calculated_fields() {
+    assert_error("packet P { a uint8[remaining] }", "only be used in a calculated field");
+    assert_error("packet P { n uint8, assert remaining > n }", "only be used in a calculated field");
+    assert!(compile("packet P { calc n uint16 = remaining, data bytes[n] }").is_ok());
+    // A field named `remaining` is just a field.
+    assert!(compile("packet P { remaining uint8, data bytes[remaining] }").is_ok());
+}
+
+#[test]
+fn remaining_calcs_use_only_earlier_fields() {
+    assert_error("packet P { calc w uint8 = remaining - n, n uint8, d bytes[w] }", "not known yet");
+}
+
+#[test]
 fn arrays_need_an_index_in_expressions() {
     assert_error("packet P { n uint8, v uint8[n], calc s uint8 = v + 1 }", "is an array");
     assert!(compile("packet P { n uint8, v uint8[n], calc s uint8 = v[0] + sumof v }").is_ok());

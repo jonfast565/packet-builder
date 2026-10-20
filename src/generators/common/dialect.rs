@@ -50,10 +50,11 @@ impl<'a, D: Dialect> Scope<'a, D> {
     }
 
     /// Where an expression reads `member`: calculated members are locals
-    /// (`pbc_<name>`) while encoding, since they are not stored.
+    /// (`pbc_<name>`) while encoding, since they are not stored, except those
+    /// computed from `remaining`, whose stored value is used.
     pub fn place(&self, member: usize) -> String {
         let m = self.member(member);
-        if self.mode == Mode::Encode && (m.is_calculated() || m.is_derived()) {
+        if self.mode == Mode::Encode && ((m.is_calculated() && !m.is_decode_only()) || m.is_derived()) {
             format!("pbc_{}", m.name)
         } else {
             D::field(self.packet, m)

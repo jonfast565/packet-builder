@@ -141,6 +141,10 @@ impl ExprLang for Scope<'_, Lua> {
         format!("(({} - {}) // 8)", to, from)
     }
 
+    fn remaining(&self) -> String {
+        "r:remaining_bytes()".into()
+    }
+
     fn checksum(&self, algo: Checksum, from: &str, to: &str, hole: Option<(&str, &str)>) -> String {
         let (hf, ht) = hole.unwrap_or(("0", "0"));
         format!("r:checksum({}, {}, {}, {}, {})", algo.id(), from, to, hf, ht)

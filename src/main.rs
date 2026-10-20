@@ -326,7 +326,8 @@ fn layout(input: &Path, only: &[String]) -> Result<(), String> {
             println!("  {:>8}  {:>6}  {:<24} {}", fmt_bits(row.offset_bits), fmt_bits(row.size_bits), name, row.kind);
         }
         for m in p.members.iter().filter(|m| matches!(m.kind, packet_builder::ir::MemberKind::Calculated(_))) {
-            println!("  {:>8}  {:>6}  {:<24} calculated", "-", "-", m.name);
+            let note = if m.is_decode_only() { " (from `remaining`, decode only)" } else { "" };
+            println!("  {:>8}  {:>6}  {:<24} calculated{}", "-", "-", m.name, note);
         }
         println!();
     }

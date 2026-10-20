@@ -45,6 +45,9 @@ pub trait ExprLang {
     fn param(&self, index: usize) -> String;
     /// Element count of an array member, or the byte length of a string, as i64.
     fn len(&self, member: usize) -> String;
+    /// `remaining`: whole bytes the reader has left before the end of its
+    /// window or input, as i64. Only emitted while decoding.
+    fn remaining(&self) -> String;
     /// Whole bytes between two recorded bit positions (variables), as i64.
     fn size(&self, from: &str, to: &str) -> String;
     /// A checksum of the bytes between two recorded bit positions; `hole`
@@ -92,6 +95,7 @@ pub fn emit_expr<L: ExprLang + ?Sized>(l: &L, e: &TExpr) -> String {
         TExpr::Unary { op, e, ty } => l.unary(*op, emit_expr(l, e), *ty),
         TExpr::Len { member } => l.len(*member),
         TExpr::Param { index } => l.param(*index),
+        TExpr::Remaining => l.remaining(),
         TExpr::Last { field, ty } => l.last(field.as_ref().map(|(p, f)| (p.as_str(), f.as_str())), *ty),
         TExpr::Size { from, to } => l.size(&mark_var(*from), &mark_var(*to)),
         TExpr::Checksum { algo, from, to, hole } => {

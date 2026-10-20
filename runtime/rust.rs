@@ -151,6 +151,11 @@ impl<'a> PbReader<'a> {
         self.limit - self.pos
     }
 
+    /// Whole bytes left before the end of the window or input (`remaining`).
+    pub fn remaining_bytes(&self) -> i64 {
+        (self.remaining_bits() / 8) as i64
+    }
+
     /// Whether reads stop at the real end of the input (not at a window).
     fn at_top(&self) -> bool {
         self.windows == 0

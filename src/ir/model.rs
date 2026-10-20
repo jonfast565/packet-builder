@@ -379,6 +379,12 @@ impl Member {
         matches!(self.kind, MemberKind::Calculated(_))
     }
 
+    /// A calculated member that reads `remaining`: decoders compute it from
+    /// the input, encoders use its stored value instead of recomputing it.
+    pub fn is_decode_only(&self) -> bool {
+        self.calc_expr().is_some_and(TExpr::uses_remaining)
+    }
+
     /// The expression of a calculated member.
     pub fn calc_expr(&self) -> Option<&TExpr> {
         match &self.kind {

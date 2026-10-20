@@ -122,6 +122,8 @@ PB_FN int pb_rfail(pb_reader *r, int code) {
 }
 
 PB_FN size_t pb_remaining_bits(const pb_reader *r) { return r->limit - r->pos; }
+/* Whole bytes left before the end of the window or input (`remaining`). */
+PB_FN int64_t pb_remaining_bytes(const pb_reader *r) { return (int64_t)(pb_remaining_bits(r) / 8); }
 
 /* `bits` more bits are needed: incomplete input at the top level, invalid
  * data inside a window. */

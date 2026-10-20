@@ -268,7 +268,8 @@ impl PacketBuilder<'_> {
         }
         let mut needed: HashSet<usize> = HashSet::new();
         while let Some(m) = roots.pop() {
-            if members[m].is_calculated() && needed.insert(m) {
+            // Calculated members read from `remaining` keep their stored value.
+            if members[m].is_calculated() && !members[m].is_decode_only() && needed.insert(m) {
                 roots.extend(deps_of(m));
             }
         }
