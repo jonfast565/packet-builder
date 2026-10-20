@@ -11,7 +11,7 @@
         "length": 55,
         "tx_seq": 127,
         "rx_seq": 127,
-        "always_set": 1,
+        "from_client": 1,
         "type": 35,
         "body": {
           "kind": "init",
@@ -108,7 +108,7 @@
         "length": 3,
         "tx_seq": 16,
         "rx_seq": 17,
-        "always_set": 1,
+        "from_client": 1,
         "type": 36,
         "body": {
           "kind": "control",
@@ -127,7 +127,7 @@
         "length": 3,
         "tx_seq": 127,
         "rx_seq": 16,
-        "always_set": 1,
+        "from_client": 1,
         "type": 38,
         "body": {
           "kind": "control",
@@ -146,7 +146,7 @@
         "length": 3,
         "tx_seq": 18,
         "rx_seq": 18,
-        "always_set": 1,
+        "from_client": 1,
         "type": 37,
         "body": {
           "kind": "control",
@@ -165,7 +165,7 @@
         "length": 88,
         "tx_seq": 16,
         "rx_seq": 127,
-        "always_set": 1,
+        "from_client": 1,
         "type": 32,
         "body": {
           "kind": "data",
@@ -337,7 +337,7 @@
         "length": 5,
         "tx_seq": 16,
         "rx_seq": 16,
-        "always_set": 1,
+        "from_client": 1,
         "type": 32,
         "body": {
           "kind": "data",
@@ -364,11 +364,166 @@
       "error_path": "P3Packet.stop"
     },
     {
-      "name": "type byte without the high bit is rejected",
+      "name": "host packets have the type's high bit clear (AOL 4.0 host ACK)",
       "packet": "P3Packet",
-      "hex": "5a6a0c00031011240d",
-      "error_kind": "constraint",
-      "error_path": "P3Packet.kind"
+      "hex": "5ab71100037f7f240d",
+      "expect": {
+        "sync": 90,
+        "crc": 46865,
+        "length": 3,
+        "tx_seq": 127,
+        "rx_seq": 127,
+        "from_client": 0,
+        "type": 36,
+        "body": {
+          "kind": "control",
+          "value": ""
+        },
+        "stop": 13
+      }
+    },
+    {
+      "name": "AOL 4.0 INIT over TCP (captured)",
+      "packet": "P3Packet",
+      "hex": "5a589f00377f7fa30387d40020000000050f00001fb4b53ec00014d103200000000004000000018004600314000000000000fffea3f666000001b2070d",
+      "expect": {
+        "sync": 90,
+        "crc": 22687,
+        "length": 55,
+        "tx_seq": 127,
+        "rx_seq": 127,
+        "from_client": 1,
+        "type": 35,
+        "body": {
+          "kind": "init",
+          "value": {
+            "platform": 3,
+            "client_major": 135,
+            "client_minor": 212,
+            "build_num": 0,
+            "machine_memory": 32,
+            "app_memory": 0,
+            "pc_type": 0,
+            "release_month": 5,
+            "release_day": 15,
+            "customer_class": 0,
+            "timestamp": 531936574,
+            "dos_major": 192,
+            "dos_minor": 0,
+            "session_flags": 5329,
+            "video_type": 3,
+            "cpu_type": 32,
+            "media_type": 0,
+            "windows_major": 4,
+            "windows_minor": 0,
+            "unknown1": 0,
+            "windows_mem_type": 1,
+            "horizontal_res": 32772,
+            "vertical_res": 24579,
+            "num_colors": 5120,
+            "filler1": 0,
+            "region": 0,
+            "language_1": 0,
+            "language_2": 65534,
+            "language_3": 41974,
+            "language_4": 26112,
+            "unknown2": 1,
+            "speed": 45575
+          }
+        },
+        "stop": 13
+      }
+    },
+    {
+      "name": "\"**\" in place of the CRC: host ACK (captured)",
+      "packet": "P3Packet",
+      "hex": "5a2a2a00037f10240d",
+      "expect": {
+        "sync": 90,
+        "crc": 10794,
+        "length": 3,
+        "tx_seq": 127,
+        "rx_seq": 16,
+        "from_client": 0,
+        "type": 36,
+        "body": {
+          "kind": "control",
+          "value": ""
+        },
+        "stop": 13
+      }
+    },
+    {
+      "name": "\"**\" in place of the CRC: client ACK (captured)",
+      "packet": "P3Packet",
+      "hex": "5a2a2a0003111aa40d",
+      "expect": {
+        "sync": 90,
+        "crc": 10794,
+        "length": 3,
+        "tx_seq": 17,
+        "rx_seq": 26,
+        "from_client": 1,
+        "type": 36,
+        "body": {
+          "kind": "control",
+          "value": ""
+        },
+        "stop": 13
+      }
+    },
+    {
+      "name": "\"**\" client K1 keyword DATA packet (captured)",
+      "packet": "P3Packet",
+      "hex": "5a2a2a00141227a04b3100940001000301040011fecb0002000d",
+      "expect": {
+        "sync": 90,
+        "crc": 10794,
+        "length": 20,
+        "tx_seq": 18,
+        "rx_seq": 39,
+        "from_client": 1,
+        "type": 32,
+        "body": {
+          "kind": "data",
+          "value": {
+            "token": "K1",
+            "atoms": "00940001000301040011fecb000200"
+          }
+        },
+        "stop": 13
+      }
+    },
+    {
+      "name": "\"**\" host aT DATA packet (captured)",
+      "packet": "P3Packet",
+      "hex": "5a2a2a001410102061540001000d04000014032001280002000d",
+      "expect": {
+        "sync": 90,
+        "crc": 10794,
+        "length": 20,
+        "tx_seq": 16,
+        "rx_seq": 16,
+        "from_client": 0,
+        "type": 32,
+        "body": {
+          "kind": "data",
+          "value": {
+            "token": "aT",
+            "atoms": "0001000d0400001403200128000200"
+          }
+        },
+        "stop": 13
+      }
+    },
+    {
+      "name": "a CRC is computed on encode unless crc holds \"**\"",
+      "packet": "P3Packet",
+      "hex": "5a2a2a0003111aa40d",
+      "set": {
+        "crc": 0
+      },
+      "encoded": "5a9a5a0003111aa40d"
     },
     {
       "name": "length below 3 is rejected",

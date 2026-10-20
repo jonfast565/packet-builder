@@ -31,8 +31,9 @@ def packets(stream):
 
 
 def control_packet(packet_type, tx_seq, rx_seq):
-    """Build a control packet (ACK, NAK, ...). The encoder computes `length`
-    and `crc`; sync, always_set and stop default to their fixed values."""
+    """Build a host control packet (ACK, NAK, ...). The encoder computes
+    `length` and `crc`; sync and stop default to their fixed values, and
+    from_client to 0 (host packets have the type's high bit clear)."""
     body = P3PacketBody("control", b"")
     return P3Packet(tx_seq=tx_seq, rx_seq=rx_seq, type=packet_type, body=body).encode()
 
