@@ -42,6 +42,7 @@ fn dump_member(s: &mut String, m: &Member, place: &str) {
         ValueType::Mac => format!("try hx(w, &{});", v),
         ValueType::Packet(n) => format!("try dump{}(w, &{});", n, v),
         ValueType::Str => format!("try std.json.stringify({}, .{{}}, w);", v),
+        ValueType::Union(n) => format!("try dump{}(w, &{});", n, v),
     };
     match &m.array {
         None => {
@@ -73,6 +74,27 @@ impl Target for ZigTarget {
     fn harness(&self, module: &Module, cases: &[Case]) -> String {
         let mut s = String::from("const std = @import(\"std\");\nconst pk = @import(\"packets.zig\");\n\n");
         s.push_str("fn hx(w: anytype, b: []const u8) !void {\n    try w.writeAll(\"\\\"\");\n    for (b) |c| try w.print(\"{x:0>2}\", .{c});\n    try w.writeAll(\"\\\"\");\n}\n\n");
+        for u in &module.unions {
+            let _ = writeln!(s, "fn dump{}(w: anytype, v: *const pk.{}) !void {{\n    switch (v.*) {{", u.name, u.name);
+            for arm in &u.arms {
+                let head = format!("try w.writeAll(\"{{\\\"kind\\\":\\\"{}\\\",\\\"value\\\":\");", arm.name);
+                let (capture, value) = match (&arm.ty, arm.is_bytes()) {
+                    (None, _) => ("", "try w.writeAll(\"null\");".to_string()),
+                    (Some(_), true) => (" |x|", "try hx(w, x);".to_string()),
+                    (Some(ValueType::Packet(n)), _) => (" |*x|", format!("try dump{}(w, x);", n)),
+                    (Some(_), _) => (" |x|", "try w.print(\"{d}\", .{x});".to_string()),
+                };
+                let _ = writeln!(
+                    s,
+                    "        .{} =>{} {{\n            {}\n            {}\n            try w.writeAll(\"}}\");\n        }},",
+                    ident(&arm.name),
+                    capture,
+                    head,
+                    value
+                );
+            }
+            s.push_str("    }\n}\n\n");
+        }
         for p in &module.packets {
             let _ = writeln!(s, "fn dump{}(w: anytype, p: *const pk.{}) !void {{", p.name, p.name);
             s.push_str("    try w.writeAll(\"{\");\n");

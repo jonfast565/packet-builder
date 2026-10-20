@@ -1,6 +1,8 @@
 // =====================================================================
 // Classic network headers: a showcase for bit-sized fields.
 // All of these are big-endian with most-significant-bit-first bit order.
+// Decoding an Ethernet frame decodes everything inside it: the EtherType
+// and the IP protocol pick the next header (tagged unions, `switch`).
 // =====================================================================
 
 const EtherType uint16 {
@@ -14,7 +16,10 @@ packet Ethernet be {
   destination macaddress,
   source macaddress,
   ethertype uint16 : EtherType,
-  payload bytes[]
+  payload switch ethertype {
+    EtherType.ipv4 => ipv4 Ipv4,
+    _ => other bytes[]
+  }
 }
 
 const WORD_BYTES uint8 = 4 "IPv4 `ihl` and TCP `data_offset` count 32-bit words"
@@ -33,7 +38,7 @@ packet Ipv4 be {
   ihl u4 = (IPV4_MIN_HEADER + len(options)) / WORD_BYTES,  // header length in WORD_BYTES units
   dscp u6,
   ecn u2,
-  total_length uint16,
+  total_length uint16 = sizeof(self),  // header and payload
   identification uint16,
   _ u1,                     // reserved, must be zero
   dont_fragment u1,
@@ -41,10 +46,16 @@ packet Ipv4 be {
   fragment_offset u13,      // in 8-byte units
   ttl uint8,
   protocol uint8 : IpProtocol,
-  checksum uint16 = internet(self),  // over the header, this field counted as zero
+  checksum uint16 = internet(version..options),  // over the header, this field counted as zero
   source uint8[4],
   destination uint8[4],
   options bytes[ihl * WORD_BYTES - IPV4_MIN_HEADER],
+  // Only the first fragment starts with the next header.
+  payload switch when fragment_offset == 0 then protocol otherwise -1 {
+    IpProtocol.tcp => tcp Tcp,
+    IpProtocol.udp => udp Udp,
+    _ => other bytes[]
+  } size total_length - ihl * WORD_BYTES,
   calc header_length uint8 = ihl * WORD_BYTES,
   calc payload_length uint16 = total_length - ihl * WORD_BYTES
 }
@@ -66,7 +77,8 @@ packet Tcp be {
   window uint16,
   checksum uint16,          // covers an IPv4/IPv6 pseudo-header, so it is not derived here
   urgent_pointer uint16,
-  options bytes[data_offset * WORD_BYTES - TCP_MIN_HEADER]
+  options bytes[data_offset * WORD_BYTES - TCP_MIN_HEADER],
+  payload bytes[]           // the rest of the IP payload
 }
 
 const UDP_HEADER uint16 = 8 "UDP header bytes"

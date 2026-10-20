@@ -13,6 +13,45 @@ pub struct Module {
     pub constants: Vec<Constant>,
     /// Categories of named constants, in source order.
     pub categories: Vec<Category>,
+    /// Tagged unions (`body switch kind { ... }`), in packet order.
+    pub unions: Vec<Union>,
+}
+
+/// A tagged union: the type of a `switch` member.
+#[derive(Debug, Clone)]
+pub struct Union {
+    /// `<Packet><Field>` in PascalCase, e.g. `FlapBody`.
+    pub name: String,
+    pub arms: Vec<Arm>,
+}
+
+impl Union {
+    pub fn default_arm(&self) -> Option<&Arm> {
+        self.arms.iter().find(|a| a.default)
+    }
+}
+
+/// One arm of a union.
+#[derive(Debug, Clone)]
+pub struct Arm {
+    pub name: String,
+    /// The selector values that pick this arm (none for the default arm).
+    pub values: Vec<i64>,
+    /// `_`: any value no other arm lists.
+    pub default: bool,
+    /// What the arm holds: an integer, a packet or bytes (`Int` 8-bit with a
+    /// count); None for an empty arm.
+    pub ty: Option<ValueType>,
+    pub codec: Option<Codec>,
+    /// For bytes arms: the byte count.
+    pub count: Option<Count>,
+}
+
+impl Arm {
+    /// A byte buffer (`raw bytes[n]`).
+    pub fn is_bytes(&self) -> bool {
+        self.count.is_some()
+    }
 }
 
 /// A named value from a `const` declaration.
@@ -71,6 +110,10 @@ impl ValueType {
 }
 
 impl Module {
+    pub fn union(&self, name: &str) -> Option<&Union> {
+        self.unions.iter().find(|u| u.name == name)
+    }
+
     /// Packets ordered so that every packet comes after the packets it
     /// contains (needed by languages that require declaration before use).
     pub fn in_dependency_order(&self) -> Vec<&Packet> {
@@ -79,10 +122,22 @@ impl Module {
                 return;
             }
             for member in &p.members {
-                if let ValueType::Packet(n) = &member.ty
-                    && let Some(dep) = m.packets.iter().find(|x| &x.name == n)
-                {
-                    visit(m, dep, seen, out);
+                let mut deps: Vec<&String> = Vec::new();
+                match &member.ty {
+                    ValueType::Packet(n) => deps.push(n),
+                    ValueType::Union(u) => {
+                        for arm in m.union(u).map(|u| u.arms.as_slice()).unwrap_or(&[]) {
+                            if let Some(ValueType::Packet(n)) = &arm.ty {
+                                deps.push(n);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+                for n in deps {
+                    if let Some(dep) = m.packets.iter().find(|x| &x.name == n) {
+                        visit(m, dep, seen, out);
+                    }
                 }
             }
             out.push(p);
@@ -290,6 +345,8 @@ pub enum ValueType {
     Packet(String),
     /// Text (UTF-8).
     Str,
+    /// A tagged union (`Module::unions`).
+    Union(String),
 }
 
 impl ValueType {
@@ -299,7 +356,7 @@ impl ValueType {
             ValueType::Int { width, .. } => storage_for(*width),
             ValueType::Float { width } => *width,
             ValueType::Mac => 48,
-            ValueType::Packet(_) | ValueType::Str => 0,
+            ValueType::Packet(_) | ValueType::Str | ValueType::Union(_) => 0,
         }
     }
 
@@ -408,6 +465,12 @@ pub enum Step {
     Align { bytes: u64 },
     /// Check `Packet::asserts[index]`, once its inputs are known.
     Assert { index: usize },
+    /// A tagged union: `selector` picks one of `arms` (the member's union).
+    Switch { member: usize, selector: TExpr, arms: Vec<Arm> },
+    /// The next step occupies exactly `size` bytes (`size n` after a field).
+    OpenWindow { size: TExpr, exact: bool },
+    /// The end of the window opened by step `open`.
+    CloseWindow { open: usize, exact: bool },
 }
 
 #[derive(Debug, Clone)]

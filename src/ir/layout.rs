@@ -46,9 +46,44 @@ impl Module {
     pub fn layout(&self, packet: &Packet) -> Vec<LayoutRow> {
         let mut rows = Vec::new();
         let mut offset = Some(0u64);
+        // An open window: where it starts and its size.
+        let mut window: Option<(Option<u64>, Option<u64>)> = None;
         for step in &packet.steps {
             match step {
                 Step::Calc { .. } | Step::Assert { .. } => {}
+                Step::OpenWindow { size, exact } => {
+                    let bits = size.const_int().map(|n| n.max(0) as u64 * 8);
+                    rows.push(LayoutRow {
+                        offset_bits: offset,
+                        size_bits: bits,
+                        name: "(window)".into(),
+                        kind: if *exact {
+                            "the next field fills exactly".into()
+                        } else {
+                            "the next field, then padding".into()
+                        },
+                        nested: false,
+                    });
+                    window = Some((offset, bits));
+                    continue;
+                }
+                Step::CloseWindow { .. } => {
+                    if let Some((start, bits)) = window.take() {
+                        offset = start.zip(bits).map(|(o, b)| o + b);
+                    }
+                }
+                Step::Switch { member, arms, .. } => {
+                    let m = &packet.members[*member];
+                    let names: Vec<&str> = arms.iter().map(|a| a.name.as_str()).collect();
+                    rows.push(LayoutRow {
+                        offset_bits: offset,
+                        size_bits: None,
+                        name: m.name.clone(),
+                        kind: format!("union of {}", names.join(" | ")),
+                        nested: window.is_some(),
+                    });
+                    offset = None;
+                }
                 Step::Align { bytes } => {
                     let unit = bytes * 8;
                     let size = offset.map(|o| (unit - o % unit) % unit);
@@ -93,10 +128,12 @@ impl Module {
                         (ValueType::Mac, _) => format!("macaddress{}", suffix),
                         (ValueType::Packet(n), _) => format!("{}{}", n, suffix),
                         (ValueType::Str, _) => "string".into(),
+                        (ValueType::Union(n), _) => n.clone(),
                     };
                     let name = member.map(|m| packet.members[m].name.clone()).unwrap_or_else(|| "_".into());
                     let kind = with_category(kind, member.map(|m| &packet.members[m]));
-                    rows.push(LayoutRow { offset_bits: offset, size_bits: size, name, kind, nested: false });
+                    let nested = window.is_some();
+                    rows.push(LayoutRow { offset_bits: offset, size_bits: size, name, kind, nested });
                     offset = offset.zip(size).map(|(o, s)| o + s);
                 }
                 Step::Bitfield { container_width, parts, .. } => {

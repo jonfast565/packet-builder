@@ -37,6 +37,7 @@ impl<'a> Ctx<'a> {
             ValueType::Mac => Err(format!("`{}` is a mac address and cannot be used in an expression", name)),
             ValueType::Packet(_) => Err(format!("`{}` is a nested packet and cannot be used in an expression", name)),
             ValueType::Str => Err(format!("`{}` is a string and cannot be used in an expression", name)),
+            ValueType::Union(_) => Err(format!("`{}` is a union and cannot be used in an expression", name)),
         }
     }
 
@@ -240,6 +241,7 @@ impl<'a> Ctx<'a> {
             .position(|it| match it {
                 PacketItem::Field(f) => f.id == name && name != "_",
                 PacketItem::Bitfield(b) => b.id == name,
+                PacketItem::Switch(sw) => sw.id == name,
                 _ => false,
             })
             .ok_or_else(|| {

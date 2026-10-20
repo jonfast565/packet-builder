@@ -47,6 +47,12 @@ fn entry(module: &Module, m: Option<&Member>, label: &str, v: &Value, depth: usi
             let _ = writeln!(out, "{}{}: {}", pad, label, s.packet);
             fields(module, s, depth + 1, out);
         }
+        Value::Variant { arm, value } => match value {
+            Some(v) => entry(module, None, &format!("{} ({})", label, arm), v, depth, out),
+            None => {
+                let _ = writeln!(out, "{}{}: {}", pad, label, arm);
+            }
+        },
         Value::List(items) => {
             let _ = writeln!(out, "{}{}: {} item(s)", pad, label, items.len());
             for (i, item) in items.iter().enumerate() {
@@ -84,6 +90,6 @@ fn scalar(module: &Module, m: Option<&Member>, v: &Value) -> String {
             }
         }
         Value::Str(s) => format!("{:?}", s),
-        Value::List(_) | Value::Struct(_) => String::new(),
+        Value::List(_) | Value::Struct(_) | Value::Variant { .. } => String::new(),
     }
 }

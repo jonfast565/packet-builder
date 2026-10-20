@@ -1,0 +1,62 @@
+// Tagged unions (`switch`) and windows (`size n`). Used by tests/codegen.rs.
+
+const Kind uint8 { text = 1, number = 2, pair = 3, ping = 4 }
+
+packet Pair be { a uint8, b uint8 }
+
+// The body depends on `kind` and fills a window of `length` bytes; unknown
+// kinds keep the raw bytes, and a field follows the window.
+packet Message be {
+  kind uint8 : Kind,
+  length uint16 = sizeof(body),
+  body switch kind {
+    Kind.text => text bytes[],
+    Kind.number => number uint32,
+    Kind.pair => pair Pair,
+    Kind.ping => ping,
+    _ => other bytes[]
+  } size length,
+  trailer uint8
+}
+
+// No default arm: an unknown tag is an error.
+packet Strict be {
+  tag uint8,
+  value switch tag { 1 => small uint8, 2 => big uint16 }
+}
+
+// The selector is an expression; several values may pick one arm.
+packet Composite be {
+  family uint8,
+  subtype uint8,
+  body switch family << 8 | subtype {
+    0x0103 => ready Pair,
+    0x0201, 0x0202 => data bytes[2],
+    _ => rest bytes[]
+  }
+}
+
+// Windows on ordinary fields: an array that runs to the end of its window,
+// and an exact fit.
+packet Windowed be {
+  n uint8,
+  items Pair[] size n,
+  label bytes[] size 3 exact,
+  tail uint8
+}
+
+packet Exactly be { v uint16 size 3 exact }
+
+// A window larger than its content is padded with zeros when encoding.
+packet Padded be { v uint16 size 4, w uint8 }
+
+packet Small be { n uint8, data bytes[] size n }
+
+// An open-ended packet inside a window, followed by another field.
+packet Rest be { items bytes[] }
+
+packet Framed be {
+  len uint8 = sizeof(inner),
+  inner Rest size len,
+  after uint8
+}

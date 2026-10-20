@@ -20,32 +20,34 @@ use crate::ir::model::{Assertion, BitPart, Codec, Count, MemberKind, Packet, Ste
 pub(super) struct PacketBuilder<'a> {
     pub(super) p: &'a PacketExpr,
     pub(super) ctx: Ctx<'a>,
-    default_endian: Endianness,
+    pub(super) default_endian: Endianness,
     /// Count of every `Field` item, in item order (pass 2).
-    field_counts: Vec<Option<Count>>,
+    pub(super) field_counts: Vec<Option<Count>>,
     pub(super) steps: Vec<Step>,
     /// Members decoded so far.
-    available: HashSet<usize>,
+    pub(super) available: HashSet<usize>,
     /// Calculated members already given a `Calc` step.
-    scheduled: HashSet<usize>,
-    cursor: Cursor,
-    open_ended: bool,
+    pub(super) scheduled: HashSet<usize>,
+    pub(super) cursor: Cursor,
+    pub(super) open_ended: bool,
     /// Alignment of this packet when nested (C struct rules under `align N`).
-    alignment: u64,
+    pub(super) alignment: u64,
     /// `assert` items (pass 3) and whether each has an `Assert` step yet.
     pub(super) asserts: Vec<(Assertion, Span)>,
-    asserts_scheduled: Vec<bool>,
+    pub(super) asserts_scheduled: Vec<bool>,
     /// For each field or bitfield item: its step and whether the bit offset
     /// is a whole number of bytes before and after it.
     pub(super) item_steps: HashMap<usize, ItemStep>,
     /// Whether the offset was byte aligned just before the last field step.
-    aligned_before: bool,
+    pub(super) aligned_before: bool,
 }
 
-/// Where a source item ended up.
+/// Where a source item ended up: its first and last step (the window steps
+/// around a field with `size n`, otherwise the field's own step).
 #[derive(Debug, Clone, Copy)]
 pub(super) struct ItemStep {
-    pub step: usize,
+    pub first: usize,
+    pub last: usize,
     pub aligned_before: bool,
     pub aligned_after: bool,
 }
@@ -127,6 +129,10 @@ impl<'a> PacketBuilder<'a> {
                     };
                     ctx.declare(&c.name, ty, MemberKind::Calculated(TExpr::IntLit(0)), c.span);
                 }
+                PacketItem::Switch(sw) => {
+                    let name = format!("{}{}", self.p.name, pascal(&sw.id));
+                    ctx.declare(&sw.id, ValueType::Union(name), MemberKind::Stored, sw.span);
+                }
                 PacketItem::Align(..) | PacketItem::Assert(_) => {}
             }
         }
@@ -180,7 +186,10 @@ impl<'a> PacketBuilder<'a> {
     /// Pass 4: layout, alignment and decode order.
     fn lay_out(&mut self) {
         let p = self.p;
-        let last_stored = p.items.iter().rposition(|it| matches!(it, PacketItem::Field(_) | PacketItem::Bitfield(_)));
+        let last_stored = p
+            .items
+            .iter()
+            .rposition(|it| matches!(it, PacketItem::Field(_) | PacketItem::Bitfield(_) | PacketItem::Switch(_)));
         let mut field_no = 0usize;
 
         self.schedule_calcs();
@@ -199,7 +208,18 @@ impl<'a> PacketBuilder<'a> {
                 PacketItem::Field(f) => {
                     let count = self.field_counts[field_no].clone();
                     field_no += 1;
-                    self.lay_out_field(f, count, Some(item_idx) == last_stored);
+                    let window = self.open_window(f.window.as_ref(), f.span, &f.id);
+                    self.lay_out_field(f, count, Some(item_idx) == last_stored || window.is_some());
+                    self.close_window(window);
+                    self.note_item(item_idx);
+                }
+                PacketItem::Switch(sw) => {
+                    if let Some(pad) = sw.align {
+                        self.cursor.pad_to(pad, &mut self.steps);
+                    }
+                    let window = self.open_window(sw.window.as_ref(), sw.span, &sw.id);
+                    self.lay_out_switch(sw, Some(item_idx) == last_stored || window.is_some());
+                    self.close_window(window);
                     self.note_item(item_idx);
                 }
                 PacketItem::Bitfield(b) => {
@@ -218,10 +238,13 @@ impl<'a> PacketBuilder<'a> {
 
     /// Record where the field just laid out ended up.
     fn note_item(&mut self, item: usize) {
-        if let Some(step) = self.steps.iter().rposition(|s| matches!(s, Step::Field { .. } | Step::Bitfield { .. })) {
-            let aligned_after = self.cursor.align.is_aligned();
-            self.item_steps.insert(item, ItemStep { step, aligned_before: self.aligned_before, aligned_after });
-        }
+        let last = self.steps.len().saturating_sub(1);
+        let (first, aligned_before) = match self.steps.last() {
+            Some(Step::CloseWindow { open, .. }) => (*open, true),
+            _ => (last, self.aligned_before),
+        };
+        let aligned_after = self.cursor.align.is_aligned();
+        self.item_steps.insert(item, ItemStep { first, last, aligned_before, aligned_after });
     }
 
     /// Add `Calc` and `Assert` steps whose inputs are now known.
@@ -466,4 +489,9 @@ impl<'a> PacketBuilder<'a> {
             wire_dependent: plan.wire_dependent,
         })
     }
+}
+
+/// `snake_case` → `PascalCase` for union type names.
+fn pascal(name: &str) -> String {
+    name.split('_').filter(|w| !w.is_empty()).map(|w| w[..1].to_uppercase() + &w[1..]).collect()
 }

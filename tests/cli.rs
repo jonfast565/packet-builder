@@ -132,7 +132,8 @@ fn decode_prints_a_tree() {
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(text.contains("channel: 1 (Channel.signon)"), "{}", text);
-    assert!(text.contains("payload: 00000001 (4 bytes)"), "{}", text);
+    assert!(text.contains("payload (signon): FlapSignon"), "{}", text);
+    assert!(text.contains("version: 1"), "{}", text);
 }
 
 #[test]

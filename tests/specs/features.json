@@ -72,8 +72,8 @@
     { "name": "rest-of-input words, partial element is an error", "packet": "Words", "hex": "02 0001 00",
       "error_kind": "incomplete", "error_path": "Words.words[1]" },
 
-    { "name": "keywords as field names", "packet": "Keywords", "hex": "010203040506",
-      "expect": { "type": 1, "class": 2, "func": 3, "struct": 4, "default": 5, "string": 6 } },
+    { "name": "keywords as field names", "packet": "Keywords", "hex": "01020304050607",
+      "expect": { "type": 1, "class": 2, "func": 3, "struct": 4, "default": 5, "string": 6, "gen": 7 } },
 
     { "name": "named constants in expressions", "packet": "Tagged", "hex": "beef 02 e0 0103",
       "expect": { "magic": 48879, "color": 2, "kind": 7, "colors": "0103",

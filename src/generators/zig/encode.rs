@@ -3,8 +3,9 @@
 
 use super::expr::store_value;
 use super::naming::{Zig, ident, scalar_type};
+use crate::generators::common::union::{ZIG_LOGIC, arm_test, uses_selector};
 use crate::generators::common::{Dialect, Mode, Out, Scope, StepEmitter, mark_var, mask};
-use crate::ir::{BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, ValueType};
+use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, ValueType};
 
 fn write_elem(out: &mut Out, codec: &Codec, v: &str) {
     match codec {
@@ -49,6 +50,50 @@ impl StepEmitter for Encoder<'_> {
 
     fn locate(&self, out: &mut Out, field: &str) {
         out.line(format!("pb_w.at(\"{}\");", field));
+    }
+
+    fn switch(&self, out: &mut Out, m: &Member, selector: &TExpr, arms: &[Arm]) {
+        out.open("{");
+        let uses = uses_selector(arms);
+        if uses {
+            out.line(format!("const pb_sel: i64 = {};", self.scope.expr(selector)));
+        }
+        out.open(format!("switch (p.{}) {{", ident(&m.name)));
+        for arm in arms {
+            let capture = if arm.ty.is_some() { " |pb_v|" } else { "" };
+            out.open(format!(".{} =>{} {{", ident(&arm.name), capture));
+            if let Some(test) = arm_test(arm, arms, "pb_sel", &ZIG_LOGIC) {
+                out.line(format!("if (!{}) return pb_w.fail(PbError.Mismatch);", test));
+            }
+            match (&arm.ty, &arm.codec, &arm.count) {
+                (Some(_), _, Some(count)) => {
+                    if let Count::Expr(e) = count
+                        && !self.packet().depends_on_wire(e)
+                    {
+                        out.line(format!("try pb_w.checkLen(pb_v.len, {});", self.scope.expr(e)));
+                    }
+                    out.line("try pb_w.writeBytes(pb_v);");
+                }
+                (Some(_), Some(codec), None) => write_elem(out, codec, "pb_v"),
+                _ => {}
+            }
+            out.close("},");
+        }
+        out.close("}");
+        out.close("}");
+    }
+
+    fn open_window(&self, out: &mut Out, id: usize, size: Option<&TExpr>) {
+        if let Some(e) = size {
+            out.line(format!("const pb_win{} = pb_w.positionBits();", id));
+            out.line(format!("const pb_wsz{}: i64 = {};", id, self.scope.expr(e)));
+        }
+    }
+
+    fn close_window(&self, out: &mut Out, id: usize, sized: bool, exact: bool) {
+        if sized {
+            out.line(format!("try pb_w.endWindow(pb_win{}, pb_wsz{}, {});", id, id, exact));
+        }
     }
 
     fn mark(&self, out: &mut Out, mark: Mark) {

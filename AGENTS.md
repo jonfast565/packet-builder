@@ -15,7 +15,7 @@ source ──parser──▶ PacketExprList ──ir::analyze──▶ ir::Modul
 | `src/ast.rs` | parse-tree types (`TypeNode`, `ExprNode`, `PacketExpr`, ...). |
 | `src/ir/model.rs` | the validated model every backend consumes: `Packet`, `Member`, `ValueType`, `Codec`, `Step`. |
 | `src/ir/expr.rs` | type-checked expressions (`TExpr`). |
-| `src/ir/analysis/` | builds the model. `packet.rs` is a `PacketBuilder` that runs the passes in order (declare → counts → calcs → lay out → finish); `consts.rs` folds named constants into a `ConstTable` (run before packets) and checks `: Category` tags; `cursor.rs` tracks the bit offset; `typecheck.rs`, `codec.rs`, `context.rs`, `types.rs` hold the rest. |
+| `src/ir/analysis/` | builds the model. `packet.rs` is a `PacketBuilder` that runs the passes in order (declare → counts → calcs → derived → lay out → finish); `consts.rs` folds named constants into a `ConstTable` (run before packets) and checks `: Category` tags; `checks.rs` turns `==`/`in`/`strict` into checks; `derive.rs` orders derived fields and their marks; `union.rs` lays out `switch` fields and `size n` windows; `cursor.rs` tracks the bit offset; `typecheck.rs`, `codec.rs`, `context.rs`, `types.rs` hold the rest. |
 | `src/ir/layout.rs` | the `layout` command's report. |
 | `src/ir/interp/` | the reference interpreter: decodes/encodes a `Module` directly, using `runtime/rust.rs` (included as `interp::rt`). `show.rs` renders decoded values for the `decode` command. |
 | `src/pcap.rs` | pcap/pcapng reading and pcap writing (no dependencies). |
@@ -34,10 +34,13 @@ code between backends.
   Callers depend on the trait, not on concrete generators.
 - **Template Method** — `common::StepEmitter` walks a packet's `Step`s and
   dispatches each to a hook (`align`, `calc`, `string`, `padding`, `scalar`,
-  `array`, `bitfield`). Each backend's `Decoder` and `Encoder` only fill in the
-  hooks; the dispatch lives in one place. Encoders keep the default `calc`.
-  Before every field it calls `locate`, which records the field name for
-  error paths.
+  `array`, `bitfield`, `switch`, `open_window`/`close_window`, `check`).
+  Each backend's `Decoder` and `Encoder` only fill in the hooks; the
+  dispatch lives in one place. Encoders keep the default `calc`. Before
+  every field it calls `locate`, which records the field name for error
+  paths. `emit_steps` also records the positions derived fields need
+  (`mark`), then encoders patch derived fields (`define_local`,
+  `write_derived`) and decoders verify them (`verify`).
 - **Template Method** — `common::ConstEmitter` lays out a module's named
   constants (standalone ones, then each category); backends fill in
   `constant` and `category`, and it emits nothing for files without constants.
@@ -50,7 +53,9 @@ code between backends.
 - **Builder** — `ir::analysis::packet::PacketBuilder` holds the per-packet
   analysis state; each pass is one method.
 - Shared IR helpers (`Member::calc_expr`, `Member::is_calculated`,
-  `Packet::encode_calc_members`) replace repeated `match` blocks.
+  `Member::derived_expr`, `Packet::encode_calc_members`,
+  `Packet::depends_on_wire`, `Packet::marks`) replace repeated `match`
+  blocks; `common::union` holds the arm tests every backend's `switch` uses.
 
 ### Runtimes and errors
 

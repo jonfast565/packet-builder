@@ -2,8 +2,9 @@
 
 use super::expr::store_value;
 use super::naming::{CSharp, scalar_type};
+use crate::generators::common::union::{C_LOGIC, arm_test, variant_name};
 use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mark_var, mask, string_literal};
-use crate::ir::{BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, ValueType};
+use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, ValueType};
 
 fn read_elem(codec: &Codec, ty: &ValueType) -> String {
     let st = scalar_type(ty);
@@ -40,6 +41,22 @@ impl<'a> Decoder<'a> {
     pub fn new(packet: &'a Packet) -> Self {
         Decoder { scope: Scope::new(packet, Mode::Decode) }
     }
+
+    /// Expression that decodes `arm` of union `u`.
+    fn arm_value(&self, u: &str, arm: &Arm) -> String {
+        let class = format!("{}.{}", u, variant_name(arm));
+        match (&arm.ty, &arm.codec, &arm.count) {
+            (None, ..) => format!("new {}()", class),
+            (Some(_), _, Some(Count::Expr(e))) => {
+                format!("new {} {{ Value = pbR.ReadBytes(pbR.Count({}, 8)) }}", class, self.scope.expr(e))
+            }
+            (Some(_), _, Some(Count::Remaining)) => {
+                format!("new {} {{ Value = pbR.ReadBytes(pbR.RemainingBits / 8) }}", class)
+            }
+            (Some(ty), Some(codec), None) => format!("new {} {{ Value = {} }}", class, read_elem(codec, ty)),
+            _ => format!("new {}()", class),
+        }
+    }
 }
 
 impl StepEmitter for Decoder<'_> {
@@ -57,6 +74,40 @@ impl StepEmitter for Decoder<'_> {
 
     fn locate(&self, out: &mut Out, field: &str) {
         out.line(format!("pbR.At(\"{}\");", field));
+    }
+
+    fn switch(&self, out: &mut Out, m: &Member, selector: &TExpr, arms: &[Arm]) {
+        let ValueType::Union(u) = &m.ty else { return };
+        let place = self.scope.field(m);
+        out.open("{");
+        out.line(format!("long pbSel = {};", self.scope.expr(selector)));
+        let mut first = true;
+        for arm in arms.iter().filter(|a| !a.default) {
+            let test = arm_test(arm, arms, "pbSel", &C_LOGIC).unwrap_or_else(|| "true".into());
+            out.line(format!(
+                "{}if {} {} = {};",
+                if first { "" } else { "else " },
+                test,
+                place,
+                self.arm_value(u, arm)
+            ));
+            first = false;
+        }
+        let otherwise = match arms.iter().find(|a| a.default) {
+            Some(arm) => format!("{} = {};", place, self.arm_value(u, arm)),
+            None => format!("throw pbR.Error(PbErrorKind.Invalid, $\"no arm of `{}` for {{pbSel}}\");", m.name),
+        };
+        out.line(if first { otherwise } else { format!("else {}", otherwise) });
+        out.close("}");
+    }
+
+    fn open_window(&self, out: &mut Out, id: usize, size: Option<&TExpr>) {
+        let size = size.map(|e| self.scope.expr(e)).unwrap_or_else(|| "0".into());
+        out.line(format!("long pb_win{} = pbR.PushLimit({});", id, size));
+    }
+
+    fn close_window(&self, out: &mut Out, id: usize, _sized: bool, exact: bool) {
+        out.line(format!("pbR.PopLimit(pb_win{}, {});", id, exact));
     }
 
     fn mark(&self, out: &mut Out, mark: Mark) {

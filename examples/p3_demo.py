@@ -7,8 +7,8 @@ Generate the parser first:
 """
 
 from packets import (
-    P3_SEQ_FIRST, FdoProtocol, FdoStream, P3Init, P3Message, P3Packet, P3Type,
-    PbReader, Platform,
+    P3_SEQ_FIRST, FdoProtocol, FdoStream, P3Packet, P3PacketBody, P3Type, PbReader,
+    Platform,
 )
 
 # What a server receives from a client: the INIT packet (captured from a
@@ -33,22 +33,24 @@ def packets(stream):
 def control_packet(packet_type, tx_seq, rx_seq):
     """Build a control packet (ACK, NAK, ...). The encoder computes `length`
     and `crc`; sync, always_set and stop default to their fixed values."""
-    return P3Packet(tx_seq=tx_seq, rx_seq=rx_seq, type=packet_type).encode()
+    body = P3PacketBody("control", b"")
+    return P3Packet(tx_seq=tx_seq, rx_seq=rx_seq, type=packet_type, body=body).encode()
 
 
 def main():
     last_tx = None
     for packet in packets(STREAM):
         last_tx = packet.tx_seq
-        if packet.type == P3Type.INIT:
-            init = P3Init.decode(packet.data)
+        # The packet type picks how the body is decoded.
+        if packet.body.kind == "init":
+            init = packet.body.value
             platform = {Platform.WINDOWS: "Windows", Platform.MACINTOSH: "Macintosh"}.get(
                 init.platform, hex(init.platform))
             # Only some INIT fields have known meanings; see docs/p3.md.
             print("INIT from a %s client, version %d.%d, session flags 0x%04x"
                   % (platform, init.client_major, init.client_minor, init.session_flags))
-        elif packet.type == P3Type.DATA:
-            message = P3Message.decode(packet.data)
+        elif packet.body.kind == "data":
+            message = packet.body.value
             print("DATA token %r, %d byte(s) of FDO atoms" % (message.token, len(message.atoms)))
             if message.token == "Dd":
                 # de_data atoms (display editor protocol, atom 1) hold the screen name and password.

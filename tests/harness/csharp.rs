@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use packet_builder::generators::common::union::variant_name;
 use packet_builder::generators::csharp::{namespace, prop_name};
 use packet_builder::ir::{Member, Module, ValueType};
 use packet_builder::{GenOptions, Language};
@@ -48,6 +49,7 @@ fn value_expr(m: &Member, place: &str) -> String {
         ValueType::Mac => format!("Hx({})", v),
         ValueType::Packet(n) => format!("Dump{}({})", n, v),
         ValueType::Str => format!("System.Text.Json.JsonSerializer.Serialize({})", v),
+        ValueType::Union(n) => format!("Dump{}({})", n, v),
     };
     match &m.array {
         None => elem(place),
@@ -74,6 +76,25 @@ impl Target for CSharpTarget {
         );
         s.push_str("    static string Q(string s) => \"\\\"\" + s.Replace(\"\\\\\", \"\\\\\\\\\").Replace(\"\\\"\", \"\\\\\\\"\") + \"\\\"\";\n");
         s.push_str("    static string E(PbException e, string pre) => \",\\\"\" + pre + \"error\\\":\" + Q(e.Message) + \",\\\"\" + pre + \"kind\\\":\" + Q(e.Kind.ToString().ToLowerInvariant()) + \",\\\"\" + pre + \"path\\\":\" + Q(e.Path);\n\n");
+        for u in &module.unions {
+            let _ =
+                writeln!(s, "    static string Dump{}({} v)\n    {{\n        switch (v)\n        {{", u.name, u.name);
+            for arm in &u.arms {
+                let class = format!("{}.{}", u.name, variant_name(arm));
+                let (bind, value) = match (&arm.ty, arm.is_bytes()) {
+                    (None, _) => ("_", "\"null\"".to_string()),
+                    (Some(_), true) => ("a", "Hx(a.Value)".to_string()),
+                    (Some(ValueType::Packet(n)), _) => ("a", format!("Dump{}(a.Value)", n)),
+                    (Some(_), _) => ("a", "a.Value.ToString(CultureInfo.InvariantCulture)".to_string()),
+                };
+                let _ = writeln!(
+                    s,
+                    "            case {} {}: return \"{{\\\"kind\\\":\\\"{}\\\",\\\"value\\\":\" + {} + \"}}\";",
+                    class, bind, arm.name, value
+                );
+            }
+            s.push_str("        }\n        return \"null\";\n    }\n\n");
+        }
         for p in &module.packets {
             let _ = writeln!(
                 s,

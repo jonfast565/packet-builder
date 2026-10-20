@@ -4,6 +4,7 @@ use std::path::Path;
 use std::process::Command;
 
 use packet_builder::Language;
+use packet_builder::generators::common::union::variant_name;
 use packet_builder::generators::go::field_name;
 use packet_builder::ir::{Member, Module, ValueType};
 
@@ -19,6 +20,7 @@ fn value_expr(m: &Member, place: &str) -> String {
         ValueType::Mac => format!("hx({}[:])", v),
         ValueType::Packet(n) => format!("dump{}(&{})", n, v),
         ValueType::Str => format!("js({})", v),
+        ValueType::Union(n) => format!("dump{}(&{})", n, v),
     };
     match &m.array {
         None => elem(place),
@@ -48,6 +50,28 @@ impl Target for GoTarget {
         s.push_str("func js(v string) string { b, _ := json.Marshal(v); return string(b) }\n\n");
         s.push_str("func pbE(err error, pre string) string {\n\te := err.(*PbError)\n\treturn fmt.Sprintf(\"\\\"%serror\\\":%s,\\\"%skind\\\":%s,\\\"%spath\\\":%s\", pre, strconv.Quote(e.Error()), pre, js(e.Kind.String()), pre, js(e.Path))\n}\n\n");
         s.push_str("func hx(b []byte) string { return \"\\\"\" + hex.EncodeToString(b) + \"\\\"\" }\n\n");
+        for u in &module.unions {
+            let _ = writeln!(s, "func dump{}(v *{}) string {{\n\tswitch v.Kind {{", u.name, u.name);
+            for arm in &u.arms {
+                let field = format!("v.{}", variant_name(arm));
+                let value = match (&arm.ty, arm.is_bytes()) {
+                    (None, _) => "\"null\"".to_string(),
+                    (Some(_), true) => format!("hx({})", field),
+                    (Some(ValueType::Packet(n)), _) => format!("dump{}({})", n, field),
+                    (Some(t), _) if t.is_signed() => format!("strconv.FormatInt(int64({}), 10)", field),
+                    (Some(_), _) => format!("strconv.FormatUint(uint64({}), 10)", field),
+                };
+                let _ = writeln!(
+                    s,
+                    "\tcase {}{}:\n\t\treturn \"{{\\\"kind\\\":\\\"{}\\\",\\\"value\\\":\" + {} + \"}}\"",
+                    u.name,
+                    variant_name(arm),
+                    arm.name,
+                    value
+                );
+            }
+            s.push_str("\t}\n\treturn \"null\"\n}\n\n");
+        }
         for p in &module.packets {
             let _ = writeln!(s, "func dump{}(p *{}) string {{", p.name, p.name);
             s.push_str("\tparts := []string{}\n");

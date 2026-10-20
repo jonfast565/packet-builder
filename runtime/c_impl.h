@@ -127,7 +127,7 @@ PB_FN size_t pb_remaining_bits(const pb_reader *r) { return r->limit - r->pos; }
  * data inside a window. */
 PB_FN int pb_short(pb_reader *r, size_t bits) {
     r->short_bits = bits - pb_remaining_bits(r);
-    return r->limit == r->len * 8 ? PB_ERR_INCOMPLETE : PB_ERR_INVALID;
+    return r->windows == 0 ? PB_ERR_INCOMPLETE : PB_ERR_INVALID;
 }
 
 #define PB_NEED(r, bits) do { if ((bits) > pb_remaining_bits(r)) return pb_short((r), (bits)); } while (0)
@@ -139,13 +139,18 @@ PB_FN int pb_push_limit(pb_reader *r, int64_t bytes, size_t *saved) {
     if ((uint64_t)bytes > pb_remaining_bits(r) / 8) return pb_short(r, (size_t)bytes * 8);
     *saved = r->limit;
     r->limit = r->pos + (size_t)bytes * 8;
+    r->windows++;
     return PB_OK;
 }
 
-/* Skip what is left of the current window and restore `saved`. */
-PB_FN void pb_pop_limit(pb_reader *r, size_t saved) {
+/* Skip what is left of the current window and restore `saved`; with
+ * `exact`, bytes left over are an error. */
+PB_FN int pb_pop_limit(pb_reader *r, size_t saved, int exact) {
+    if (exact && pb_remaining_bits(r) > 0) return PB_ERR_INVALID;
     r->pos = r->limit;
     r->limit = saved;
+    r->windows--;
+    return PB_OK;
 }
 
 PB_FN int pb_read_bits(pb_reader *r, unsigned width, uint64_t *out) {
@@ -350,6 +355,16 @@ PB_FN int pb_write_zero_bits(pb_writer *w, int64_t bits) {
     for (; bits > 32; bits -= 32) PB_PASS(pb_write_bits(w, 0, 32));
     if (bits > 0) PB_PASS(pb_write_bits(w, 0, (unsigned)bits));
     return PB_OK;
+}
+
+/* End a window of `size` bytes that started at bit `start`: the content
+ * must fit (and fill it when `exact`); the rest is zero-filled. */
+PB_FN int pb_end_window(pb_writer *w, size_t start, int64_t size, int exact) {
+    size_t used = w->pos - start;
+    size_t room = size < 0 ? 0 : (size_t)size * 8;
+    if (size < 0 || used > room) return PB_ERR_RANGE;
+    if (exact && used != room) return PB_ERR_MISMATCH;
+    return pb_write_zero_bits(w, (int64_t)(room - used));
 }
 
 /* Overwrite nbytes bytes at bit position `at` (byte aligned). */

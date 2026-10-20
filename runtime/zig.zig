@@ -76,6 +76,7 @@ pub const PbReader = struct {
     data: []const u8,
     pos: usize = 0, // in bits
     limit: usize, // end of the readable data in bits (a window inside data)
+    windows: usize = 0, // windows open
     trace: PbTrace = .{},
 
     pub fn init(data: []const u8) PbReader {
@@ -97,7 +98,7 @@ pub const PbReader = struct {
     /// `bits` more bits are needed than are left: incomplete input at the
     /// top level, invalid data inside a window.
     fn short(self: *PbReader, bits: usize) PbError {
-        if (self.limit == self.data.len * 8) {
+        if (self.windows == 0) {
             return self.trace.fail(PbError.Incomplete, self.pos, bits - self.remainingBits());
         }
         return self.trace.fail(PbError.Invalid, self.pos, 0);
@@ -130,13 +131,17 @@ pub const PbReader = struct {
         if (bytes > self.remainingBits() / 8) return self.short(@intCast(@min(bytes * 8, std.math.maxInt(usize))));
         const saved = self.limit;
         self.limit = self.pos + @as(usize, @intCast(bytes)) * 8;
+        self.windows += 1;
         return saved;
     }
 
-    /// Skip what is left of the current window and restore `saved`.
-    pub fn popLimit(self: *PbReader, saved: usize) void {
+    /// Skip what is left of the current window and restore `saved`; with
+    /// `exact`, bytes left over are an error.
+    pub fn popLimit(self: *PbReader, saved: usize, exact: bool) PbError!void {
+        if (exact and self.remainingBits() > 0) return self.fail(PbError.Invalid);
         self.pos = self.limit;
         self.limit = saved;
+        self.windows -= 1;
     }
 
     pub fn readBits(self: *PbReader, width: u7) PbError!u64 {
@@ -319,6 +324,15 @@ pub const PbWriter = struct {
 
     pub fn checkPrefix(self: *PbWriter, len: usize, width: u7) PbError!void {
         if (width < 64 and (len >> @intCast(width)) != 0) return self.fail(PbError.Range);
+    }
+
+    /// End a window of `size` bytes that started at bit `start`: the content
+    /// must fit (and fill it when `exact`); the rest is zero-filled.
+    pub fn endWindow(self: *PbWriter, start: usize, size: i64, exact: bool) PbError!void {
+        const used: i64 = @intCast(self.pos - start);
+        if (size < 0 or used > size * 8) return self.fail(PbError.Range);
+        if (exact and used != size * 8) return self.fail(PbError.Mismatch);
+        try self.writeZeroBits(size * 8 - used);
     }
 
     /// Overwrite `nbytes` bytes at bit position `pos` (byte aligned).

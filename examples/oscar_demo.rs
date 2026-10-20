@@ -2,7 +2,7 @@
 //!
 //!     cargo run -- generate examples/oscar.packet -l rust -p packets -o examples/out
 //!     cp examples/oscar_demo.rs examples/out/ && cd examples/out
-//!     rustc --edition 2021 oscar_demo.rs && ./oscar_demo
+//!     rustc --edition 2024 oscar_demo.rs && ./oscar_demo
 
 mod packets;
 
@@ -20,9 +20,8 @@ const STREAM: &str = concat!(
 fn message_text(tlvs: &[Tlv]) -> Result<Option<String>, PbError> {
     for tlv in tlvs.iter().filter(|t| t.r#type == IcbmTlv::MESSAGE_DATA) {
         for fragment in IcbmMessage::decode(&tlv.value)?.fragments {
-            if fragment.id == FragmentId::TEXT {
-                let text = MessageText::decode(&fragment.data)?.text;
-                return Ok(Some(String::from_utf8_lossy(&text).into_owned()));
+            if let IcbmFragmentData::Text(text) = fragment.data {
+                return Ok(Some(String::from_utf8_lossy(&text.text).into_owned()));
             }
         }
     }
@@ -34,29 +33,25 @@ fn main() -> Result<(), PbError> {
         .map(|i| u8::from_str_radix(&STREAM[2 * i..2 * i + 2], 16).unwrap())
         .collect();
 
-    // FLAP frames follow each other on the TCP stream.
+    // FLAP frames follow each other on the TCP stream. Decoding a frame
+    // decodes all of it: the channel picks the payload, and the SNAC family
+    // and subtype pick the body.
     let mut reader = PbReader::new(&bytes);
     while reader.remaining_bits() > 0 {
         let frame = Flap::decode_from(&mut reader)?;
-        if frame.channel != Channel::SNAC {
+        let FlapPayload::Snac(snac) = &frame.payload else {
             println!("channel {} frame, {} byte(s)", frame.channel, frame.length);
             continue;
-        }
-        let header = SnacHeader::decode(&frame.payload)?;
-        match (header.family, header.subtype) {
-            (SnacFamily::SERVICE, ServiceSubtype::SERVER_READY) => {
-                println!("server ready: {:x?}", ServerReady::decode(&frame.payload)?.families)
-            }
-            (SnacFamily::ICBM, IcbmSubtype::RECEIVE) => {
-                let im = IcbmReceive::decode(&frame.payload)?;
-                println!(
-                    "message from {} ({}% warning): {}",
-                    im.screen_name,
-                    im.warning_percent,
-                    message_text(&im.tlvs)?.unwrap_or_default()
-                );
-            }
-            other => println!("SNAC {:04x?}", other),
+        };
+        match &snac.body {
+            SnacBody::ServerReady(ready) => println!("server ready: {:x?}", ready.families),
+            SnacBody::Receive(im) => println!(
+                "message from {} ({}% warning): {}",
+                im.screen_name,
+                im.warning_percent,
+                message_text(&im.tlvs)?.unwrap_or_default()
+            ),
+            _ => println!("SNAC {:04x}/{:04x}", snac.family, snac.subtype),
         }
     }
     Ok(())

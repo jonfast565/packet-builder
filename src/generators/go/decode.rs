@@ -3,8 +3,10 @@
 
 use super::expr::store_value;
 use super::naming::{Go, field_name, member_type, scalar_type};
+use super::packet::arm_kind;
+use crate::generators::common::union::variant_name;
 use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mark_var, mask, string_literal};
-use crate::ir::{BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, ValueType};
+use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, ValueType};
 
 fn read_elem(codec: &Codec, ty: &ValueType) -> String {
     let st = scalar_type(ty);
@@ -33,6 +35,26 @@ impl<'a> Decoder<'a> {
     pub fn new(packet: &'a Packet) -> Self {
         Decoder { scope: Scope::new(packet, Mode::Decode) }
     }
+
+    /// Statements that decode `arm` of union `u` into `place`.
+    fn arm(&self, out: &mut Out, u: &str, place: &str, arm: &Arm) {
+        out.line(format!("{}.Kind = {}", place, arm_kind(u, arm)));
+        let target = format!("{}.{}", place, variant_name(arm));
+        match (&arm.ty, &arm.codec, &arm.count) {
+            (Some(_), _, Some(Count::Expr(e))) => {
+                out.line(format!("{} = pbR.ReadBytes(pbR.Count({}, 8))", target, self.scope.expr(e)))
+            }
+            (Some(_), _, Some(Count::Remaining)) => {
+                out.line(format!("{} = pbR.ReadBytes(pbR.RemainingBits() / 8)", target))
+            }
+            (Some(ValueType::Packet(n)), _, None) => {
+                out.line(format!("pbV := pbDecode{}(pbR)", n));
+                out.line(format!("{} = &pbV", target));
+            }
+            (Some(ty), Some(codec), None) => out.line(format!("{} = {}", target, read_elem(codec, ty))),
+            _ => {}
+        }
+    }
 }
 
 impl StepEmitter for Decoder<'_> {
@@ -48,6 +70,36 @@ impl StepEmitter for Decoder<'_> {
 
     fn locate(&self, out: &mut Out, field: &str) {
         out.line(format!("pbR.At(\"{}\")", field));
+    }
+
+    fn switch(&self, out: &mut Out, m: &Member, selector: &TExpr, arms: &[Arm]) {
+        let ValueType::Union(u) = &m.ty else { return };
+        let place = format!("p.{}", field_name(&m.name));
+        out.line(format!("switch pbSel := {}; pbSel {{", self.scope.expr(selector)));
+        for arm in arms.iter().filter(|a| !a.default) {
+            let values: Vec<String> = arm.values.iter().map(|v| v.to_string()).collect();
+            out.line(format!("case {}:", values.join(", ")));
+            out.push();
+            self.arm(out, u, &place, arm);
+            out.pop();
+        }
+        out.line("default:");
+        out.push();
+        match arms.iter().find(|a| a.default) {
+            Some(arm) => self.arm(out, u, &place, arm),
+            None => out.line(format!("pbR.Fail(PbInvalid, \"no arm of `{}` for %d\", pbSel)", m.name)),
+        }
+        out.pop();
+        out.line("}");
+    }
+
+    fn open_window(&self, out: &mut Out, id: usize, size: Option<&TExpr>) {
+        let size = size.map(|e| self.scope.expr(e)).unwrap_or_else(|| "0".into());
+        out.line(format!("pb_win{} := pbR.PushLimit({})", id, size));
+    }
+
+    fn close_window(&self, out: &mut Out, id: usize, _sized: bool, exact: bool) {
+        out.line(format!("pbR.PopLimit(pb_win{}, {})", id, exact));
     }
 
     fn mark(&self, out: &mut Out, mark: Mark) {

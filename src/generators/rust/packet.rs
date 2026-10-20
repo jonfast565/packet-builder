@@ -2,9 +2,48 @@
 
 use super::decode::Decoder;
 use super::encode::Encoder;
-use super::naming::{ident, member_type};
+use super::naming::{ident, member_type, scalar_type};
+use crate::generators::common::union::variant_name;
 use crate::generators::common::{Out, StepEmitter, magic_literal, member_category};
-use crate::ir::Packet;
+use crate::ir::{Arm, Packet, Union};
+
+/// A Rust enum with one variant per arm.
+pub fn emit_union(out: &mut Out, u: &Union) {
+    out.line("#[derive(Debug, Clone, PartialEq)]");
+    out.open(format!("pub enum {} {{", u.name));
+    for arm in &u.arms {
+        let values: Vec<String> = arm.values.iter().map(|v| v.to_string()).collect();
+        out.line(format!(
+            "/// {}",
+            if arm.default { "Any other selector value.".into() } else { format!("Selector {}.", values.join(", ")) }
+        ));
+        match arm_type(arm) {
+            Some(t) => out.line(format!("{}({}),", variant_name(arm), t)),
+            None => out.line(format!("{},", variant_name(arm))),
+        }
+    }
+    out.close("}");
+    out.line("");
+    out.open(format!("impl Default for {} {{", u.name));
+    out.open("fn default() -> Self {");
+    let first = &u.arms[0];
+    match arm_type(first) {
+        Some(_) => out.line(format!("{}::{}(Default::default())", u.name, variant_name(first))),
+        None => out.line(format!("{}::{}", u.name, variant_name(first))),
+    }
+    out.close("}");
+    out.close("}");
+    out.line("");
+}
+
+/// The Rust type an arm holds.
+pub fn arm_type(arm: &Arm) -> Option<String> {
+    match (&arm.ty, arm.is_bytes()) {
+        (None, _) => None,
+        (Some(_), true) => Some("Vec<u8>".into()),
+        (Some(t), false) => Some(scalar_type(t)),
+    }
+}
 
 pub fn emit_packet(out: &mut Out, p: &Packet) {
     let name = &p.name;

@@ -77,7 +77,7 @@ pub fn scalar_type(ty: &ValueType) -> String {
         ValueType::Float { width: 32 } => "float".into(),
         ValueType::Float { .. } => "double".into(),
         ValueType::Mac => "uint8_t".into(),
-        ValueType::Packet(n) => n.clone(),
+        ValueType::Packet(n) | ValueType::Union(n) => n.clone(),
         ValueType::Str => "char".into(),
     }
 }

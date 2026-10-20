@@ -53,6 +53,7 @@ typedef struct pb_reader {
     size_t pos;        /* in bits */
     size_t limit;      /* end of the readable data in bits (a window inside data) */
     size_t short_bits; /* set when a read runs out of data */
+    unsigned windows;  /* windows open */
     pb_trace tr;
     pb_error err;
 } pb_reader;

@@ -117,10 +117,11 @@ impl PacketBuilder<'_> {
     /// encode-time values and patches.
     pub(super) fn finish_derived(&mut self) -> DerivedPlan {
         let by_item = self.item_steps.clone();
-        let by_step: HashMap<usize, _> = by_item.values().map(|s| (s.step, *s)).collect();
+        let starts: HashMap<usize, bool> = by_item.values().map(|s| (s.first, s.aligned_before)).collect();
+        let ends: HashMap<usize, bool> = by_item.values().map(|s| (s.last, s.aligned_after)).collect();
         let to_step = |m: Mark| match m {
-            Mark::Before(i) => Mark::Before(by_item.get(&i).map(|s| s.step).unwrap_or(0)),
-            Mark::After(i) => Mark::After(by_item.get(&i).map(|s| s.step).unwrap_or(0)),
+            Mark::Before(i) => Mark::Before(by_item.get(&i).map(|s| s.first).unwrap_or(0)),
+            Mark::After(i) => Mark::After(by_item.get(&i).map(|s| s.last).unwrap_or(0)),
             other => other,
         };
         let derived: Vec<usize> = (0..self.ctx.members.len()).filter(|&i| self.ctx.members[i].is_derived()).collect();
@@ -139,8 +140,8 @@ impl PacketBuilder<'_> {
                 e.marks(&mut marks);
             }
             let unaligned = marks.iter().any(|mk| match mk {
-                Mark::Before(s) => by_step.get(s).map(|x| !x.aligned_before).unwrap_or(false),
-                Mark::After(s) => by_step.get(s).map(|x| !x.aligned_after).unwrap_or(false),
+                Mark::Before(s) => starts.get(s).map(|a| !a).unwrap_or(false),
+                Mark::After(s) => ends.get(s).map(|a| !a).unwrap_or(false),
                 _ => false,
             });
             if unaligned {

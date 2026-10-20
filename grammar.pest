@@ -89,6 +89,14 @@ strict_kw  = @{ "strict" ~ !(alnum | underscore) }
 lenient_kw = @{ "lenient" ~ !(alnum | underscore) }
 dotdot     = @{ ".." }
 
+// Windows and unions. `switch` starts a field's type, so it is reserved;
+// `size` and `exact` are only special after a field's type.
+switch_kw = @{ "switch" }
+size_kw   = @{ "size" ~ !(alnum | underscore) }
+exact_kw  = @{ "exact" ~ !(alnum | underscore) }
+fat_arrow = @{ "=>" }
+default_arm = @{ "_" ~ !(alnum | underscore) }
+
 // ===============================
 // Keyword reservation
 // ===============================
@@ -100,7 +108,7 @@ keyword = _{
   | sqrt_kw | min_kw | max_kw
   | le_kw | be_kw
   | bitfield_kw | msb_kw | lsb_kw
-  | align_kw | wordsize_kw | assert_kw
+  | align_kw | wordsize_kw | assert_kw | switch_kw
   // Type names are not reserved: they are only special in type position, so
   // a field may be called `word` or `string`.
 }
@@ -236,9 +244,23 @@ range_call = { identifier ~ lparen ~ field_range ~ rparen }
 
 // Accessors & declarations
 declaration = {
-    identifier ~ field_type ~ array_specifier? ~ endianness? ~ alignment? ~ category_tag? ~ derivation?
+    identifier ~ field_type ~ array_specifier? ~ endianness? ~ alignment? ~ window? ~ category_tag? ~ derivation?
     ~ constraint? ~ lenient_kw?
 }
+
+// `size n`: the field occupies exactly n bytes. Decoding stops at the end
+// of the window (`[]` arrays inside it run to its end) and skips what is
+// left, unless `exact`; encoding pads to n bytes.
+window = { size_kw ~ expr ~ exact_kw? }
+
+// A tagged union: the selector picks the arm.
+//   body switch channel { Channel.snac => snac Snac, _ => raw bytes[] } size length
+switch_field = {
+    identifier ~ switch_kw ~ expr ~ lbracket ~ switch_arm ~ (comma ~ switch_arm)* ~ comma? ~ rbracket
+    ~ alignment? ~ window?
+}
+switch_arm = { (default_arm | arm_values) ~ fat_arrow ~ identifier ~ (field_type ~ array_specifier? ~ endianness?)? }
+arm_values = { expr ~ (comma ~ expr)* }
 
 // `length uint16 = len(payload)`: encoding computes the value; decoding
 // checks it.
@@ -303,7 +325,7 @@ packet  = {
 
 rule_list = { rule ~ (comma ~ rule)* ~ comma? }
 
-rule = { calculated_field | align_directive | assert_directive | bitfield_declaration | declaration }
+rule = { calculated_field | align_directive | assert_directive | bitfield_declaration | switch_field | declaration }
 
 // `assert expr "message"`: decoding and encoding fail when expr is false.
 assert_directive = { assert_kw ~ expr ~ string? }

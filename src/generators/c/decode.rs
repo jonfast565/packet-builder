@@ -3,8 +3,10 @@
 
 use super::expr::store_value;
 use super::naming::{C, ident, len_ident, scalar_type};
+use super::packet::arm_kind;
+use crate::generators::common::union::{C_LOGIC, arm_test};
 use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mark_var, mask};
-use crate::ir::{BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, ValueType};
+use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, ValueType};
 
 /// Statements that decode one element into the lvalue `lv`.
 fn read_elem(out: &mut Out, codec: &Codec, ty: &ValueType, lv: &str) {
@@ -43,6 +45,29 @@ impl<'a> Decoder<'a> {
     pub fn new(packet: &'a Packet) -> Self {
         Decoder { scope: Scope::new(packet, Mode::Decode) }
     }
+
+    /// Statements that decode `arm` of union `u` into `place`.
+    fn arm(&self, out: &mut Out, u: &str, place: &str, arm: &Arm) {
+        out.line(format!("{}.kind = {};", place, arm_kind(u, arm)));
+        let target = format!("{}.u.{}", place, ident(&arm.name));
+        match (&arm.ty, &arm.codec, &arm.count) {
+            (Some(_), _, Some(count)) => {
+                out.open("{");
+                out.line("size_t pb_n;");
+                match count {
+                    Count::Expr(e) => out.line(format!("PB_TRY(pb_count(pb_r, {}, 8, &pb_n));", self.scope.expr(e))),
+                    Count::Remaining => out.line("pb_n = pb_remaining_bits(pb_r) / 8;"),
+                }
+                out.line(format!("{}.data = pb_alloc(pb_n, 1);", target));
+                out.line(format!("if (!{}.data) {{ pb_rc = PB_ERR_NOMEM; goto pb_fail; }}", target));
+                out.line(format!("{}.len = pb_n;", target));
+                out.line(format!("PB_TRY(pb_read_bytes(pb_r, {}.data, pb_n));", target));
+                out.close("}");
+            }
+            (Some(ty), Some(codec), None) => read_elem(out, codec, ty, &target),
+            _ => {}
+        }
+    }
 }
 
 impl StepEmitter for Decoder<'_> {
@@ -56,6 +81,47 @@ impl StepEmitter for Decoder<'_> {
 
     fn locate(&self, out: &mut Out, field: &str) {
         out.line(format!("pb_at(&pb_r->tr, \"{}\");", field));
+    }
+
+    fn switch(&self, out: &mut Out, m: &Member, selector: &TExpr, arms: &[Arm]) {
+        let ValueType::Union(u) = &m.ty else { return };
+        let place = format!("p->{}", ident(&m.name));
+        out.open("{");
+        out.line(format!("int64_t pb_sel = {};", self.scope.expr(selector)));
+        let tests: Vec<(&Arm, String)> = arms
+            .iter()
+            .filter(|a| !a.default)
+            .map(|a| (a, arm_test(a, arms, "pb_sel", &C_LOGIC).unwrap_or_else(|| "1".into())))
+            .collect();
+        for (i, (arm, test)) in tests.iter().enumerate() {
+            if i > 0 {
+                out.pop();
+            }
+            out.open(format!("{}if {} {{", if i > 0 { "} else " } else { "" }, test));
+            self.arm(out, u, &place, arm);
+        }
+        if !tests.is_empty() {
+            out.pop();
+            out.open("} else {");
+        }
+        match arms.iter().find(|a| a.default) {
+            Some(arm) => self.arm(out, u, &place, arm),
+            None => out.line("PB_TRY(PB_ERR_INVALID);"),
+        }
+        if !tests.is_empty() {
+            out.close("}");
+        }
+        out.close("}");
+    }
+
+    fn open_window(&self, out: &mut Out, id: usize, size: Option<&TExpr>) {
+        let size = size.map(|e| self.scope.expr(e)).unwrap_or_else(|| "0".into());
+        out.line(format!("size_t pb_win{};", id));
+        out.line(format!("PB_TRY(pb_push_limit(pb_r, {}, &pb_win{}));", size, id));
+    }
+
+    fn close_window(&self, out: &mut Out, id: usize, _sized: bool, exact: bool) {
+        out.line(format!("PB_TRY(pb_pop_limit(pb_r, pb_win{}, {}));", id, if exact { 1 } else { 0 }));
     }
 
     fn mark(&self, out: &mut Out, mark: Mark) {

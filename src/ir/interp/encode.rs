@@ -56,6 +56,7 @@ impl Encoder<'_> {
         }
         let start = w.position_bits();
         let mut marks = HashMap::from([(Mark::PacketStart, start)]);
+        let mut windows: HashMap<usize, (usize, Option<i64>)> = HashMap::new();
         for (i, step) in p.steps.iter().enumerate() {
             for mi in checked_members(step).into_iter().filter(|m| !p.patches.contains(m)) {
                 for c in p.members[mi].enforced_checks() {
@@ -64,7 +65,25 @@ impl Encoder<'_> {
                 }
             }
             marks.insert(Mark::Before(i), w.position_bits());
-            self.step(p, step, &values, start, w)?;
+            match step {
+                Step::OpenWindow { size, .. } => {
+                    if let Some(name) = p.steps.get(i + 1).and_then(|s| super::decode::step_name(p, s)) {
+                        w.at(intern(name));
+                    }
+                    // A size only known after encoding the body is not checked.
+                    let n = (!p.depends_on_wire(size)).then(|| self.expr(&values, size));
+                    windows.insert(i, (w.position_bits(), n));
+                }
+                Step::CloseWindow { open, exact } => {
+                    if let Some(name) = p.steps.get(open + 1).and_then(|s| super::decode::step_name(p, s)) {
+                        w.at(intern(name));
+                    }
+                    if let Some((start, Some(n))) = windows.remove(open) {
+                        w.end_window(start, n, *exact)?;
+                    }
+                }
+                _ => self.step(p, step, &values, start, w)?,
+            }
             marks.insert(Mark::After(i), w.position_bits());
         }
         marks.insert(Mark::PacketEnd, w.position_bits());
@@ -154,6 +173,43 @@ impl Encoder<'_> {
                 w.at(intern(name));
                 self.bitfield(values, container, *container_width, parts, w)
             }
+            Step::Switch { member, selector, arms } => {
+                let m = &p.members[*member];
+                w.at(intern(&m.name));
+                let Value::Variant { arm: held, value } = &values[*member] else {
+                    return Err(w.error(PbErrorKind::Invalid, format!("`{}` holds no arm", m.name)));
+                };
+                let Some(arm) = arms.iter().find(|a| &a.name == held) else {
+                    return Err(w.error(PbErrorKind::Invalid, format!("`{}` has no arm `{}`", m.name, held)));
+                };
+                let sel = self.expr(values, selector);
+                let picks =
+                    if arm.default { !arms.iter().any(|a| a.values.contains(&sel)) } else { arm.values.contains(&sel) };
+                if !picks {
+                    return Err(w.error(
+                        PbErrorKind::Mismatch,
+                        format!("`{}` holds arm `{}`, but its selector is {}", m.name, arm.name, sel),
+                    ));
+                }
+                match (&arm.ty, &arm.codec, &arm.count, value) {
+                    (Some(_), _, Some(count), Some(v)) => {
+                        let b = match v.as_ref() {
+                            Value::Bytes(b) => b.clone(),
+                            _ => Vec::new(),
+                        };
+                        if let Count::Expr(e) = count
+                            && !p.depends_on_wire(e)
+                        {
+                            w.check_len(b.len(), self.expr(values, e))?;
+                        }
+                        w.write_bytes(&b);
+                        Ok(())
+                    }
+                    (Some(ty), Some(codec), None, Some(v)) => self.elem(codec, ty, v, w),
+                    _ => Ok(()),
+                }
+            }
+            Step::OpenWindow { .. } | Step::CloseWindow { .. } => Ok(()),
         }
     }
 

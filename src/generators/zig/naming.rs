@@ -104,7 +104,7 @@ pub fn scalar_type(ty: &ValueType) -> String {
         ValueType::Int { width, signed } => format!("{}{}", if *signed { "i" } else { "u" }, width),
         ValueType::Float { width } => format!("f{}", width),
         ValueType::Mac => "[6]u8".into(),
-        ValueType::Packet(n) => n.clone(),
+        ValueType::Packet(n) | ValueType::Union(n) => n.clone(),
         ValueType::Str => "[]const u8".into(),
     }
 }
@@ -123,13 +123,14 @@ pub fn default_value(m: &Member) -> String {
         (None, ValueType::Float { .. }) => "0".into(),
         (None, ValueType::Mac) => "[_]u8{0} ** 6".into(),
         (None, ValueType::Packet(_)) => ".{}".into(),
+        (None, ValueType::Union(n)) => format!("{}.pb_default", n),
         (None, ValueType::Str) => "\"\"".into(),
     }
 }
 
 /// Members that own heap memory (and so need deinit).
 pub fn owns_memory(m: &Member) -> bool {
-    m.array.is_some() || matches!(m.ty, ValueType::Packet(_) | ValueType::Str)
+    m.array.is_some() || matches!(m.ty, ValueType::Packet(_) | ValueType::Str | ValueType::Union(_))
 }
 
 pub struct Zig;

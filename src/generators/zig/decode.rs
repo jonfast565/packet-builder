@@ -3,7 +3,7 @@
 use super::expr::store_value;
 use super::naming::{Zig, ident, scalar_type};
 use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mark_var, mask};
-use crate::ir::{BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, ValueType};
+use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, ValueType};
 
 fn read_elem(codec: &Codec, ty: &ValueType) -> String {
     let st = scalar_type(ty);
@@ -30,6 +30,21 @@ impl<'a> Decoder<'a> {
     pub fn new(packet: &'a Packet) -> Self {
         Decoder { scope: Scope::new(packet, Mode::Decode) }
     }
+
+    /// Expression that decodes `arm` (an anonymous union literal).
+    fn arm_value(&self, arm: &Arm) -> String {
+        let field = ident(&arm.name);
+        let value = match (&arm.ty, &arm.codec, &arm.count) {
+            (None, ..) => "{}".to_string(),
+            (Some(_), _, Some(Count::Expr(e))) => {
+                format!("try pb_r.readBytes(allocator, try pb_r.count({}, 8))", self.scope.expr(e))
+            }
+            (Some(_), _, Some(Count::Remaining)) => "try pb_r.readBytes(allocator, pb_r.remainingBits() / 8)".into(),
+            (Some(ty), Some(codec), None) => read_elem(codec, ty),
+            _ => "{}".to_string(),
+        };
+        format!(".{{ .{} = {} }}", field, value)
+    }
 }
 
 impl StepEmitter for Decoder<'_> {
@@ -43,6 +58,32 @@ impl StepEmitter for Decoder<'_> {
 
     fn locate(&self, out: &mut Out, field: &str) {
         out.line(format!("pb_r.at(\"{}\");", field));
+    }
+
+    fn switch(&self, out: &mut Out, m: &Member, selector: &TExpr, arms: &[Arm]) {
+        let place = format!("p.{}", ident(&m.name));
+        out.open("{");
+        out.line(format!("const pb_sel: i64 = {};", self.scope.expr(selector)));
+        out.open("switch (pb_sel) {");
+        for arm in arms.iter().filter(|a| !a.default) {
+            let values: Vec<String> = arm.values.iter().map(|v| v.to_string()).collect();
+            out.line(format!("{} => {} = {},", values.join(", "), place, self.arm_value(arm)));
+        }
+        match arms.iter().find(|a| a.default) {
+            Some(arm) => out.line(format!("else => {} = {},", place, self.arm_value(arm))),
+            None => out.line("else => return pb_r.fail(PbError.Invalid),"),
+        }
+        out.close("}");
+        out.close("}");
+    }
+
+    fn open_window(&self, out: &mut Out, id: usize, size: Option<&TExpr>) {
+        let size = size.map(|e| self.scope.expr(e)).unwrap_or_else(|| "0".into());
+        out.line(format!("const pb_win{} = try pb_r.pushLimit({});", id, size));
+    }
+
+    fn close_window(&self, out: &mut Out, id: usize, _sized: bool, exact: bool) {
+        out.line(format!("try pb_r.popLimit(pb_win{}, {});", id, exact));
     }
 
     fn mark(&self, out: &mut Out, mark: Mark) {

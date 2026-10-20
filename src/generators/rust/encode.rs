@@ -2,8 +2,9 @@
 
 use super::expr::store_value;
 use super::naming::{Rust, ident, scalar_type};
+use crate::generators::common::union::{C_LOGIC, arm_test, mismatch_message, uses_selector, variant_name};
 use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mark_var, mask, string_literal};
-use crate::ir::{BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, ValueType};
+use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, ValueType};
 
 /// Statements that write one element held in `v`.
 fn write_elem(out: &mut Out, codec: &Codec, ty: &ValueType, v: &str) {
@@ -62,6 +63,58 @@ impl StepEmitter for Encoder<'_> {
 
     fn locate(&self, out: &mut Out, field: &str) {
         out.line(format!("pb_w.at(\"{}\");", field));
+    }
+
+    fn switch(&self, out: &mut Out, m: &Member, selector: &TExpr, arms: &[Arm]) {
+        let ValueType::Union(u) = &m.ty else { return };
+        out.open("{");
+        if uses_selector(arms) {
+            out.line(format!("let pb_sel: i64 = {};", self.scope.expr(selector)));
+        }
+        out.open(format!("match &p.{} {{", ident(&m.name)));
+        for arm in arms {
+            let v = variant_name(arm);
+            let pat = if arm.ty.is_some() { format!("{}::{}(pb_v)", u, v) } else { format!("{}::{}", u, v) };
+            out.open(format!("{} => {{", pat));
+            if let Some(test) = arm_test(arm, arms, "pb_sel", &C_LOGIC) {
+                out.line(format!(
+                    "if !{} {{ return Err(pb_w.error(PbErrorKind::Mismatch, {}.into())); }}",
+                    test,
+                    string_literal(&mismatch_message(&m.name, arm))
+                ));
+            }
+            match (&arm.ty, &arm.codec, &arm.count) {
+                (Some(_), _, Some(count)) => {
+                    if let Count::Expr(e) = count
+                        && !self.packet().depends_on_wire(e)
+                    {
+                        out.line(format!("pb_w.check_len(pb_v.len(), {})?;", self.scope.expr(e)));
+                    }
+                    out.line("pb_w.write_bytes(pb_v);");
+                }
+                (Some(ty), Some(codec), None) => {
+                    let v = if matches!(codec, Codec::Packet(_)) { "pb_v" } else { "(*pb_v)" };
+                    write_elem(out, codec, ty, v);
+                }
+                _ => {}
+            }
+            out.close("}");
+        }
+        out.close("}");
+        out.close("}");
+    }
+
+    fn open_window(&self, out: &mut Out, id: usize, size: Option<&TExpr>) {
+        if let Some(e) = size {
+            out.line(format!("let pb_win{} = pb_w.position_bits();", id));
+            out.line(format!("let pb_wsz{}: i64 = {};", id, self.scope.expr(e)));
+        }
+    }
+
+    fn close_window(&self, out: &mut Out, id: usize, sized: bool, exact: bool) {
+        if sized {
+            out.line(format!("pb_w.end_window(pb_win{}, pb_wsz{}, {})?;", id, id, exact));
+        }
     }
 
     fn mark(&self, out: &mut Out, mark: Mark) {

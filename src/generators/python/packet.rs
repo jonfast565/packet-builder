@@ -4,7 +4,37 @@ use super::decode::Decoder;
 use super::encode::Encoder;
 use super::naming::{annotation, ident};
 use crate::generators::common::{Out, StepEmitter, member_category};
-use crate::ir::Packet;
+use crate::ir::{Arm, Packet, Union, ValueType};
+
+/// The value an arm starts with.
+fn arm_default(arm: &Arm) -> String {
+    match (&arm.ty, arm.is_bytes()) {
+        (None, _) => "None".into(),
+        (Some(_), true) => "b\"\"".into(),
+        (Some(ValueType::Packet(n)), false) => format!("{}()", n),
+        (Some(_), false) => "0".into(),
+    }
+}
+
+/// A union as a dataclass: `kind` names the arm and `value` holds its value.
+pub fn emit_union(out: &mut Out, u: &Union) {
+    out.line("@dataclass");
+    out.open(format!("class {}:", u.name));
+    let arms: Vec<String> = u.arms.iter().map(|a| a.name.clone()).collect();
+    out.line(format!(
+        "\"\"\"One arm of a union: `kind` is one of {}; `value` is the arm's value.\"\"\"",
+        arms.join(", ")
+    ));
+    out.line("");
+    out.line(format!("kind: str = \"{}\"", u.arms[0].name));
+    out.line("value: object = None");
+    out.line("");
+    out.line("@staticmethod");
+    out.open(format!("def pb_default() -> \"{}\":", u.name));
+    out.line(format!("return {}(\"{}\", {})", u.name, u.arms[0].name, arm_default(&u.arms[0])));
+    out.close("");
+    out.pop();
+}
 
 pub fn emit_packet(out: &mut Out, p: &Packet) {
     out.line("@dataclass");

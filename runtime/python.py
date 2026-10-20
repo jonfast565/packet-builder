@@ -71,12 +71,13 @@ class _PbTrace:
 class PbReader(_PbTrace):
     """Reads integers of any bit width (MSB-first) and byte-aligned values."""
 
-    __slots__ = ("data", "limit")
+    __slots__ = ("data", "limit", "windows")
 
     def __init__(self, data):
         super().__init__()
         self.data = bytes(data)
         self.limit = len(self.data) * 8  # end of the readable data (a window inside data)
+        self.windows = 0  # windows open
 
     def remaining_bits(self):
         return self.limit - self.pos
@@ -87,7 +88,7 @@ class PbReader(_PbTrace):
     def _short(self, bits, what):
         """`bits` more bits are needed than are left."""
         left = self.remaining_bits()
-        if self.limit == len(self.data) * 8:
+        if self.windows == 0:
             e = self.error(
                 PbError.INCOMPLETE,
                 "unexpected end of data: %s needs %d more bit(s), %d left" % (what, bits, left),
@@ -108,12 +109,19 @@ class PbReader(_PbTrace):
             raise self._short(nbytes * 8, "the window")
         saved = self.limit
         self.limit = self.pos + nbytes * 8
+        self.windows += 1
         return saved
 
-    def pop_limit(self, saved):
-        """Skip what is left of the current window and restore `saved`."""
+    def pop_limit(self, saved, exact):
+        """Skip what is left of the current window and restore `saved`; with
+        `exact`, bytes left over are an error."""
+        if exact and self.remaining_bits() > 0:
+            raise self.error(
+                PbError.INVALID, "%d bit(s) left over in a field that must fill its size" % self.remaining_bits()
+            )
         self.pos = self.limit
         self.limit = saved
+        self.windows -= 1
 
     def read_bits(self, width):
         self._need(width)
@@ -212,6 +220,20 @@ class PbWriter(_PbTrace):
 
     def finish(self):
         return bytes(self.buf)
+
+    def end_window(self, start, size, exact):
+        """End a window of `size` bytes that started at bit `start`: the
+        content must fit (and fill it when `exact`); the rest is zero-filled."""
+        used = self.pos - start
+        if size < 0 or used > size * 8:
+            raise self.error(
+                PbError.RANGE, "the content takes %d bit(s), more than its size of %d byte(s)" % (used, size)
+            )
+        if exact and used != size * 8:
+            raise self.error(
+                PbError.MISMATCH, "the content takes %d bit(s) but must fill its %d byte(s)" % (used, size)
+            )
+        self.write_zero_bits(size * 8 - used)
 
     def patch_uint(self, at, value, nbytes, little):
         """Overwrite `nbytes` bytes at bit position `at` (byte aligned)."""

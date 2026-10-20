@@ -19,7 +19,7 @@ pub fn scalar_type(ty: &ValueType) -> String {
         }
         ValueType::Float { width } => format!("float{}", width),
         ValueType::Mac => "[6]byte".into(),
-        ValueType::Packet(n) => n.clone(),
+        ValueType::Packet(n) | ValueType::Union(n) => n.clone(),
         ValueType::Str => "string".into(),
     }
 }

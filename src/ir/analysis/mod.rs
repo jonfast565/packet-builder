@@ -5,6 +5,7 @@
 //! - `consts`: named constants and categories, and `: Category` tags.
 //! - `checks`: `== value`, `in lo..hi`, `strict` and `lenient` on fields.
 //! - `derive`: derived fields, their marks and the encode order.
+//! - `union`: tagged unions (`switch`) and windows (`size n`).
 //! - `context`: the member table and diagnostics shared by those passes.
 //! - `typecheck`, `codec`: expression and wire-format resolution.
 //! - `cursor`: what is known about the bit offset while laying out fields.
@@ -19,10 +20,11 @@ mod derive;
 mod packet;
 mod typecheck;
 mod types;
+mod union;
 
 use std::collections::HashMap;
 
-use super::model::{Module, Packet};
+use super::model::{Module, Packet, Step, Union, ValueType};
 use crate::ast::{PacketExprList, PacketItem, TypeNode};
 use crate::errors::Diagnostic;
 
@@ -99,8 +101,33 @@ pub fn analyze(list: &PacketExprList) -> Result<Module, Vec<Diagnostic>> {
         return Err(diags);
     }
 
-    let packets = list.packets.iter().map(|p| done.remove(&p.name).expect("analyzed")).collect();
-    Ok(Module { packets, constants: consts.constants, categories: consts.categories })
+    let packets: Vec<Packet> = list.packets.iter().map(|p| done.remove(&p.name).expect("analyzed")).collect();
+    let mut unions = Vec::new();
+    for p in &packets {
+        for s in &p.steps {
+            if let Step::Switch { member, arms, .. } = s
+                && let ValueType::Union(name) = &p.members[*member].ty
+            {
+                unions.push(Union { name: name.clone(), arms: arms.clone() });
+            }
+        }
+    }
+    let taken: Vec<&str> =
+        packets.iter().map(|p| p.name.as_str()).chain(consts.categories.iter().map(|c| c.name.as_str())).collect();
+    for (i, p) in list.packets.iter().enumerate() {
+        for u in unions.iter().filter(|u| u.name.starts_with(&p.name)) {
+            if taken.contains(&u.name.as_str()) {
+                diags.push(Diagnostic::new(
+                    format!("the union type `{}` has the same name as a packet or category", u.name),
+                    list.packets[i].span,
+                ));
+            }
+        }
+    }
+    if !diags.is_empty() {
+        return Err(diags);
+    }
+    Ok(Module { packets, constants: consts.constants, categories: consts.categories, unions })
 }
 
 fn packet_order(list: &PacketExprList, by_name: &HashMap<String, usize>) -> Result<Vec<usize>, Vec<Diagnostic>> {
@@ -128,15 +155,29 @@ fn packet_order(list: &PacketExprList, by_name: &HashMap<String, usize>) -> Resu
         }
         state[i] = 1;
         for item in &list.packets[i].items {
-            if let PacketItem::Field(f) = item
-                && let TypeNode::Packet(name) = &f.expr
-            {
-                match by_name.get(name) {
-                        Some(j) => visit(*j, list, by_name, state, order, diags),
-                        None => diags.push(Diagnostic::new(format!("unknown type `{}`", name), f.span).with_note(
-                            "built-in types are uint8..uint64, int8..int64, uN/iN, float32, float64, macaddress, datetime, bytes",
-                        )),
+            let mut refs = Vec::new();
+            match item {
+                PacketItem::Field(f) => {
+                    if let TypeNode::Packet(name) = &f.expr {
+                        refs.push((name, f.span));
                     }
+                }
+                PacketItem::Switch(sw) => {
+                    for a in &sw.arms {
+                        if let Some((TypeNode::Packet(name), ..)) = &a.ty {
+                            refs.push((name, a.span));
+                        }
+                    }
+                }
+                _ => {}
+            }
+            for (name, span) in refs {
+                match by_name.get(name) {
+                    Some(j) => visit(*j, list, by_name, state, order, diags),
+                    None => diags.push(Diagnostic::new(format!("unknown type `{}`", name), span).with_note(
+                        "built-in types are uint8..uint64, int8..int64, uN/iN, float32, float64, macaddress, datetime, bytes",
+                    )),
+                }
             }
         }
         state[i] = 2;

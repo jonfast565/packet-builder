@@ -1,0 +1,251 @@
+{
+  "spec": "unions.packet",
+  "cases": [
+    {
+      "name": "text arm",
+      "packet": "Message",
+      "hex": "01 0003 616263 ff",
+      "expect": {
+        "kind": 1,
+        "length": 3,
+        "body": {
+          "kind": "text",
+          "value": "616263"
+        },
+        "trailer": 255
+      }
+    },
+    {
+      "name": "integer arm",
+      "packet": "Message",
+      "hex": "02 0004 00000007 ff",
+      "expect": {
+        "body": {
+          "kind": "number",
+          "value": 7
+        }
+      }
+    },
+    {
+      "name": "extra bytes in the window are skipped",
+      "packet": "Message",
+      "hex": "02 0006 00000007 aaaa ff",
+      "expect": {
+        "body": {
+          "kind": "number",
+          "value": 7
+        },
+        "trailer": 255
+      },
+      "encoded": "02 0004 00000007 ff"
+    },
+    {
+      "name": "packet arm",
+      "packet": "Message",
+      "hex": "03 0002 0102 ff",
+      "expect": {
+        "body": {
+          "kind": "pair",
+          "value": {
+            "a": 1,
+            "b": 2
+          }
+        }
+      }
+    },
+    {
+      "name": "empty arm",
+      "packet": "Message",
+      "hex": "04 0000 ff",
+      "expect": {
+        "body": {
+          "kind": "ping",
+          "value": null
+        }
+      }
+    },
+    {
+      "name": "default arm",
+      "packet": "Message",
+      "hex": "09 0002 abcd ff",
+      "expect": {
+        "body": {
+          "kind": "other",
+          "value": "abcd"
+        }
+      }
+    },
+    {
+      "name": "window past the end of the input",
+      "packet": "Message",
+      "hex": "02 0010 00000007 ff",
+      "error_kind": "incomplete",
+      "error_path": "Message.body"
+    },
+    {
+      "name": "arm runs past its window",
+      "packet": "Message",
+      "hex": "02 0002 0000 ff",
+      "error_kind": "invalid",
+      "error_path": "Message.body"
+    },
+    {
+      "name": "arm runs past a window that ends with the input",
+      "packet": "Message",
+      "hex": "02 0002 0000",
+      "error_kind": "invalid",
+      "error_path": "Message.body"
+    },
+    {
+      "name": "selector must pick the arm when encoding",
+      "packet": "Message",
+      "hex": "01 0003 616263 ff",
+      "set": {
+        "kind": 2
+      },
+      "encode_error_kind": "mismatch",
+      "encode_error_path": "Message.body"
+    },
+    {
+      "name": "default arm cannot take a listed value",
+      "packet": "Message",
+      "hex": "09 0002 abcd ff",
+      "set": {
+        "kind": 1
+      },
+      "encode_error_kind": "mismatch",
+      "encode_error_path": "Message.body"
+    },
+    {
+      "name": "strict union, first arm",
+      "packet": "Strict",
+      "hex": "01 07",
+      "expect": {
+        "value": {
+          "kind": "small",
+          "value": 7
+        }
+      }
+    },
+    {
+      "name": "strict union, second arm",
+      "packet": "Strict",
+      "hex": "02 0102",
+      "expect": {
+        "value": {
+          "kind": "big",
+          "value": 258
+        }
+      }
+    },
+    {
+      "name": "strict union, unknown tag",
+      "packet": "Strict",
+      "hex": "03 00",
+      "error_kind": "invalid",
+      "error_path": "Strict.value"
+    },
+    {
+      "name": "selector expression",
+      "packet": "Composite",
+      "hex": "01 03 0a0b",
+      "expect": {
+        "body": {
+          "kind": "ready",
+          "value": {
+            "a": 10,
+            "b": 11
+          }
+        }
+      }
+    },
+    {
+      "name": "several values for one arm",
+      "packet": "Composite",
+      "hex": "02 02 aabb",
+      "expect": {
+        "body": {
+          "kind": "data",
+          "value": "aabb"
+        }
+      }
+    },
+    {
+      "name": "selector expression default",
+      "packet": "Composite",
+      "hex": "07 07 ccdd",
+      "expect": {
+        "body": {
+          "kind": "rest",
+          "value": "ccdd"
+        }
+      }
+    },
+    {
+      "name": "array that fills its window",
+      "packet": "Windowed",
+      "hex": "04 0102 0304 616263 ff",
+      "expect": {
+        "items": [
+          {
+            "a": 1,
+            "b": 2
+          },
+          {
+            "a": 3,
+            "b": 4
+          }
+        ],
+        "label": "616263",
+        "tail": 255
+      }
+    },
+    {
+      "name": "empty window",
+      "packet": "Windowed",
+      "hex": "00 616263 ff",
+      "expect": {
+        "items": []
+      }
+    },
+    {
+      "name": "exact window with bytes left over",
+      "packet": "Exactly",
+      "hex": "0001 00",
+      "error_kind": "invalid",
+      "error_path": "Exactly.v"
+    },
+    {
+      "name": "padded window",
+      "packet": "Padded",
+      "hex": "0102 aaaa 07",
+      "expect": {
+        "v": 258,
+        "w": 7
+      },
+      "encoded": "0102 0000 07"
+    },
+    {
+      "name": "content larger than its window",
+      "packet": "Small",
+      "hex": "02 aabb",
+      "set": {
+        "n": 1
+      },
+      "encode_error_kind": "range",
+      "encode_error_path": "Small.data"
+    },
+    {
+      "name": "open-ended packet in a window",
+      "packet": "Framed",
+      "hex": "02 aabb 07",
+      "expect": {
+        "len": 2,
+        "inner": {
+          "items": "aabb"
+        },
+        "after": 7
+      }
+    }
+  ]
+}

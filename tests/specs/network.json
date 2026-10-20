@@ -2,57 +2,125 @@
   "spec": "../../examples/network.packet",
   "cases": [
     {
-      "name": "IPv4 header (Wikipedia checksum example)",
+      "name": "IPv4 carrying a UDP DNS query",
       "packet": "Ipv4",
-      "hex": "45000073000040004011b861c0a80001c0a800c7",
+      "hex": "45000028000040004011b8acc0a80001c0a800c7cf080035001400001a2b01000001000000000000",
       "expect": {
         "version": 4,
         "ihl": 5,
         "dscp": 0,
         "ecn": 0,
-        "total_length": 115,
+        "total_length": 40,
         "identification": 0,
         "dont_fragment": 1,
         "more_fragments": 0,
         "fragment_offset": 0,
         "ttl": 64,
         "protocol": 17,
-        "checksum": 47201,
+        "checksum": 47276,
         "source": "c0a80001",
         "destination": "c0a800c7",
         "options": "",
+        "payload": {
+          "kind": "udp",
+          "value": {
+            "source_port": 53000,
+            "destination_port": 53,
+            "length": 20,
+            "checksum": 0,
+            "payload": "1a2b01000001000000000000"
+          }
+        },
         "header_length": 20,
-        "payload_length": 95
+        "payload_length": 20
+      }
+    },
+    {
+      "name": "IPv4 carrying a TCP SYN",
+      "packet": "Ipv4",
+      "hex": "4500002c000040004006b8b3c0a80001c0a800c7c001005012345678000000006002faf01c460000020405b4",
+      "expect": {
+        "version": 4,
+        "ihl": 5,
+        "dscp": 0,
+        "ecn": 0,
+        "total_length": 44,
+        "identification": 0,
+        "dont_fragment": 1,
+        "more_fragments": 0,
+        "fragment_offset": 0,
+        "ttl": 64,
+        "protocol": 6,
+        "checksum": 47283,
+        "source": "c0a80001",
+        "destination": "c0a800c7",
+        "options": "",
+        "payload": {
+          "kind": "tcp",
+          "value": {
+            "source_port": 49153,
+            "destination_port": 80,
+            "sequence": 305419896,
+            "acknowledgment": 0,
+            "data_offset": 6,
+            "ns": 0,
+            "cwr": 0,
+            "ece": 0,
+            "urg": 0,
+            "ack": 0,
+            "psh": 0,
+            "rst": 0,
+            "syn": 1,
+            "fin": 0,
+            "window": 64240,
+            "checksum": 7238,
+            "urgent_pointer": 0,
+            "options": "020405b4",
+            "payload": ""
+          }
+        },
+        "header_length": 20,
+        "payload_length": 24
       }
     },
     {
       "name": "IPv4 fragment with an option and odd bit fields",
       "packet": "Ipv4",
-      "hex": "46b90020beef20b903062e700a0000010a00000294040000",
+      "hex": "46b90020beef20b903062e700a0000010a000002940400000102030405060708",
       "expect": {
         "version": 4,
         "ihl": 6,
         "dscp": 46,
         "ecn": 1,
+        "total_length": 32,
+        "identification": 48879,
         "dont_fragment": 0,
         "more_fragments": 1,
         "fragment_offset": 185,
+        "ttl": 3,
+        "protocol": 6,
+        "checksum": 11888,
+        "source": "0a000001",
+        "destination": "0a000002",
         "options": "94040000",
+        "payload": {
+          "kind": "other",
+          "value": "0102030405060708"
+        },
         "header_length": 24,
-        "payload_length": 8,
-        "checksum": 11888
+        "payload_length": 8
       }
     },
     {
       "name": "IPv4 with ihl < 5 is rejected",
       "packet": "Ipv4",
-      "hex": "44000073000040004011b861c0a80001c0a800c7",
+      "hex": "44000028000040004011b8acc0a80001c0a800c7cf080035001400001a2b01000001000000000000",
       "error": true
     },
     {
       "name": "IPv4 13-bit fragment offset overflow on encode",
       "packet": "Ipv4",
-      "hex": "45000073000040004011b861c0a80001c0a800c7",
+      "hex": "45000028000040004011b8acc0a80001c0a800c7cf080035001400001a2b01000001000000000000",
       "set": {
         "fragment_offset": 8192
       },
@@ -61,7 +129,7 @@
     {
       "name": "IPv4 4-bit version overflow on encode",
       "packet": "Ipv4",
-      "hex": "45000073000040004011b861c0a80001c0a800c7",
+      "hex": "45000028000040004011b8acc0a80001c0a800c7cf080035001400001a2b01000001000000000000",
       "set": {
         "version": 16
       },
@@ -87,7 +155,10 @@
         "syn": 1,
         "fin": 0,
         "window": 64240,
-        "options": "020405b4"
+        "checksum": 7238,
+        "urgent_pointer": 0,
+        "options": "020405b4",
+        "payload": ""
       }
     },
     {
@@ -95,12 +166,25 @@
       "packet": "Tcp",
       "hex": "0050c001abcdef01123456795112ffff00000000",
       "expect": {
+        "source_port": 80,
+        "destination_port": 49153,
+        "sequence": 2882400001,
+        "acknowledgment": 305419897,
         "data_offset": 5,
         "ns": 1,
+        "cwr": 0,
+        "ece": 0,
+        "urg": 0,
         "ack": 1,
+        "psh": 0,
+        "rst": 0,
         "syn": 1,
         "fin": 0,
-        "options": ""
+        "window": 65535,
+        "checksum": 0,
+        "urgent_pointer": 0,
+        "options": "",
+        "payload": ""
       }
     },
     {
@@ -111,6 +195,7 @@
         "source_port": 53000,
         "destination_port": 53,
         "length": 20,
+        "checksum": 0,
         "payload": "1a2b01000001000000000000"
       }
     },
@@ -136,7 +221,10 @@
         "ad": 0,
         "cd": 0,
         "rcode": 0,
-        "question_count": 1
+        "question_count": 1,
+        "answer_count": 0,
+        "authority_count": 0,
+        "additional_count": 0
       }
     },
     {
@@ -144,11 +232,21 @@
       "packet": "DnsHeader",
       "hex": "1a2b81830001000000010000",
       "expect": {
+        "id": 6699,
         "qr": 1,
+        "opcode": 0,
+        "aa": 0,
+        "tc": 0,
         "rd": 1,
         "ra": 1,
+        "z": 0,
+        "ad": 0,
+        "cd": 0,
         "rcode": 3,
-        "authority_count": 1
+        "question_count": 1,
+        "answer_count": 0,
+        "authority_count": 1,
+        "additional_count": 0
       }
     },
     {
@@ -163,30 +261,78 @@
     {
       "name": "Ethernet II frame",
       "packet": "Ethernet",
-      "hex": "ffffffffffff0242ac110002080045000073000040004011b861c0a80001c0a800c7",
+      "hex": "ffffffffffff0242ac110002080045000028000040004011b8acc0a80001c0a800c7cf080035001400001a2b01000001000000000000",
       "expect": {
         "destination": "ffffffffffff",
         "source": "0242ac110002",
         "ethertype": 2048,
-        "payload": "45000073000040004011b861c0a80001c0a800c7"
+        "payload": {
+          "kind": "ipv4",
+          "value": {
+            "version": 4,
+            "ihl": 5,
+            "dscp": 0,
+            "ecn": 0,
+            "total_length": 40,
+            "identification": 0,
+            "dont_fragment": 1,
+            "more_fragments": 0,
+            "fragment_offset": 0,
+            "ttl": 64,
+            "protocol": 17,
+            "checksum": 47276,
+            "source": "c0a80001",
+            "destination": "c0a800c7",
+            "options": "",
+            "payload": {
+              "kind": "udp",
+              "value": {
+                "source_port": 53000,
+                "destination_port": 53,
+                "length": 20,
+                "checksum": 0,
+                "payload": "1a2b01000001000000000000"
+              }
+            },
+            "header_length": 20,
+            "payload_length": 20
+          }
+        }
       }
     },
     {
       "name": "IPv4 header checksum mismatch",
       "packet": "Ipv4",
-      "hex": "46b90020beef20b9030600000a0000010a00000294040000",
+      "hex": "46b90020beef20b9030600000a0000010a000002940400000102030405060708",
       "error_kind": "mismatch",
       "error_path": "Ipv4.checksum"
     },
     {
       "name": "IPv4 ihl and checksum are computed when encoding",
       "packet": "Ipv4",
-      "hex": "46b90020beef20b903062e700a0000010a00000294040000",
+      "hex": "46b90020beef20b903062e700a0000010a000002940400000102030405060708",
       "set": {
         "ihl": 5,
         "checksum": 0
       },
-      "encoded": "46b90020beef20b903062e700a0000010a00000294040000"
+      "encoded": "46b90020beef20b903062e700a0000010a000002940400000102030405060708"
+    },
+    {
+      "name": "IPv4 total length past the end",
+      "packet": "Ipv4",
+      "hex": "45000028000040004011b8acc0a80001c0a800c7cf080035001400001a2b010000010000",
+      "error_kind": "incomplete",
+      "error_path": "Ipv4.payload"
+    },
+    {
+      "name": "IPv4 total length and checksum are computed when encoding",
+      "packet": "Ipv4",
+      "hex": "45000028000040004011b8acc0a80001c0a800c7cf080035001400001a2b01000001000000000000",
+      "set": {
+        "total_length": 7,
+        "checksum": 1
+      },
+      "encoded": "45000028000040004011b8acc0a80001c0a800c7cf080035001400001a2b01000001000000000000"
     }
   ]
 }

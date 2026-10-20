@@ -2,9 +2,64 @@
 
 use super::decode::Decoder;
 use super::encode::Encoder;
-use super::naming::{default_value, ident, member_type, owns_memory};
+use super::naming::{default_value, ident, member_type, owns_memory, scalar_type};
 use crate::generators::common::{Out, StepEmitter, member_category};
-use crate::ir::{Packet, ValueType};
+use crate::ir::{Arm, Packet, Union, ValueType};
+
+/// The Zig type an arm holds (`void` for an empty arm).
+fn arm_type(arm: &Arm) -> String {
+    match (&arm.ty, arm.is_bytes()) {
+        (None, _) => "void".into(),
+        (Some(_), true) => "[]const u8".into(),
+        (Some(t), false) => scalar_type(t),
+    }
+}
+
+/// The value an arm starts with.
+fn arm_default(arm: &Arm) -> String {
+    match (&arm.ty, arm.is_bytes()) {
+        (None, _) => "{}".into(),
+        (Some(_), true) => "&.{}".into(),
+        (Some(ValueType::Packet(_)), false) => ".{}".into(),
+        (Some(_), false) => "0".into(),
+    }
+}
+
+/// A tagged union with a `deinit` for the arms that own memory.
+pub fn emit_union(out: &mut Out, u: &Union) {
+    out.open(format!("pub const {} = union(enum) {{", u.name));
+    for arm in &u.arms {
+        out.line(format!("{}: {},", ident(&arm.name), arm_type(arm)));
+    }
+    out.line("");
+    let first = &u.arms[0];
+    out.line(format!("pub const pb_default: {} = .{{ .{} = {} }};", u.name, ident(&first.name), arm_default(first)));
+    out.line("");
+    out.line("/// Free memory owned by a decoded value.");
+    out.open(format!("pub fn deinit(self: *{}, allocator: std.mem.Allocator) void {{", u.name));
+    let owning: Vec<&Arm> =
+        u.arms.iter().filter(|a| a.is_bytes() || matches!(a.ty, Some(ValueType::Packet(_)))).collect();
+    if owning.is_empty() {
+        out.line("_ = allocator;");
+    } else {
+        out.open("switch (self.*) {");
+        for arm in &owning {
+            if arm.is_bytes() {
+                out.line(format!(".{} => |pb_v| allocator.free(pb_v),", ident(&arm.name)));
+            } else {
+                out.line(format!(".{} => |*pb_v| pb_v.deinit(allocator),", ident(&arm.name)));
+            }
+        }
+        if owning.len() < u.arms.len() {
+            out.line("else => {},");
+        }
+        out.close("}");
+    }
+    out.line("self.* = pb_default;");
+    out.close("}");
+    out.close("};");
+    out.line("");
+}
 
 pub fn emit_packet(out: &mut Out, p: &Packet) {
     let name = &p.name;
@@ -38,9 +93,10 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
             _ => out.line(format!("self.{}.deinit(allocator);", id)),
         }
         let empty = match (&m.array, &m.ty) {
-            (Some(_), _) => "&.{}",
-            (None, ValueType::Str) => "\"\"",
-            _ => ".{}",
+            (Some(_), _) => "&.{}".to_string(),
+            (None, ValueType::Str) => "\"\"".to_string(),
+            (None, ValueType::Union(u)) => format!("{}.pb_default", u),
+            _ => ".{}".to_string(),
         };
         out.line(format!("self.{} = {};", id, empty));
     }
@@ -60,7 +116,8 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     body.push();
     Decoder::new(p).emit_steps(&mut body);
     out.open(format!("pub fn decodeFrom(allocator: std.mem.Allocator, pb_r: *PbReader) PbError!{} {{", name));
-    if !uses(&body.buf, "allocator") {
+    // The errdefer below uses the allocator too.
+    if !uses(&body.buf, "allocator") && !(allocates && uses(&body.buf, "p")) {
         out.line("_ = allocator;");
     }
     if uses(&body.buf, "p") {

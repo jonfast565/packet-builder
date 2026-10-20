@@ -89,6 +89,7 @@
     {
         private readonly byte[] data;
         private long limit; // end of the readable data in bits (a window inside data)
+        private int windows; // windows open
 
         public PbReader(byte[] data)
         {
@@ -102,7 +103,7 @@
         /// the top level, invalid data inside a window.</summary>
         private PbException Short(long bits, string what)
         {
-            if (limit == (long)data.Length * 8)
+            if (windows == 0)
                 return Error(PbErrorKind.Incomplete,
                     $"unexpected end of data: {what} needs {bits} more bit(s), {RemainingBits} left", bits - RemainingBits);
             return Error(PbErrorKind.Invalid, $"{what} needs {bits} bit(s) but its window has {RemainingBits} left");
@@ -120,14 +121,19 @@
             if (n > RemainingBits / 8) throw Short(n * 8, "the window");
             long saved = limit;
             limit = pos + n * 8;
+            windows++;
             return saved;
         }
 
-        /// <summary>Skip what is left of the current window and restore saved.</summary>
-        public void PopLimit(long saved)
+        /// <summary>Skip what is left of the current window and restore saved;
+        /// with exact, bytes left over are an error.</summary>
+        public void PopLimit(long saved, bool exact)
         {
+            if (exact && RemainingBits > 0)
+                throw Error(PbErrorKind.Invalid, $"{RemainingBits} bit(s) left over in a field that must fill its size");
             pos = limit;
             limit = saved;
+            windows--;
         }
 
         public ulong ReadBits(int width)
@@ -255,6 +261,18 @@
         {
             for (; bits > 32; bits -= 32) WriteBits(0, 32);
             if (bits > 0) WriteBits(0, (int)bits);
+        }
+
+        /// <summary>End a window of size bytes that started at bit start: the
+        /// content must fit (and fill it when exact); the rest is zero-filled.</summary>
+        public void EndWindow(long start, long size, bool exact)
+        {
+            long used = pos - start;
+            if (size < 0 || used > size * 8)
+                throw Error(PbErrorKind.Range, $"the content takes {used} bit(s), more than its size of {size} byte(s)");
+            if (exact && used != size * 8)
+                throw Error(PbErrorKind.Mismatch, $"the content takes {used} bit(s) but must fill its {size} byte(s)");
+            WriteZeroBits(size * 8 - used);
         }
 
         /// <summary>Overwrite nbytes bytes at bit position at (byte aligned).</summary>

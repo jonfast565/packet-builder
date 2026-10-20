@@ -36,17 +36,22 @@ const P3Type u7 {
   heartbeat = 0x26  "keep-alive; answer with an ACK",
 }
 
+// Every packet, whatever its type: the type picks how the body is read.
 packet P3Packet be {
   sync uint8 == P3_SYNC,
-  crc uint16 = crc16_arc(length..data),  // everything from `length` up to the stop byte
-  length uint16 = len(data) + P3_LENGTH_OVERHEAD,
+  crc uint16 = crc16_arc(length..body),  // everything from `length` up to the stop byte
+  length uint16 = sizeof(tx_seq..body),  // the body + P3_LENGTH_OVERHEAD
   tx_seq uint8,             // P3_SEQ_FIRST..P3_SEQ_LAST
   rx_seq uint8,             // last sequence number received from the other side
   kind bitfield uint8 {
     always_set u1 == 1,     // the high bit of the type byte is always 1
     type u7 : P3Type strict
   },
-  data bytes[length - P3_LENGTH_OVERHEAD],
+  body switch type {
+    P3Type.data => data P3Message,
+    P3Type.init => init P3Init,
+    _ => control bytes[]    // SS, SSR, ACK, NAK, HEARTBEAT: usually empty
+  } size length - P3_LENGTH_OVERHEAD,
   stop uint8 == P3_STOP
 }
 
@@ -55,22 +60,10 @@ packet P3Packet be {
 // ---------------------------------------------------------------------
 const P3_TOKEN_LENGTH uint16 = 2 "every DATA packet starts with a two-character token"
 
-packet P3DataPacket be {
-  sync uint8 == P3_SYNC,
-  crc uint16 = crc16_arc(length..atoms),
-  length uint16 = len(atoms) + P3_LENGTH_OVERHEAD + P3_TOKEN_LENGTH,
-  tx_seq uint8,
-  rx_seq uint8,
-  kind bitfield uint8 { always_set u1 == 1, type u7 : P3Type strict },
-  token char[P3_TOKEN_LENGTH],  // e.g. "Dd" (login), "SD" (go ahead after INIT), "AA" (chat)
-  atoms bytes[length - P3_LENGTH_OVERHEAD - P3_TOKEN_LENGTH],  // FDO91 atom stream; see FdoStream
-  stop uint8 == P3_STOP
-}
-
-// The data of a DATA packet on its own.
+// The body of a DATA packet.
 packet P3Message be {
-  token char[P3_TOKEN_LENGTH],
-  atoms bytes[]
+  token char[P3_TOKEN_LENGTH],  // e.g. "Dd" (login), "SD" (go ahead after INIT), "AA" (chat)
+  atoms bytes[]                 // FDO91 atom stream; see FdoStream
 }
 
 // ---------------------------------------------------------------------
@@ -81,7 +74,7 @@ const Platform uint8 {
   macintosh = 0x0c,
 }
 
-const P3_INIT_LENGTH uint16 = 55 "P3InitPacket.length for the 52-byte INIT data"
+const P3_INIT_LENGTH uint16 = 55 "P3Packet.length of an INIT packet with the 52-byte INIT data"
 
 // The 52-byte form seen in a captured AOL client session. Field names
 // follow notaol. Only platform, client version, session_flags, num_colors
@@ -120,18 +113,6 @@ packet P3Init be {
   language_4 uint16,
   unknown2 uint16,
   speed uint16
-}
-
-// A complete INIT packet in one pass.
-packet P3InitPacket be {
-  sync uint8 == P3_SYNC,
-  crc uint16 = crc16_arc(length..init),
-  length uint16 == P3_INIT_LENGTH,
-  tx_seq uint8,
-  rx_seq uint8,
-  kind bitfield uint8 { always_set u1 == 1, type u7 : P3Type strict },
-  init P3Init,
-  stop uint8 == P3_STOP
 }
 
 // ---------------------------------------------------------------------

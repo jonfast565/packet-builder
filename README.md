@@ -7,7 +7,7 @@ already uses, and packet-builder generates a decoder and encoder for
 | language | output | toolchain used by the tests |
 |----------|--------|-----------------------------|
 | C        | single-header library (`<package>.h`, C99) | `cc` with ASan + UBSan |
-| Rust     | one module (`<package>.rs`), no dependencies | `rustc` |
+| Rust     | one module (`<package>.rs`, edition 2024), no dependencies | `rustc --edition 2024` |
 | Go       | one file (`<package>.go`), standard library only (Go 1.18+) | `go vet`, `gofmt`, `go build` |
 | Python   | one module (`<package>.py`), standard library only | `python3` |
 | C#       | one file (`<package>.cs`), base class library only | `dotnet` / `csc` |
@@ -251,6 +251,69 @@ NUL-terminated `char *` plus a `_len` member). Lengths are
 validated before anything is allocated: a negative length, or one larger than
 the remaining input, is a decode error. When encoding, an array whose length
 does not match its length expression is an encode error.
+
+### Sized fields
+
+`size n` after a field gives it a window of exactly `n` bytes (any
+expression over earlier fields):
+
+```
+packet Tlv be {
+  type uint16,
+  length uint16 = sizeof(value),
+  value Item[] size length,      // as many Items as fit in `length` bytes
+  next uint8                     // a field may follow
+}
+```
+
+* Decoding cannot read past the window, and whatever the field leaves
+  unread is skipped, so a newer peer that appends fields does not break an
+  older decoder. `size n exact` makes leftover bytes an `invalid` error.
+* Inside a window, `[]` arrays, `bytes[]` and packets whose last field is
+  `[]` run to the end of the window, so they need not be the last field.
+* Encoding pads the field with zeros up to `n` bytes, and fails with a
+  `range` error if it does not fit (or with `mismatch` if `exact` and it
+  does not fill the window). When `n` is derived from the encoded bytes
+  (`length = sizeof(value)`), the window is whatever the field takes.
+* `sizeof(f)` of a sized field measures the whole window.
+
+### Tagged unions
+
+A `switch` field holds one of several arms, picked by a selector:
+
+```
+packet Message be {
+  kind uint8 : Kind,
+  length uint16 = sizeof(body),
+  body switch kind {
+    Kind.text => text bytes[],             // an arm with bytes
+    Kind.number, Kind.count => number uint32,  // several values, one arm
+    Kind.pair => pair Pair,                // an arm with a packet
+    Kind.ping => ping,                     // an empty arm
+    _ => other bytes[]                     // any other value (optional)
+  } size length
+}
+```
+
+* The selector is any integer expression over earlier fields
+  (`family << 16 | subtype`); arm values are constant expressions.
+* Arms hold a packet, an integer, bytes, or nothing; put lists and strings
+  in a packet. Without a `_` arm, a value no arm lists is an `invalid` error.
+* An arm may run to the end of the input (or of the union's window), like
+  `bytes[]`.
+* Encoding writes the arm the value holds, after checking that the
+  selector picks it (`mismatch` otherwise).
+
+Each union becomes a type named after the packet and field (`MessageBody`):
+
+| language | type | example |
+|----------|------|---------|
+| C | struct with `int kind` and a `union u`; kinds `MESSAGEBODY_TEXT`, ... | `m.body.kind == MESSAGEBODY_PAIR`, `m.body.u.pair.a`; bytes arms are `{ uint8_t *data; size_t len; }` |
+| Rust | `enum MessageBody { Text(Vec<u8>), Number(u32), Pair(Pair), Ping, Other(Vec<u8>) }` | `if let MessageBody::Pair(p) = &m.body` |
+| Go | struct with `Kind MessageBodyKind` and one field per arm (packets by pointer) | `m.Body.Kind == MessageBodyPair`, `m.Body.Pair.A` |
+| Python | dataclass with `kind` (the arm's name) and `value` | `m.body.kind == "pair"`, `m.body.value.a`; build with `MessageBody("pair", Pair(a=1, b=2))` |
+| C# | abstract class with a sealed subclass per arm holding `Value` | `if (m.Body is MessageBody.Pair p) ... p.Value.A` |
+| Zig | `union(enum)` | `switch (m.body) { .pair => |p| ..., else => {} }` |
 
 ### Calculated fields
 

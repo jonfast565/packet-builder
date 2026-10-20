@@ -3,7 +3,7 @@
 //! template that dispatches each [`Step`] to the matching hook.
 
 use super::out::Out;
-use crate::ir::{BitPart, Check, Codec, Count, Mark, Member, Packet, Step, StrMode, TExpr, ValueType};
+use crate::ir::{Arm, BitPart, Check, Codec, Count, Mark, Member, Packet, Step, StrMode, TExpr, ValueType};
 
 /// One hook per kind of wire step.
 pub trait StepEmitter {
@@ -61,14 +61,27 @@ pub trait StepEmitter {
     /// patch it over the placeholder written at `at`.
     fn write_derived(&self, _out: &mut Out, _m: &Member, _codec: &Codec, _at: Option<Mark>) {}
 
+    /// A tagged union: decode the arm `selector` picks, or encode the arm the
+    /// member holds (checking that `selector` picks it).
+    fn switch(&self, out: &mut Out, member: &Member, selector: &TExpr, arms: &[Arm]);
+
+    /// Start a window of `size` bytes (`pb_win<id>` names its state). Encoders
+    /// get None when the size is only known after encoding the body.
+    fn open_window(&self, out: &mut Out, id: usize, size: Option<&TExpr>);
+
+    /// End window `id`: decoders skip what is left (an error if `exact`);
+    /// encoders check the size and pad to it.
+    fn close_window(&self, out: &mut Out, id: usize, sized: bool, exact: bool);
+
     /// The wire name of a step's field (`_` for padding), if it has one.
     fn step_field<'s>(&'s self, step: &'s Step) -> Option<&'s str> {
         match step {
             Step::Field { member: Some(mi), .. } => Some(&self.packet().members[*mi].name),
             Step::Field { member: None, .. } => Some("_"),
             Step::Bitfield { name, .. } => Some(name),
+            Step::Switch { member, .. } => Some(&self.packet().members[*member].name),
             Step::Assert { .. } => Some(""),
-            Step::Calc { .. } | Step::Align { .. } => None,
+            Step::Calc { .. } | Step::Align { .. } | Step::OpenWindow { .. } | Step::CloseWindow { .. } => None,
         }
     }
 
@@ -135,6 +148,8 @@ pub trait StepEmitter {
             Step::Bitfield { container, container_width, parts, .. } => {
                 self.bitfield(out, container, *container_width, parts)
             }
+            Step::Switch { member, selector, arms } => self.switch(out, &members[*member], selector, arms),
+            Step::OpenWindow { .. } | Step::CloseWindow { .. } => {}
         }
         if !self.encoding() {
             for c in &checks {
@@ -153,7 +168,27 @@ pub trait StepEmitter {
             if marks.contains(&Mark::Before(i)) {
                 self.mark(out, Mark::Before(i));
             }
-            self.emit_step(out, step);
+            match step {
+                Step::OpenWindow { size, .. } => {
+                    // Errors about the window name the field inside it.
+                    if let Some(field) = p.steps.get(i + 1).and_then(|s| self.step_field(s)) {
+                        self.locate(out, field);
+                    }
+                    let known = !(self.encoding() && p.depends_on_wire(size));
+                    self.open_window(out, i, known.then_some(size));
+                }
+                Step::CloseWindow { open, exact } => {
+                    if let Some(field) = p.steps.get(open + 1).and_then(|s| self.step_field(s)) {
+                        self.locate(out, field);
+                    }
+                    let sized = match &p.steps[*open] {
+                        Step::OpenWindow { size, .. } => !(self.encoding() && p.depends_on_wire(size)),
+                        _ => false,
+                    };
+                    self.close_window(out, *open, sized, *exact);
+                }
+                _ => self.emit_step(out, step),
+            }
             if marks.contains(&Mark::After(i)) {
                 self.mark(out, Mark::After(i));
             }

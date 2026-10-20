@@ -98,12 +98,13 @@ pub struct PbReader<'a> {
     data: &'a [u8],
     pos: usize,   // in bits
     limit: usize, // end of the readable data in bits (a window inside `data`)
+    windows: usize, // windows open
     trace: PbTrace,
 }
 
 impl<'a> PbReader<'a> {
     pub fn new(data: &'a [u8]) -> Self {
-        PbReader { data, pos: 0, limit: data.len() * 8, trace: PbTrace::default() }
+        PbReader { data, pos: 0, limit: data.len() * 8, windows: 0, trace: PbTrace::default() }
     }
 
     pub fn position_bits(&self) -> usize {
@@ -116,7 +117,7 @@ impl<'a> PbReader<'a> {
 
     /// Whether reads stop at the real end of the input (not at a window).
     fn at_top(&self) -> bool {
-        self.limit == self.data.len() * 8
+        self.windows == 0
     }
 
     pub fn error(&self, kind: PbErrorKind, message: String) -> PbError {
@@ -176,13 +177,23 @@ impl<'a> PbReader<'a> {
         }
         let saved = self.limit;
         self.limit = self.pos + bits as usize;
+        self.windows += 1;
         Ok(saved)
     }
 
-    /// Skip what is left of the current window and restore `saved`.
-    pub fn pop_limit(&mut self, saved: usize) {
+    /// Skip what is left of the current window and restore `saved`; with
+    /// `exact`, bytes left over are an error.
+    pub fn pop_limit(&mut self, saved: usize, exact: bool) -> Result<(), PbError> {
+        if exact && self.remaining_bits() > 0 {
+            return Err(self.error(
+                PbErrorKind::Invalid,
+                format!("{} bit(s) left over in a field that must fill its size", self.remaining_bits()),
+            ));
+        }
         self.pos = self.limit;
         self.limit = saved;
+        self.windows -= 1;
+        Ok(())
     }
 
     pub fn read_bits(&mut self, width: u32) -> Result<u64, PbError> {
@@ -345,6 +356,27 @@ impl PbWriter {
 
     pub fn finish(self) -> Vec<u8> {
         self.buf
+    }
+
+    /// End a window of `size` bytes that started at bit `start`: the content
+    /// must fit (and fill it when `exact`); the rest is zero-filled.
+    pub fn end_window(&mut self, start: usize, size: i64, exact: bool) -> Result<(), PbError> {
+        let used = self.pos - start;
+        let room = (size.max(0) as usize).saturating_mul(8);
+        if size < 0 || used > room {
+            return Err(self.error(
+                PbErrorKind::Range,
+                format!("the content takes {} bit(s), more than its size of {} byte(s)", used, size),
+            ));
+        }
+        if exact && used != room {
+            return Err(self.error(
+                PbErrorKind::Mismatch,
+                format!("the content takes {} bit(s) but must fill its {} byte(s)", used, size),
+            ));
+        }
+        self.write_zero_bits(room - used);
+        Ok(())
     }
 
     /// Overwrite `nbytes` bytes at bit position `at` (byte aligned).

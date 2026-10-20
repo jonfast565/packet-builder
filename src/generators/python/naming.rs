@@ -19,7 +19,7 @@ pub fn annotation(m: &Member) -> String {
         ValueType::Int { .. } => "int".to_string(),
         ValueType::Float { .. } => "float".to_string(),
         ValueType::Mac => "bytes".to_string(),
-        ValueType::Packet(n) => n.clone(),
+        ValueType::Packet(n) | ValueType::Union(n) => n.clone(),
         ValueType::Str => "str".to_string(),
     };
     match &m.array {
@@ -30,6 +30,7 @@ pub fn annotation(m: &Member) -> String {
             ValueType::Float { .. } => "float = 0.0".into(),
             ValueType::Mac => "bytes = bytes(6)".into(),
             ValueType::Packet(n) => format!("{} = field(default_factory=lambda: {}())", n, n),
+            ValueType::Union(n) => format!("{} = field(default_factory={}.pb_default)", n, n),
             ValueType::Str => "str = \"\"".into(),
         },
     }

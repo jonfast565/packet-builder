@@ -2,8 +2,9 @@
 
 use super::expr::store_value;
 use super::naming::{CSharp, scalar_type};
+use crate::generators::common::union::{C_LOGIC, arm_test, mismatch_message, uses_selector, variant_name};
 use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mark_var, mask, string_literal};
-use crate::ir::{BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, ValueType};
+use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, ValueType};
 
 fn write_elem(out: &mut Out, codec: &Codec, ty: &ValueType, v: &str) {
     match ty {
@@ -67,6 +68,63 @@ impl StepEmitter for Encoder<'_> {
 
     fn locate(&self, out: &mut Out, field: &str) {
         out.line(format!("pbW.At(\"{}\");", field));
+    }
+
+    fn switch(&self, out: &mut Out, m: &Member, selector: &TExpr, arms: &[Arm]) {
+        let ValueType::Union(u) = &m.ty else { return };
+        out.open("{");
+        if uses_selector(arms) {
+            out.line(format!("long pbSel = {};", self.scope.expr(selector)));
+        }
+        out.line(format!("switch ({})", self.scope.field(m)));
+        out.open("{");
+        for arm in arms {
+            let class = format!("{}.{}", u, variant_name(arm));
+            let bind = if arm.ty.is_some() { "pbV" } else { "_" };
+            out.open(format!("case {} {}:", class, bind));
+            if let Some(test) = arm_test(arm, arms, "pbSel", &C_LOGIC) {
+                out.line(format!(
+                    "if (!{}) throw pbW.Error(PbErrorKind.Mismatch, {});",
+                    test,
+                    string_literal(&mismatch_message(&m.name, arm))
+                ));
+            }
+            match (&arm.ty, &arm.codec, &arm.count) {
+                (Some(_), _, Some(count)) => {
+                    if let Count::Expr(e) = count
+                        && !self.packet().depends_on_wire(e)
+                    {
+                        out.line(format!("pbW.CheckLen(pbV.Value.Length, {});", self.scope.expr(e)));
+                    }
+                    out.line("pbW.WriteBytes(pbV.Value);");
+                }
+                (Some(ty), Some(codec), None) => write_elem(out, codec, ty, "pbV.Value"),
+                _ => {}
+            }
+            out.line("break;");
+            out.pop();
+        }
+        out.open("default:");
+        out.line(format!(
+            "throw pbW.Error(PbErrorKind.Invalid, {});",
+            string_literal(&format!("`{}` holds no known arm", m.name))
+        ));
+        out.pop();
+        out.close("}");
+        out.close("}");
+    }
+
+    fn open_window(&self, out: &mut Out, id: usize, size: Option<&TExpr>) {
+        if let Some(e) = size {
+            out.line(format!("long pb_win{} = pbW.PositionBits;", id));
+            out.line(format!("long pb_wsz{} = {};", id, self.scope.expr(e)));
+        }
+    }
+
+    fn close_window(&self, out: &mut Out, id: usize, sized: bool, exact: bool) {
+        if sized {
+            out.line(format!("pbW.EndWindow(pb_win{}, pb_wsz{}, {});", id, id, exact));
+        }
     }
 
     fn mark(&self, out: &mut Out, mark: Mark) {

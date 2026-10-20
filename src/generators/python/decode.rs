@@ -2,8 +2,9 @@
 
 use super::expr::store_value;
 use super::naming::{Python, float_format, ident};
+use crate::generators::common::union::{PY_LOGIC, arm_test};
 use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mark_var, mask, string_literal};
-use crate::ir::{BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, ValueType};
+use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, ValueType};
 
 fn read_elem(codec: &Codec, ty: &ValueType) -> String {
     let raw = match codec {
@@ -30,6 +31,17 @@ impl<'a> Decoder<'a> {
     pub fn new(packet: &'a Packet) -> Self {
         Decoder { scope: Scope::new(packet, Mode::Decode) }
     }
+
+    /// Expression that decodes the value of `arm`.
+    fn arm_value(&self, arm: &Arm) -> String {
+        match (&arm.ty, &arm.codec, &arm.count) {
+            (None, ..) => "None".into(),
+            (Some(_), _, Some(Count::Expr(e))) => format!("pb_r.read_bytes(pb_r.count({}, 8))", self.scope.expr(e)),
+            (Some(_), _, Some(Count::Remaining)) => "pb_r.read_bytes(pb_r.remaining_bits() // 8)".into(),
+            (Some(ty), Some(codec), None) => read_elem(codec, ty),
+            _ => "None".into(),
+        }
+    }
 }
 
 impl StepEmitter for Decoder<'_> {
@@ -45,6 +57,40 @@ impl StepEmitter for Decoder<'_> {
 
     fn locate(&self, out: &mut Out, field: &str) {
         out.line(format!("pb_r.at(\"{}\")", field));
+    }
+
+    fn switch(&self, out: &mut Out, m: &Member, selector: &TExpr, arms: &[Arm]) {
+        let ValueType::Union(u) = &m.ty else { return };
+        let place = format!("p.{}", ident(&m.name));
+        out.line(format!("pb_sel = {}", self.scope.expr(selector)));
+        let mut first = true;
+        for arm in arms.iter().filter(|a| !a.default) {
+            let test = arm_test(arm, arms, "pb_sel", &PY_LOGIC).unwrap_or_else(|| "True".into());
+            out.open(format!("{} {}:", if first { "if" } else { "elif" }, test));
+            out.line(format!("{} = {}(\"{}\", {})", place, u, arm.name, self.arm_value(arm)));
+            out.pop();
+            first = false;
+        }
+        let default = arms.iter().find(|a| a.default);
+        if !first {
+            out.open("else:");
+        }
+        match default {
+            Some(arm) => out.line(format!("{} = {}(\"{}\", {})", place, u, arm.name, self.arm_value(arm))),
+            None => out.line(format!("raise pb_r.error(PbError.INVALID, \"no arm of `{}` for %d\" % pb_sel)", m.name)),
+        }
+        if !first {
+            out.pop();
+        }
+    }
+
+    fn open_window(&self, out: &mut Out, id: usize, size: Option<&TExpr>) {
+        let size = size.map(|e| self.scope.expr(e)).unwrap_or_else(|| "0".into());
+        out.line(format!("pb_win{} = pb_r.push_limit({})", id, size));
+    }
+
+    fn close_window(&self, out: &mut Out, id: usize, _sized: bool, exact: bool) {
+        out.line(format!("pb_r.pop_limit(pb_win{}, {})", id, if exact { "True" } else { "False" }));
     }
 
     fn mark(&self, out: &mut Out, mark: Mark) {

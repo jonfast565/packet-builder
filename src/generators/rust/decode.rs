@@ -2,8 +2,9 @@
 
 use super::expr::store_value;
 use super::naming::{Rust, ident, scalar_type};
+use crate::generators::common::union::variant_name;
 use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mark_var, mask, string_literal};
-use crate::ir::{BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, ValueType};
+use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, ValueType};
 
 /// Expression that reads one element.
 fn read_elem(codec: &Codec, ty: &ValueType) -> String {
@@ -35,6 +36,22 @@ impl<'a> Decoder<'a> {
     pub fn new(packet: &'a Packet) -> Self {
         Decoder { scope: Scope::new(packet, Mode::Decode) }
     }
+
+    /// Expression that decodes `arm` of union `u`.
+    fn arm_value(&self, u: &str, arm: &Arm) -> String {
+        let v = variant_name(arm);
+        match (&arm.ty, &arm.codec, &arm.count) {
+            (None, ..) => format!("{}::{}", u, v),
+            (Some(_), _, Some(Count::Expr(e))) => {
+                format!("{}::{}(pb_r.read_bytes(pb_r.count({}, 8)?)?)", u, v, self.scope.expr(e))
+            }
+            (Some(_), _, Some(Count::Remaining)) => {
+                format!("{}::{}(pb_r.read_bytes(pb_r.remaining_bits() / 8)?)", u, v)
+            }
+            (Some(ty), Some(codec), None) => format!("{}::{}({})", u, v, read_elem(codec, ty)),
+            _ => format!("{}::{}(Default::default())", u, v),
+        }
+    }
 }
 
 impl StepEmitter for Decoder<'_> {
@@ -52,6 +69,35 @@ impl StepEmitter for Decoder<'_> {
 
     fn locate(&self, out: &mut Out, field: &str) {
         out.line(format!("pb_r.at(\"{}\");", field));
+    }
+
+    fn switch(&self, out: &mut Out, m: &Member, selector: &TExpr, arms: &[Arm]) {
+        let ValueType::Union(u) = &m.ty else { return };
+        out.open("{");
+        out.line(format!("let pb_sel: i64 = {};", self.scope.expr(selector)));
+        out.open(format!("p.{} = match pb_sel {{", ident(&m.name)));
+        for arm in arms.iter().filter(|a| !a.default) {
+            let pat: Vec<String> = arm.values.iter().map(|v| v.to_string()).collect();
+            out.line(format!("{} => {},", pat.join(" | "), self.arm_value(u, arm)));
+        }
+        match arms.iter().find(|a| a.default) {
+            Some(arm) => out.line(format!("_ => {},", self.arm_value(u, arm))),
+            None => out.line(format!(
+                "_ => return Err(pb_r.error(PbErrorKind::Invalid, format!(\"no arm of `{}` for {{}}\", pb_sel))),",
+                m.name
+            )),
+        }
+        out.close("};");
+        out.close("}");
+    }
+
+    fn open_window(&self, out: &mut Out, id: usize, size: Option<&TExpr>) {
+        let size = size.map(|e| self.scope.expr(e)).unwrap_or_else(|| "0".into());
+        out.line(format!("let pb_win{} = pb_r.push_limit({})?;", id, size));
+    }
+
+    fn close_window(&self, out: &mut Out, id: usize, _sized: bool, exact: bool) {
+        out.line(format!("pb_r.pop_limit(pb_win{}, {})?;", id, exact));
     }
 
     fn mark(&self, out: &mut Out, mark: Mark) {

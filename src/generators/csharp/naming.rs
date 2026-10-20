@@ -35,7 +35,7 @@ pub fn scalar_type(ty: &ValueType) -> String {
         ValueType::Float { width: 32 } => "float".into(),
         ValueType::Float { .. } => "double".into(),
         ValueType::Mac => "byte[]".into(),
-        ValueType::Packet(n) => n.clone(),
+        ValueType::Packet(n) | ValueType::Union(n) => n.clone(),
         ValueType::Str => "string".into(),
     }
 }
@@ -52,6 +52,7 @@ pub fn default_value(m: &Member) -> Option<String> {
         (Some(_), ty) => Some(format!("Array.Empty<{}>()", scalar_type(ty))),
         (None, ValueType::Mac) => Some("new byte[6]".into()),
         (None, ValueType::Packet(n)) => Some(format!("new {}()", n)),
+        (None, ValueType::Union(n)) => Some(format!("{}.PbDefault()", n)),
         (None, ValueType::Str) => Some("\"\"".into()),
         _ => magic_literal(m),
     }

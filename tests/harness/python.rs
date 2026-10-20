@@ -18,6 +18,7 @@ fn value_expr(m: &Member, place: &str) -> String {
         ValueType::Mac => format!("hx({})", v),
         ValueType::Packet(n) => format!("dump_{}({})", n, v),
         ValueType::Str => format!("json.dumps({})", v),
+        ValueType::Union(n) => format!("dump_{}({})", n, v),
     };
     match &m.array {
         None => elem(place),
@@ -39,6 +40,23 @@ impl Target for PythonTarget {
         let mut s = String::from("import json\nfrom packets import *\n\n");
         s.push_str("def pb_e(e, pre):\n    return ',' + ','.join('\"%s%s\":%s' % (pre, k, json.dumps(v)) for k, v in (('error', str(e)), ('kind', e.kind), ('path', e.path)))\n\n");
         s.push_str("def hx(b):\n    return '\"' + bytes(b).hex() + '\"'\n\n");
+        for u in &module.unions {
+            let _ = writeln!(s, "def dump_{}(v):", u.name);
+            for arm in &u.arms {
+                let value = match (&arm.ty, arm.is_bytes()) {
+                    (None, _) => "'null'".to_string(),
+                    (Some(_), true) => "hx(v.value)".to_string(),
+                    (Some(ValueType::Packet(n)), _) => format!("dump_{}(v.value)", n),
+                    (Some(_), _) => "str(v.value)".to_string(),
+                };
+                let _ = writeln!(
+                    s,
+                    "    if v.kind == '{}':\n        return '{{\"kind\":\"{}\",\"value\":' + {} + '}}'",
+                    arm.name, arm.name, value
+                );
+            }
+            s.push_str("    return 'null'\n\n");
+        }
         for p in &module.packets {
             let _ = writeln!(s, "def dump_{}(p):", p.name);
             s.push_str("    parts = []\n");

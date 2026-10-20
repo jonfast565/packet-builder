@@ -30,6 +30,11 @@ impl Backend for PythonGenerator {
         out.line("");
         out.buf.push_str(RUNTIME);
         self.emit_constants(&mut out, module);
+        for u in &module.unions {
+            out.line("");
+            out.line("");
+            packet::emit_union(&mut out, u);
+        }
         for p in &module.packets {
             out.line("");
             out.line("");

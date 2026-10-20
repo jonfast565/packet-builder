@@ -137,7 +137,39 @@ pub struct TypeExpr {
     pub category: Option<(String, Span)>,
     /// `= expr`: a derived field, computed when encoding.
     pub derive: Option<ExprNode>,
+    /// `size n [exact]`: the field occupies exactly n bytes.
+    pub window: Option<WindowExpr>,
     pub rules: FieldRules,
+    pub span: Span,
+}
+
+/// `size n [exact]` after a field.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WindowExpr {
+    pub size: ExprNode,
+    /// The content must fill the window exactly.
+    pub exact: bool,
+}
+
+/// `name switch selector { values => arm Type, ..., _ => other Type }`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SwitchExpr {
+    pub id: String,
+    pub selector: ExprNode,
+    pub arms: Vec<ArmExpr>,
+    pub align: Option<u64>,
+    pub window: Option<WindowExpr>,
+    pub span: Span,
+}
+
+/// One arm of a union.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArmExpr {
+    /// The selector values that pick this arm; None for the default (`_`).
+    pub values: Option<Vec<ExprNode>>,
+    pub name: String,
+    /// The arm's type, length and byte order; None for an empty arm.
+    pub ty: Option<(TypeNode, Option<ArrayLength>, Option<Endianness>)>,
     pub span: Span,
 }
 
@@ -209,6 +241,8 @@ pub enum PacketItem {
     Align(u64, Span),
     /// `assert expr "message"`
     Assert(AssertExpr),
+    /// A tagged union.
+    Switch(SwitchExpr),
 }
 
 #[derive(Debug, Clone, PartialEq)]

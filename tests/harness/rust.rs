@@ -4,6 +4,7 @@ use std::path::Path;
 use std::process::Command;
 
 use packet_builder::Language;
+use packet_builder::generators::common::union::variant_name;
 use packet_builder::generators::rust::ident;
 use packet_builder::ir::{Member, Module, ValueType};
 
@@ -18,6 +19,7 @@ fn value_expr(m: &Member, place: &str) -> String {
         ValueType::Mac => format!("pb_hex(&{})", v),
         ValueType::Packet(n) => format!("dump_{}(&{})", n, v),
         ValueType::Str => format!("pb_q(&{})", v),
+        ValueType::Union(n) => format!("dump_{}(&{})", n, v),
     };
     match &m.array {
         None => elem(place),
@@ -52,6 +54,35 @@ impl Target for RustTarget {
 
 "#,
         );
+        for u in &module.unions {
+            let _ = writeln!(s, "fn dump_{}(v: &{}) -> String {{\n    match v {{", u.name, u.name);
+            for arm in &u.arms {
+                let (variant, kind) = (variant_name(arm), &arm.name);
+                let value = match (&arm.ty, arm.is_bytes()) {
+                    (None, _) => None,
+                    (Some(_), true) => Some("pb_hex(x)".to_string()),
+                    (Some(ValueType::Packet(n)), _) => Some(format!("dump_{}(x)", n)),
+                    (Some(_), _) => Some("format!(\"{}\", x)".to_string()),
+                };
+                match value {
+                    None => {
+                        let _ = writeln!(
+                            s,
+                            r#"        {}::{} => "{{\"kind\":\"{}\",\"value\":null}}".to_string(),"#,
+                            u.name, variant, kind
+                        );
+                    }
+                    Some(v) => {
+                        let _ = writeln!(
+                            s,
+                            r#"        {}::{}(x) => format!("{{{{\"kind\":\"{}\",\"value\":{{}}}}}}", {}),"#,
+                            u.name, variant, kind, v
+                        );
+                    }
+                }
+            }
+            s.push_str("    }\n}\n\n");
+        }
         for p in &module.packets {
             let _ = writeln!(s, "fn dump_{}(p: &{}) -> String {{", p.name, p.name);
             s.push_str("    let mut parts: Vec<String> = Vec::new();\n");
@@ -92,7 +123,7 @@ impl Target for RustTarget {
         run(
             Command::new("rustc").current_dir(dir).args([
                 "--edition",
-                "2021",
+                "2024",
                 "-D",
                 "warnings",
                 "-A",

@@ -25,6 +25,7 @@ fn dump_member(s: &mut String, p: &Packet, m: &Member) {
         ValueType::Mac => format!("hx({}, 6);", v),
         ValueType::Packet(n) => format!("dump_{}(&{});", n, v),
         ValueType::Str => format!("js({}, p->{});", v, len_ident(p, m)),
+        ValueType::Union(n) => format!("dump_{}(&{});", n, v),
     };
     match &m.array {
         None => {
@@ -67,6 +68,28 @@ impl Target for CTarget {
         s.push_str("static size_t unhex(const char *h, uint8_t *out) { size_t n = strlen(h) / 2; for (size_t i = 0; i < n; i++) { unsigned v; sscanf(h + 2 * i, \"%2x\", &v); out[i] = (uint8_t)v; } return n; }\n\n");
         for p in &module.packets {
             let _ = writeln!(s, "static void dump_{}(const {} *p);", p.name, p.name);
+        }
+        for u in &module.unions {
+            let _ = writeln!(s, "static void dump_{}(const {} *v) {{\n    switch (v->kind) {{", u.name, u.name);
+            for arm in &u.arms {
+                let id = ident(&arm.name);
+                let head = format!("printf(\"{{\\\"kind\\\":\\\"{}\\\",\\\"value\\\":\");", arm.name);
+                let value = match (&arm.ty, arm.is_bytes()) {
+                    (None, _) => "printf(\"null\");".to_string(),
+                    (Some(_), true) => format!("hx(v->u.{}.data, v->u.{}.len);", id, id),
+                    (Some(ValueType::Packet(n)), _) => format!("dump_{}(&v->u.{});", n, id),
+                    (Some(t), _) if t.is_signed() => format!("printf(\"%lld\", (long long)v->u.{});", id),
+                    (Some(_), _) => format!("printf(\"%llu\", (unsigned long long)v->u.{});", id),
+                };
+                let _ = writeln!(
+                    s,
+                    "    case {}: {} {} printf(\"}}\"); break;",
+                    packet_builder::generators::c::arm_kind(&u.name, arm),
+                    head,
+                    value
+                );
+            }
+            s.push_str("    default: printf(\"null\"); break;\n    }\n}\n\n");
         }
         for p in &module.packets {
             let _ = writeln!(s, "static void dump_{}(const {} *p) {{", p.name, p.name);

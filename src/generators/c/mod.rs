@@ -8,6 +8,7 @@ mod naming;
 mod packet;
 
 pub use naming::{ident, len_ident, scalar_type};
+pub use packet::arm_kind;
 
 use crate::generators::Backend;
 use crate::generators::common::{ConstEmitter, GenOptions, Out};
@@ -38,6 +39,14 @@ impl Backend for CGenerator {
         out.line("extern \"C\" {");
         out.line("#endif");
         for p in module.in_dependency_order() {
+            for m in &p.members {
+                if let ValueType::Union(n) = &m.ty
+                    && let Some(u) = module.union(n)
+                {
+                    out.line("");
+                    packet::emit_union_declaration(&mut out, u);
+                }
+            }
             out.line("");
             packet::emit_declarations(&mut out, p);
         }
@@ -53,6 +62,10 @@ impl Backend for CGenerator {
         out.line(format!("#define {}_IMPLEMENTED", guard));
         out.line("");
         out.buf.push_str(RUNTIME_IMPL);
+        for u in &module.unions {
+            out.line("");
+            packet::emit_union_free(&mut out, u);
+        }
         for p in &module.packets {
             out.line("");
             packet::emit_implementation(&mut out, p);

@@ -7,8 +7,8 @@ use super::expr::parse_string_constant;
 use super::types::{to_endianness, type_from_name};
 use super::{Rule, int_literal, span_of};
 use crate::ast::{
-    ArrayLength, AssertExpr, BitOrder, BitfieldExpr, BitfieldMember, CalculatedField, Constraint, Endianness, ExprNode,
-    FieldRules, PacketExpr, PacketItem, Span, TypeExpr, TypeNode,
+    ArmExpr, ArrayLength, AssertExpr, BitOrder, BitfieldExpr, BitfieldMember, CalculatedField, Constraint, Endianness,
+    ExprNode, FieldRules, PacketExpr, PacketItem, Span, SwitchExpr, TypeExpr, TypeNode, WindowExpr,
 };
 
 fn parse_alignment(pair: Pair<Rule>) -> u64 {
@@ -86,6 +86,7 @@ impl TreeBuilder {
                                     items.push(PacketItem::Align(parse_alignment(elem), span))
                                 }
                                 Rule::assert_directive => items.push(PacketItem::Assert(assert_directive(elem))),
+                                Rule::switch_field => items.push(PacketItem::Switch(self.switch_field(elem))),
                                 _ => {}
                             }
                         }
@@ -108,39 +109,15 @@ impl TreeBuilder {
         let mut category = None;
         let mut rules = FieldRules::default();
         let mut derive = None;
+        let mut window = None;
 
         for field in parser_rule.into_inner() {
             match field.as_rule() {
                 Rule::identifier => identifier = field.as_str().to_string(),
-                Rule::field_type => {
-                    let inner = field.into_inner().next().expect("field_type has one child");
-                    type_node = match inner.as_rule() {
-                        Rule::packet_type => TypeNode::Packet(inner.as_str().to_string()),
-                        Rule::prefixed_string => {
-                            let mut prefix = TypeNode::UnsignedInteger8;
-                            let mut endianness = None;
-                            for part in inner.into_inner() {
-                                match part.as_rule() {
-                                    Rule::type_name | Rule::bit_type => prefix = self.type_from_name(part.as_str()),
-                                    Rule::endianness => endianness = to_endianness(part.as_str()),
-                                    _ => {}
-                                }
-                            }
-                            TypeNode::PrefixedStr { prefix: Box::new(prefix), endianness }
-                        }
-                        _ => self.type_from_name(inner.as_str()),
-                    };
-                }
+                Rule::field_type => type_node = self.field_type(field),
                 Rule::alignment => align = Some(parse_alignment(field)),
-                Rule::array_specifier => {
-                    // array_specifier: "[" expr? "]"
-                    array = Some(ArrayLength::Remaining);
-                    for inner in field.into_inner() {
-                        if inner.as_rule() == Rule::expr {
-                            array = Some(ArrayLength::Expr(parse_expr(inner)));
-                        }
-                    }
-                }
+                Rule::array_specifier => array = Some(array_specifier(field)),
+                Rule::window => window = Some(window_clause(field)),
                 Rule::endianness => field_endianness = to_endianness(field.as_str()),
                 Rule::category_tag => category = category_tag(field, &mut rules),
                 Rule::constraint => rules.constraint = constraint(field),
@@ -163,9 +140,79 @@ impl TreeBuilder {
             align,
             category,
             derive,
+            window,
             rules,
             span,
         }
+    }
+
+    fn field_type(&self, field: Pair<Rule>) -> TypeNode {
+        let inner = field.into_inner().next().expect("field_type has one child");
+        match inner.as_rule() {
+            Rule::packet_type => TypeNode::Packet(inner.as_str().to_string()),
+            Rule::prefixed_string => {
+                let mut prefix = TypeNode::UnsignedInteger8;
+                let mut endianness = None;
+                for part in inner.into_inner() {
+                    match part.as_rule() {
+                        Rule::type_name | Rule::bit_type => prefix = self.type_from_name(part.as_str()),
+                        Rule::endianness => endianness = to_endianness(part.as_str()),
+                        _ => {}
+                    }
+                }
+                TypeNode::PrefixedStr { prefix: Box::new(prefix), endianness }
+            }
+            _ => self.type_from_name(inner.as_str()),
+        }
+    }
+
+    fn switch_field(&self, pair: Pair<Rule>) -> SwitchExpr {
+        let span = span_of(&pair);
+        let mut sw = SwitchExpr {
+            id: String::new(),
+            selector: ExprNode::NoExpr,
+            arms: Vec::new(),
+            align: None,
+            window: None,
+            span,
+        };
+        for part in pair.into_inner() {
+            match part.as_rule() {
+                Rule::identifier => sw.id = part.as_str().to_string(),
+                Rule::expr => sw.selector = parse_expr(part),
+                Rule::alignment => sw.align = Some(parse_alignment(part)),
+                Rule::window => sw.window = Some(window_clause(part)),
+                Rule::switch_arm => {
+                    let aspan = span_of(&part);
+                    let mut arm = ArmExpr { values: None, name: String::new(), ty: None, span: aspan };
+                    let mut array = None;
+                    let mut endian = None;
+                    for x in part.into_inner() {
+                        match x.as_rule() {
+                            Rule::arm_values => {
+                                arm.values =
+                                    Some(x.into_inner().filter(|v| v.as_rule() == Rule::expr).map(parse_expr).collect())
+                            }
+                            Rule::identifier => arm.name = x.as_str().to_string(),
+                            Rule::field_type => arm.ty = Some((self.field_type(x), None, None)),
+                            Rule::array_specifier => array = Some(array_specifier(x)),
+                            Rule::endianness => endian = to_endianness(x.as_str()),
+                            _ => {}
+                        }
+                    }
+                    if let Some((t, a, e)) = &mut arm.ty {
+                        *a = array;
+                        *e = endian;
+                        if matches!(t, TypeNode::Bytes) && a.is_none() {
+                            *a = Some(ArrayLength::Remaining);
+                        }
+                    }
+                    sw.arms.push(arm);
+                }
+                _ => {}
+            }
+        }
+        sw
     }
 
     fn bitfield(&self, parser_rule: Pair<Rule>) -> BitfieldExpr {
@@ -255,4 +302,19 @@ fn assert_directive(pair: Pair<Rule>) -> AssertExpr {
         }
     }
     AssertExpr { expr, source, message, span }
+}
+
+/// `[expr]` or `[]`.
+fn array_specifier(pair: Pair<Rule>) -> ArrayLength {
+    pair.into_inner()
+        .find(|p| p.as_rule() == Rule::expr)
+        .map(|e| ArrayLength::Expr(parse_expr(e)))
+        .unwrap_or(ArrayLength::Remaining)
+}
+
+/// `size n [exact]`.
+fn window_clause(pair: Pair<Rule>) -> WindowExpr {
+    let exact = pair.clone().into_inner().any(|p| p.as_rule() == Rule::exact_kw);
+    let size = pair.into_inner().find(|p| p.as_rule() == Rule::expr).map(parse_expr).unwrap_or(ExprNode::NoExpr);
+    WindowExpr { size, exact }
 }

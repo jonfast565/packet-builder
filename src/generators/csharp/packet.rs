@@ -2,9 +2,49 @@
 
 use super::decode::Decoder;
 use super::encode::Encoder;
-use super::naming::{default_value, member_type, prop_name};
+use super::naming::{default_value, member_type, prop_name, scalar_type};
+use crate::generators::common::union::variant_name;
 use crate::generators::common::{Out, StepEmitter, member_category};
-use crate::ir::Packet;
+use crate::ir::{Packet, Union, ValueType};
+
+/// A union as an abstract class with one sealed subclass per arm; arms with
+/// a value hold it in `Value`. Packet types are spelled with the namespace,
+/// since an arm's class may share a packet's name.
+pub fn emit_union(out: &mut Out, u: &Union, ns: &str) {
+    out.line("/// <summary>One arm of a union: the subclass says which.</summary>");
+    out.line(format!("public abstract class {}", u.name));
+    out.open("{");
+    out.line(format!("public static {} PbDefault() => new {}();", u.name, variant_name(&u.arms[0])));
+    for arm in &u.arms {
+        out.line("");
+        let doc = if arm.default {
+            "Any other selector value.".to_string()
+        } else {
+            let v: Vec<String> = arm.values.iter().map(|v| v.to_string()).collect();
+            format!("Selector {}.", v.join(", "))
+        };
+        out.line(format!("/// <summary>{}</summary>", doc));
+        let v = variant_name(arm);
+        match (&arm.ty, arm.is_bytes()) {
+            (None, _) => out.line(format!("public sealed class {} : {} {{ }}", v, u.name)),
+            (Some(_), true) => out.line(format!(
+                "public sealed class {} : {} {{ public byte[] Value {{ get; set; }} = Array.Empty<byte>(); }}",
+                v, u.name
+            )),
+            (Some(ValueType::Packet(n)), false) => out.line(format!(
+                "public sealed class {} : {} {{ public global::{}.{} Value {{ get; set; }} = new global::{}.{}(); }}",
+                v, u.name, ns, n, ns, n
+            )),
+            (Some(t), false) => out.line(format!(
+                "public sealed class {} : {} {{ public {} Value {{ get; set; }} }}",
+                v,
+                u.name,
+                scalar_type(t)
+            )),
+        }
+    }
+    out.close("}");
+}
 
 pub fn emit_packet(out: &mut Out, p: &Packet) {
     let name = &p.name;

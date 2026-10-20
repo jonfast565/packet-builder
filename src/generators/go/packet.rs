@@ -2,9 +2,56 @@
 
 use super::decode::Decoder;
 use super::encode::Encoder;
-use super::naming::{field_name, gofmt_widths, member_type};
+use super::naming::{field_name, gofmt_widths, member_type, scalar_type};
+use crate::generators::common::union::variant_name;
 use crate::generators::common::{Out, StepEmitter, magic_literal, member_category};
-use crate::ir::{Packet, ValueType};
+use crate::ir::{Arm, Packet, Union, ValueType};
+
+/// The Go name of an arm's kind constant (`MessageBodyText`).
+pub fn arm_kind(u: &str, arm: &Arm) -> String {
+    format!("{}{}", u, variant_name(arm))
+}
+
+/// The Go type of an arm's field: packets by pointer, bytes as a slice.
+fn arm_type(arm: &Arm) -> Option<String> {
+    match (&arm.ty, arm.is_bytes()) {
+        (None, _) => None,
+        (Some(_), true) => Some("[]byte".into()),
+        (Some(ValueType::Packet(n)), false) => Some(format!("*{}", n)),
+        (Some(t), false) => Some(scalar_type(t)),
+    }
+}
+
+/// A union as a struct: `Kind` says which arm's field holds the value.
+pub fn emit_union(out: &mut Out, u: &Union) {
+    let kind = format!("{}Kind", u.name);
+    out.line(format!("// {} says which arm of a {} is in use.", kind, u.name));
+    out.line(format!("type {} int", kind));
+    out.line("");
+    out.line("const (");
+    out.push();
+    for (i, arm) in u.arms.iter().enumerate() {
+        if i == 0 {
+            out.line(format!("{} {} = iota", arm_kind(&u.name, arm), kind));
+        } else {
+            out.line(arm_kind(&u.name, arm));
+        }
+    }
+    out.pop();
+    out.line(")");
+    out.line("");
+    out.line(format!("// {} holds one of its arms; Kind says which.", u.name));
+    out.open(format!("type {} struct {{", u.name));
+    let fields: Vec<(String, String)> = std::iter::once(("Kind".to_string(), kind.clone()))
+        .chain(u.arms.iter().filter_map(|a| arm_type(a).map(|t| (variant_name(a), t))))
+        .collect();
+    let names: Vec<String> = fields.iter().map(|(n, _)| n.clone()).collect();
+    let widths = gofmt_widths(&names, &vec![false; names.len()]);
+    for ((name, ty), width) in fields.iter().zip(widths) {
+        out.line(format!("{:<w$} {}", name, ty, w = width));
+    }
+    out.close("}");
+}
 
 pub fn emit_packet(out: &mut Out, p: &Packet) {
     let name = &p.name;

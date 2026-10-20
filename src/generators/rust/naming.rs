@@ -7,7 +7,7 @@ const KEYWORDS: &[&str] = &[
     "as", "break", "const", "continue", "else", "enum", "extern", "false", "fn", "for", "if", "impl", "in", "let",
     "loop", "match", "mod", "move", "mut", "pub", "ref", "return", "static", "struct", "trait", "true", "type",
     "unsafe", "use", "where", "while", "async", "await", "dyn", "abstract", "become", "box", "do", "final", "macro",
-    "override", "priv", "typeof", "unsized", "virtual", "yield", "try",
+    "override", "priv", "typeof", "unsized", "virtual", "yield", "try", "gen",
 ];
 
 /// Rust identifier for a member name.
@@ -26,7 +26,7 @@ pub fn scalar_type(ty: &ValueType) -> String {
         }
         ValueType::Float { width } => format!("f{}", width),
         ValueType::Mac => "[u8; 6]".into(),
-        ValueType::Packet(n) => n.clone(),
+        ValueType::Packet(n) | ValueType::Union(n) => n.clone(),
         ValueType::Str => "String".into(),
     }
 }

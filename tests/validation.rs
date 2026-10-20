@@ -381,3 +381,46 @@ fn derived_fields_compile() {
     )
     .unwrap();
 }
+
+#[test]
+fn union_arms_are_distinct() {
+    assert_error("packet P { t uint8, b switch t { 1 => a uint8, 1 => c uint8 } }", "value 1 selects both `a` and `c`");
+    assert_error("packet P { t uint8, b switch t { _ => a uint8, _ => c uint8 } }", "has two `_` arms");
+    assert_error("packet P { t uint8, b switch t { 1 => a uint8, 2 => a uint16 } }", "has two arms named `a`");
+    assert_error("packet P { t uint8, b switch t { t => a uint8 } }", "must be constant integers");
+}
+
+#[test]
+fn union_arms_hold_simple_types() {
+    assert_error(
+        "packet P { t uint8, b switch t { 1 => s cstring } }",
+        "must hold a packet, an integer, bytes, or nothing",
+    );
+    assert_error(
+        "packet P { t uint8, b switch t { 1 => s uint16[2] } }",
+        "must hold a packet, an integer, bytes, or nothing",
+    );
+    assert_error("packet P { t uint8, b switch t { 1 => s Missing } }", "unknown type `Missing`");
+}
+
+#[test]
+fn open_ended_unions_come_last() {
+    assert_error("packet P { t uint8, b switch t { _ => r bytes[] }, x uint8 }", "must be the last field");
+    compile("packet P { t uint8, n uint8, b switch t { _ => r bytes[] } size n, x uint8 }").unwrap();
+}
+
+#[test]
+fn unions_are_not_values() {
+    assert_error("packet P { t uint8, b switch t { _ => r uint8 }, calc x uint8 = b }", "`b` is a union");
+}
+
+#[test]
+fn windows_start_on_bytes() {
+    assert_error("packet P { a u4, b uint8 size 1, _ u4 }", "`b` has a size, so it must start on a byte boundary");
+    assert_error("packet P { b uint8 size n, n uint8 }", "not known yet");
+}
+
+#[test]
+fn union_type_names_are_free() {
+    assert_error("packet PBody { }\npacket P { t uint8, body switch t { _ => x } }", "the union type `PBody`");
+}

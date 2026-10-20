@@ -5,7 +5,61 @@ use super::decode::Decoder;
 use super::encode::Encoder;
 use super::naming::{ident, len_ident, scalar_type};
 use crate::generators::common::{Out, StepEmitter, magic_literal, member_category};
-use crate::ir::{Packet, ValueType};
+use crate::ir::{Arm, Packet, Union, ValueType};
+
+/// The C name of a union arm's kind constant (`MESSAGEBODY_TEXT`).
+pub fn arm_kind(u: &str, arm: &Arm) -> String {
+    format!("{}_{}", u.to_ascii_uppercase(), arm.name.to_ascii_uppercase())
+}
+
+/// A tagged union: `kind` says which member of `u` is in use.
+pub fn emit_union_declaration(out: &mut Out, u: &Union) {
+    out.open("enum {");
+    for (i, arm) in u.arms.iter().enumerate() {
+        out.line(format!("{} = {},", arm_kind(&u.name, arm), i));
+    }
+    out.close("};");
+    out.open(format!("typedef struct {} {{", u.name));
+    out.line(format!("int kind; /* {}_* */", u.name.to_ascii_uppercase()));
+    out.open("union {");
+    let mut members = 0;
+    for arm in &u.arms {
+        let id = ident(&arm.name);
+        match (&arm.ty, arm.is_bytes()) {
+            (None, _) => continue,
+            (Some(_), true) => out.line(format!("struct {{ uint8_t *data; size_t len; }} {};", id)),
+            (Some(t), false) => out.line(format!("{} {};", scalar_type(t), id)),
+        }
+        members += 1;
+    }
+    if members == 0 {
+        out.line("char pb_empty;");
+    }
+    out.close("} u;");
+    out.close(format!("}} {};", u.name));
+    out.line(format!("void {}_free({} *u);", u.name, u.name));
+}
+
+pub fn emit_union_free(out: &mut Out, u: &Union) {
+    out.open(format!("void {}_free({} *u) {{", u.name, u.name));
+    out.open("switch (u->kind) {");
+    for arm in &u.arms {
+        let id = ident(&arm.name);
+        match (&arm.ty, arm.is_bytes()) {
+            (Some(_), true) => {
+                out.line(format!("case {}: free(u->u.{}.data); break;", arm_kind(&u.name, arm), id));
+            }
+            (Some(ValueType::Packet(n)), false) => {
+                out.line(format!("case {}: {}_free(&u->u.{}); break;", arm_kind(&u.name, arm), n, id));
+            }
+            _ => {}
+        }
+    }
+    out.line("default: break;");
+    out.close("}");
+    out.line("memset(u, 0, sizeof *u);");
+    out.close("}");
+}
 
 pub fn emit_declarations(out: &mut Out, p: &Packet) {
     let name = &p.name;
@@ -76,6 +130,10 @@ pub fn emit_implementation(out: &mut Out, p: &Packet) {
         let id = ident(&m.name);
         match (&m.array, &m.ty) {
             (None, ValueType::Packet(n)) => {
+                out.line(format!("{}_free(&p->{});", n, id));
+                frees += 1;
+            }
+            (None, ValueType::Union(n)) => {
                 out.line(format!("{}_free(&p->{});", n, id));
                 frees += 1;
             }

@@ -14,6 +14,12 @@ pub enum Value {
     Str(String),
     List(Vec<Value>),
     Struct(Struct),
+    /// A union member: the arm it holds and the arm's value (None for an
+    /// empty arm).
+    Variant {
+        arm: String,
+        value: Option<Box<Value>>,
+    },
 }
 
 /// A decoded packet: its members in declaration order.
@@ -54,6 +60,19 @@ impl Value {
             ValueType::Str => Value::Str(String::new()),
             ValueType::Packet(n) => match module.packets.iter().find(|p| &p.name == n) {
                 Some(p) => Value::Struct(Struct::default_for(module, p)),
+                None => Value::Int(0),
+            },
+            ValueType::Union(n) => match module.union(n).and_then(|u| u.arms.first()) {
+                Some(arm) => Value::Variant {
+                    arm: arm.name.clone(),
+                    value: arm.ty.as_ref().map(|t| {
+                        Box::new(if arm.is_bytes() {
+                            Value::Bytes(Vec::new())
+                        } else {
+                            Value::default_scalar(module, t)
+                        })
+                    }),
+                },
                 None => Value::Int(0),
             },
         }
@@ -112,6 +131,27 @@ impl Value {
                     nl(out, level);
                 }
                 out.push(']');
+            }
+            Value::Variant { arm, value } => {
+                out.push('{');
+                nl(out, level + 1);
+                out.push_str("\"kind\":");
+                if pretty.is_some() {
+                    out.push(' ');
+                }
+                json_string(out, arm);
+                out.push(',');
+                nl(out, level + 1);
+                out.push_str("\"value\":");
+                if pretty.is_some() {
+                    out.push(' ');
+                }
+                match value {
+                    Some(v) => v.write_json(out, inner),
+                    None => out.push_str("null"),
+                }
+                nl(out, level);
+                out.push('}');
             }
             Value::Struct(s) => {
                 out.push('{');

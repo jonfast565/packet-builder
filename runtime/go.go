@@ -114,11 +114,12 @@ func (t *pbTrace) path() string {
 // PbReader reads integers of any bit width (MSB-first) and byte-aligned
 // values. The first error is sticky: later reads return zero values.
 type PbReader struct {
-	data  []byte
-	pos   int // in bits
-	limit int // end of the readable data in bits (a window inside data)
-	err   error
-	tr    pbTrace
+	data    []byte
+	pos     int // in bits
+	limit   int // end of the readable data in bits (a window inside data)
+	windows int // windows open
+	err     error
+	tr      pbTrace
 }
 
 func NewPbReader(data []byte) *PbReader { return &PbReader{data: data, limit: len(data) * 8} }
@@ -142,7 +143,7 @@ func (r *PbReader) short(bits int, what string) {
 	if r.err != nil {
 		return
 	}
-	if r.limit == len(r.data)*8 {
+	if r.windows == 0 {
 		r.Fail(PbIncomplete, "unexpected end of data: %s needs %d more bit(s), %d left", what, bits, r.RemainingBits())
 		r.err.(*PbError).NeededBits = bits - r.RemainingBits()
 	} else {
@@ -187,15 +188,23 @@ func (r *PbReader) PushLimit(n int64) int {
 		return saved
 	}
 	r.limit = r.pos + int(n)*8
+	r.windows++
 	return saved
 }
 
-// PopLimit skips what is left of the current window and restores saved.
-func (r *PbReader) PopLimit(saved int) {
+// PopLimit skips what is left of the current window and restores saved;
+// with exact, bytes left over are an error.
+func (r *PbReader) PopLimit(saved int, exact bool) {
+	if exact && r.err == nil && r.RemainingBits() > 0 {
+		r.Fail(PbInvalid, "%d bit(s) left over in a field that must fill its size", r.RemainingBits())
+	}
 	if r.err == nil {
 		r.pos = r.limit
 	}
 	r.limit = saved
+	if r.windows > 0 {
+		r.windows--
+	}
 }
 
 func (r *PbReader) ReadBits(width int) uint64 {
@@ -413,6 +422,21 @@ func (w *PbWriter) WriteZeroBits(bits int64) {
 	if bits > 0 {
 		w.WriteBits(0, int(bits))
 	}
+}
+
+// EndWindow ends a window of size bytes that started at bit start: the
+// content must fit (and fill it when exact); the rest is zero-filled.
+func (w *PbWriter) EndWindow(start int, size int64, exact bool) {
+	used := w.pos - start
+	if size < 0 || int64(used) > size*8 {
+		w.Fail(PbRange, "the content takes %d bit(s), more than its size of %d byte(s)", used, size)
+		return
+	}
+	if exact && int64(used) != size*8 {
+		w.Fail(PbMismatch, "the content takes %d bit(s) but must fill its %d byte(s)", used, size)
+		return
+	}
+	w.WriteZeroBits(size*8 - int64(used))
 }
 
 // PatchUint overwrites nbytes bytes at bit position at (byte aligned).

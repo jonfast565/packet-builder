@@ -47,7 +47,7 @@ fn rust_oscar_demo() {
     harness::run(
         Command::new("rustc").current_dir(&dir).args([
             "--edition",
-            "2021",
+            "2024",
             "-D",
             "warnings",
             "oscar_demo.rs",
@@ -92,7 +92,7 @@ fn rust_p3_demo() {
     harness::run(
         Command::new("rustc").current_dir(&dir).args([
             "--edition",
-            "2021",
+            "2024",
             "-D",
             "warnings",
             "p3_demo.rs",

@@ -2,7 +2,7 @@
 //!
 //!     cargo run -- generate examples/p3.packet -l rust -p packets -o examples/out
 //!     cp examples/p3_demo.rs examples/out/ && cd examples/out
-//!     rustc --edition 2021 p3_demo.rs && ./p3_demo
+//!     rustc --edition 2024 p3_demo.rs && ./p3_demo
 
 mod packets;
 
@@ -28,13 +28,12 @@ fn main() -> Result<(), PbError> {
         let packet = P3Packet::decode_from(&mut reader)?;
         println!("type 0x{:02x} tx 0x{:02x} crc 0x{:04x}", packet.r#type, packet.tx_seq, packet.crc);
 
-        match packet.r#type {
-            P3Type::INIT => {
-                let init = P3Init::decode(&packet.data)?;
+        // The packet type picks how the body is decoded.
+        match &packet.body {
+            P3PacketBody::Init(init) => {
                 println!("  INIT: platform {} version {}.{}", init.platform, init.client_major, init.client_minor);
             }
-            P3Type::DATA => {
-                let message = P3Message::decode(&packet.data)?;
+            P3PacketBody::Data(message) => {
                 let stream = FdoStream::decode(&message.atoms)?;
                 let names: Vec<String> = stream
                     .atoms
@@ -44,7 +43,7 @@ fn main() -> Result<(), PbError> {
                     .collect();
                 println!("  DATA {}: {} atoms, screen name {}", message.token, stream.atoms.len(), names[0]);
             }
-            other => println!("  control packet 0x{:02x}", other),
+            P3PacketBody::Control(_) => println!("  control packet 0x{:02x}", packet.r#type),
         }
     }
     Ok(())

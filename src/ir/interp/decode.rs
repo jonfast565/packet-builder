@@ -39,9 +39,26 @@ impl Decoder<'_, '_, '_> {
         let mut values: Vec<Value> = p.members.iter().map(|m| Value::default_for(self.module, m)).collect();
         let start = self.r.position_bits();
         let mut marks = HashMap::from([(Mark::PacketStart, start)]);
+        let mut windows = HashMap::new();
         for (i, step) in p.steps.iter().enumerate() {
             marks.insert(Mark::Before(i), self.r.position_bits());
-            self.step(p, step, &mut values, start)?;
+            match step {
+                Step::OpenWindow { size, .. } => {
+                    if let Some(name) = p.steps.get(i + 1).and_then(|s| step_name(p, s)) {
+                        self.r.at(intern(name));
+                    }
+                    let n = eval(size, &Env::new(&values)).int();
+                    windows.insert(i, self.r.push_limit(n)?);
+                }
+                Step::CloseWindow { open, exact } => {
+                    if let Some(name) = p.steps.get(open + 1).and_then(|s| step_name(p, s)) {
+                        self.r.at(intern(name));
+                    }
+                    let saved = windows.remove(open).unwrap_or(0);
+                    self.r.pop_limit(saved, *exact)?;
+                }
+                _ => self.step(p, step, &mut values, start)?,
+            }
             marks.insert(Mark::After(i), self.r.position_bits());
             for mi in checked_members(step) {
                 for c in p.members[mi].enforced_checks() {
@@ -123,6 +140,30 @@ impl Decoder<'_, '_, '_> {
                 self.r.at(intern(name));
                 self.bitfield(values, container, *container_width, parts)
             }
+            Step::Switch { member, selector, arms } => {
+                let m = &p.members[*member];
+                self.r.at(intern(&m.name));
+                let sel = eval(selector, &Env::new(values)).int();
+                let Some(arm) = arms.iter().find(|a| a.values.contains(&sel)).or(arms.iter().find(|a| a.default))
+                else {
+                    return Err(self.r.error(PbErrorKind::Invalid, format!("no arm of `{}` for {}", m.name, sel)));
+                };
+                let value = match (&arm.ty, &arm.codec, &arm.count) {
+                    (None, ..) => None,
+                    (Some(_), _, Some(count)) => {
+                        let n = match count {
+                            Count::Expr(e) => self.count(e, values, 8)?,
+                            Count::Remaining => self.r.remaining_bits() / 8,
+                        };
+                        Some(Box::new(Value::Bytes(self.r.read_bytes(n)?)))
+                    }
+                    (Some(ty), Some(codec), None) => Some(Box::new(self.elem(codec, ty)?)),
+                    _ => None,
+                };
+                values[*member] = Value::Variant { arm: arm.name.clone(), value };
+                Ok(())
+            }
+            Step::OpenWindow { .. } | Step::CloseWindow { .. } => Ok(()),
         }
     }
 
@@ -230,5 +271,15 @@ fn int_value(raw: u64, ty: &ValueType) -> Value {
     match ty {
         ValueType::Int { width, signed: true } => Value::Int(sext(raw, *width) as i128),
         _ => Value::Int(raw as i128),
+    }
+}
+
+/// The field a step reads, for error paths.
+pub(super) fn step_name<'p>(p: &'p Packet, step: &'p Step) -> Option<&'p str> {
+    match step {
+        Step::Field { member: Some(m), .. } | Step::Switch { member: m, .. } => Some(&p.members[*m].name),
+        Step::Field { member: None, .. } => Some("_"),
+        Step::Bitfield { name, .. } => Some(name),
+        _ => None,
     }
 }

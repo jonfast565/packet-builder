@@ -7,6 +7,7 @@
 //! - [`dialect`] — the [`Dialect`] trait and the generic expression [`Scope`].
 //! - [`steps`] — the [`StepEmitter`] template for decoders and encoders.
 //! - [`naming`] — identifier case conversion.
+//! - [`union`] — arm tests and names for tagged unions.
 
 pub mod consts;
 pub mod dialect;
@@ -15,6 +16,7 @@ pub mod naming;
 pub mod options;
 pub mod out;
 pub mod steps;
+pub mod union;
 
 pub use consts::{ConstEmitter, const_pascal, member_category};
 pub use dialect::{Dialect, Scope};

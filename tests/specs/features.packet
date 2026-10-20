@@ -106,7 +106,8 @@ packet Keywords {
   func uint8,
   struct uint8,
   default uint8,
-  string uint8
+  string uint8,
+  gen uint8
 }
 
 // A rest-of-input array of 16-bit words.
