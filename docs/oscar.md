@@ -310,12 +310,14 @@ The OSCAR description models these SNACs, each with test vectors:
 | (01,06) rate request | an empty arm |
 | (01,07) rate limits | `RateInfo`, `RateClass`, `RateClassV2`, `RateGroup`, `FamilySubtype`; v1 (AIM 1.x) and v2 class layouts, told apart with `remaining` |
 | (01,08) rate ack | `RateAck` |
+| (01,13) message of the day | `Motd` (`MotdType`, `MotdTlv`) |
 | (01,17) / (01,18) family versions | `FamilyVersions`, `FamilyVersion` |
 | (17,02) / (17,03) MD5 login | `LoginRequest`, `LoginResponse` (TLVs, `LoginTlv`) |
 | (17,06) / (17,07) MD5 login key | `AuthKeyRequest`, `AuthKeyResponse` |
 | (04,01) ICBM error | `SnacError` (`SnacErrorCode`) |
 | (04,06) / (04,07) instant messages | `IcbmSend`, `IcbmReceive`, `IcbmMessage`, `IcbmFragment`, `MessageText` |
 | (04,0C) host ack | `IcbmHostAck` |
+| (0B,02) stats report interval | `StatsReportInterval` (`StatsSubtype`) |
 
 Adding another SNAC is usually a few lines: a packet with its fixed fields
 and `tlvs Tlv[]`, and an arm in `Snac.body`.

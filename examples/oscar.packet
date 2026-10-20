@@ -77,6 +77,7 @@ packet Tlv be {
 const SnacFamily uint16 {
   service = 0x0001  "generic service controls",
   icbm = 0x0004     "ICBM: instant messages",
+  stats = 0x000b    "usage statistics reports",
   auth = 0x0017     "authorization (MD5 login)",
 }
 
@@ -88,7 +89,7 @@ const SnacFlag uint16 {
 
 packet Snac be {
   family uint16 : SnacFamily,
-  subtype uint16,           // ServiceSubtype, AuthSubtype or IcbmSubtype, by family
+  subtype uint16,           // ServiceSubtype, AuthSubtype, IcbmSubtype or StatsSubtype, by family
   flags bitfield uint16 {
     has_version_info u1,    // SnacFlag.has_version_info
     _ u14,
@@ -104,6 +105,7 @@ packet Snac be {
     SnacFamily.service << 16 | ServiceSubtype.rate_request => rate_request,
     SnacFamily.service << 16 | ServiceSubtype.rate_info => rate_info RateInfo,
     SnacFamily.service << 16 | ServiceSubtype.rate_ack => rate_ack RateAck,
+    SnacFamily.service << 16 | ServiceSubtype.motd => motd Motd,
     SnacFamily.service << 16 | ServiceSubtype.client_versions,
     SnacFamily.service << 16 | ServiceSubtype.server_versions => family_versions FamilyVersions,
     SnacFamily.auth << 16 | AuthSubtype.login_request => login_request LoginRequest,
@@ -114,6 +116,7 @@ packet Snac be {
     SnacFamily.icbm << 16 | IcbmSubtype.send => send IcbmSend,
     SnacFamily.icbm << 16 | IcbmSubtype.receive => receive IcbmReceive,
     SnacFamily.icbm << 16 | IcbmSubtype.host_ack => host_ack IcbmHostAck,
+    SnacFamily.stats << 16 | StatsSubtype.report_interval => report_interval StatsReportInterval,
     _ => other bytes[]
   }
 }
@@ -156,6 +159,7 @@ const ServiceSubtype uint16 {
   rate_request = 0x06     "rate information request (no body)",
   rate_info = 0x07        "RateInfo",
   rate_ack = 0x08         "RateAck",
+  motd = 0x13             "Motd (message of the day)",
   client_versions = 0x17  "FamilyVersions sent by the client",
   server_versions = 0x18  "FamilyVersions sent by the server",
 }
@@ -237,6 +241,40 @@ packet RateInfo be {
 // SNAC(01,08) the client accepts these rate classes (RateClass.id).
 packet RateAck be {
   class_ids uint16[]
+}
+
+// SNAC(01,13) message of the day: a MotdType, then TLVs (MotdTlv).
+const MotdType uint16 {
+  mandatory_upgrade = 0x0001  "the client must be upgraded",
+  advisory_upgrade = 0x0002   "an upgrade is recommended",
+  announcement = 0x0003       "system announcement",
+  standard = 0x0004           "standard notice (sent at every sign-on)",
+  news = 0x0006               "news from the service",
+}
+
+const MotdTlv uint16 {
+  message = 0x000b  "the message text",
+}
+
+packet Motd be {
+  type uint16 : MotdType,
+  tlvs Tlv[]
+}
+
+// ---------------------------------------------------------------------
+// Family 0x000B (SnacFamily.stats): usage statistics
+// ---------------------------------------------------------------------
+const StatsSubtype uint16 {
+  error = 0x01            "SnacError (not modelled; stays in Snac.body.other)",
+  report_interval = 0x02  "StatsReportInterval",
+  report_events = 0x03    "client statistics, TLVs (not modelled)",
+  report_ack = 0x04       "the server got the report (no body; not modelled)",
+}
+
+// SNAC(0B,02) the minimum interval between the client's statistics reports
+// (Open OSCAR Server sends 1).
+packet StatsReportInterval be {
+  interval uint16
 }
 
 // ---------------------------------------------------------------------

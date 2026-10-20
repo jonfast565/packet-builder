@@ -984,6 +984,84 @@
       }
     },
     {
+      "name": "SNAC(01,13) message of the day from Open OSCAR Server",
+      "packet": "Flap",
+      "hex": "2a020067002c000100130000800000000004000b001c57656c636f6d6520746f204f70656e204f5343415220536572766572",
+      "expect": {
+        "start": 42,
+        "channel": 2,
+        "sequence": 103,
+        "length": 44,
+        "payload": {
+          "kind": "snac",
+          "value": {
+            "family": 1,
+            "subtype": 19,
+            "has_version_info": 0,
+            "more_replies": 0,
+            "request_id": 2147483648,
+            "version_info": [],
+            "body": {
+              "kind": "motd",
+              "value": {
+                "type": 4,
+                "tlvs": [
+                  {
+                    "type": 11,
+                    "length": 28,
+                    "value": "57656c636f6d6520746f204f70656e204f5343415220536572766572"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "SNAC(01,13) MOTD: upgrade notice without TLVs",
+      "packet": "Motd",
+      "hex": "0001",
+      "expect": {
+        "type": 1,
+        "tlvs": []
+      }
+    },
+    {
+      "name": "SNAC(0B,02) stats report interval from Open OSCAR Server",
+      "packet": "Flap",
+      "hex": "2a020069000c000b00020000800000000001",
+      "expect": {
+        "start": 42,
+        "channel": 2,
+        "sequence": 105,
+        "length": 12,
+        "payload": {
+          "kind": "snac",
+          "value": {
+            "family": 11,
+            "subtype": 2,
+            "has_version_info": 0,
+            "more_replies": 0,
+            "request_id": 2147483648,
+            "version_info": [],
+            "body": {
+              "kind": "report_interval",
+              "value": {
+                "interval": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "SNAC(0B,02) truncated interval is an error",
+      "packet": "StatsReportInterval",
+      "hex": "00",
+      "error": true
+    },
+    {
       "name": "SNAC(04,01) ICBM error: recipient not logged on (dispatched by Snac)",
       "packet": "Snac",
       "hex": "000400010000000000090004",
