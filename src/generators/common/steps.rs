@@ -3,7 +3,7 @@
 //! template that dispatches each [`Step`] to the matching hook.
 
 use super::out::Out;
-use crate::ir::{BitPart, Codec, Count, Member, Packet, Step, StrMode, TExpr, ValueType};
+use crate::ir::{BitPart, Check, Codec, Count, Member, Packet, Step, StrMode, TExpr, ValueType};
 
 /// One hook per kind of wire step.
 pub trait StepEmitter {
@@ -35,13 +35,34 @@ pub trait StepEmitter {
     /// can name it (`pb_r.at("length")`).
     fn locate(&self, out: &mut Out, field: &str);
 
+    /// Fail with a `constraint` error unless `cond` holds (field checks and
+    /// `assert`).
+    fn check(&self, out: &mut Out, cond: &TExpr, message: &str);
+
+    /// True for encoders: field checks run before a field is written rather
+    /// than after it is read.
+    fn encoding(&self) -> bool {
+        false
+    }
+
     /// The wire name of a step's field (`_` for padding), if it has one.
     fn step_field<'s>(&'s self, step: &'s Step) -> Option<&'s str> {
         match step {
             Step::Field { member: Some(mi), .. } => Some(&self.packet().members[*mi].name),
             Step::Field { member: None, .. } => Some("_"),
             Step::Bitfield { name, .. } => Some(name),
+            Step::Assert { .. } => Some(""),
             Step::Calc { .. } | Step::Align { .. } => None,
+        }
+    }
+
+    /// The enforced checks of the members a step reads or writes.
+    fn step_checks<'s>(&'s self, step: &'s Step) -> Vec<&'s Check> {
+        let members = &self.packet().members;
+        match step {
+            Step::Field { member: Some(mi), array: None, .. } => members[*mi].enforced_checks().iter().collect(),
+            Step::Bitfield { parts, .. } => parts.iter().flat_map(|p| members[p.member].enforced_checks()).collect(),
+            _ => Vec::new(),
         }
     }
 
@@ -50,7 +71,17 @@ pub trait StepEmitter {
         if let Some(field) = self.step_field(step) {
             self.locate(out, field);
         }
+        let checks = self.step_checks(step);
+        if self.encoding() {
+            for c in &checks {
+                self.check(out, &c.cond, &c.message);
+            }
+        }
         match step {
+            Step::Assert { index } => {
+                let a = &self.packet().asserts[*index];
+                self.check(out, &a.cond, &a.message)
+            }
             Step::Align { bytes } => self.align(out, *bytes),
             Step::Calc { member } => {
                 let m = &members[*member];
@@ -68,6 +99,11 @@ pub trait StepEmitter {
             }
             Step::Bitfield { container, container_width, parts, .. } => {
                 self.bitfield(out, container, *container_width, parts)
+            }
+        }
+        if !self.encoding() {
+            for c in &checks {
+                self.check(out, &c.cond, &c.message);
             }
         }
     }

@@ -9,7 +9,7 @@ Generate the parser first:
 import struct
 
 from packets import (
-    P3_LENGTH_OVERHEAD, P3_SEQ_FIRST, P3_STOP, P3_SYNC, FdoProtocol, FdoStream,
+    P3_LENGTH_OVERHEAD, P3_SEQ_FIRST, FdoProtocol, FdoStream,
     P3Init, P3Message, P3Packet, P3Type, PbError, PbReader, Platform,
 )
 
@@ -41,8 +41,6 @@ def packets(stream):
         start = reader.position_bits() // 8
         packet = P3Packet.decode_from(reader)
         raw = stream[start:reader.position_bits() // 8]
-        if not packet.valid:
-            raise PbError(PbError.CONSTRAINT, "not a P3 packet")
         if crc16_arc(raw[3:-1]) != packet.crc:
             raise PbError(PbError.MISMATCH, "CRC mismatch")
         yield packet
@@ -50,8 +48,8 @@ def packets(stream):
 
 def control_packet(packet_type, tx_seq, rx_seq):
     """Build a control packet (ACK, NAK, ...) with a correct CRC."""
-    packet = P3Packet(sync=P3_SYNC, length=P3_LENGTH_OVERHEAD, tx_seq=tx_seq, rx_seq=rx_seq,
-                      always_set=1, type=packet_type, data=b"", stop=P3_STOP)
+    # sync, always_set and stop default to their fixed values (`== P3_SYNC`, ...).
+    packet = P3Packet(length=P3_LENGTH_OVERHEAD, tx_seq=tx_seq, rx_seq=rx_seq, type=packet_type)
     wire = packet.encode()
     packet.crc = crc16_arc(wire[3:-1])
     return packet.encode()

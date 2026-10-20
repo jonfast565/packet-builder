@@ -5,7 +5,7 @@ use super::decode::Decoder;
 use super::encode::Encoder;
 use super::expr::store_value;
 use super::naming::{ident, len_ident, scalar_type};
-use crate::generators::common::{Out, StepEmitter, member_category};
+use crate::generators::common::{Out, StepEmitter, magic_literal, member_category};
 use crate::ir::{Packet, ValueType};
 
 pub fn emit_declarations(out: &mut Out, p: &Packet) {
@@ -47,10 +47,28 @@ pub fn emit_declarations(out: &mut Out, p: &Packet) {
     out.line(format!("int {}_encode(const {} *p, uint8_t **out, size_t *out_len);", name, name));
     out.line(format!("int {}_encode_to(const {} *p, pb_writer *pb_w);", name, name));
     out.line(format!("void {}_free({} *p);", name, name));
+    out.line("/* Zero *p, then give members declared `== value` that value. */");
+    out.line(format!("void {}_init({} *p);", name, name));
 }
 
 pub fn emit_implementation(out: &mut Out, p: &Packet) {
     let name = &p.name;
+
+    // init
+    out.open(format!("void {}_init({} *p) {{", name, name));
+    out.line("memset(p, 0, sizeof *p);");
+    for m in &p.members {
+        match (&m.array, &m.ty, magic_literal(m)) {
+            (None, ValueType::Packet(n), _) => out.line(format!("{}_init(&p->{});", n, ident(&m.name))),
+            (None, ValueType::Int { signed, .. }, Some(v)) => {
+                let v = if *signed { format!("INT64_C({})", v) } else { format!("UINT64_C({})", v) };
+                out.line(format!("p->{} = ({}){};", ident(&m.name), scalar_type(&m.ty), v))
+            }
+            _ => {}
+        }
+    }
+    out.close("}");
+    out.line("");
 
     // free
     out.open(format!("void {}_free({} *p) {{", name, name));

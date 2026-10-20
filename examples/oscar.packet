@@ -27,12 +27,11 @@ const Channel uint8 {
 }
 
 packet Flap be {
-  start uint8,              // always FLAP_START
-  channel uint8 : Channel,
+  start uint8 == FLAP_START,
+  channel uint8 : Channel strict,
   sequence uint16,          // per-direction sequence number
   length uint16,            // payload size in bytes
-  payload bytes[length],
-  calc valid uint8 = start == FLAP_START and channel >= Channel.signon and channel <= Channel.keep_alive
+  payload bytes[length]
 }
 
 const FLAP_VERSION uint32 = 1 "FlapSignon.version is always 1"
@@ -46,7 +45,7 @@ const LoginTlv uint16 {
 // Channel 1 payload (sign-on): protocol version, then TLVs such as
 // LoginTlv.auth_cookie.
 packet FlapSignon be {
-  version uint32,           // always FLAP_VERSION
+  version uint32 == FLAP_VERSION,
   tlvs Tlv[]
 }
 

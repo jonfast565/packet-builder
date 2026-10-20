@@ -1,8 +1,8 @@
 //! C# encoder statements.
 
 use super::naming::CSharp;
-use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mask};
-use crate::ir::{BitPart, Codec, Count, Member, Packet, StrMode, ValueType};
+use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mask, string_literal};
+use crate::ir::{BitPart, Codec, Count, Member, Packet, StrMode, TExpr, ValueType};
 
 fn write_elem(out: &mut Out, codec: &Codec, ty: &ValueType, v: &str) {
     match ty {
@@ -50,6 +50,18 @@ impl<'a> Encoder<'a> {
 impl StepEmitter for Encoder<'_> {
     fn packet(&self) -> &Packet {
         self.scope.packet
+    }
+
+    fn check(&self, out: &mut Out, cond: &TExpr, message: &str) {
+        out.line(format!(
+            "if (!{}) throw pbW.Error(PbErrorKind.Constraint, {});",
+            self.scope.expr(cond),
+            string_literal(message)
+        ));
+    }
+
+    fn encoding(&self) -> bool {
+        true
     }
 
     fn locate(&self, out: &mut Out, field: &str) {

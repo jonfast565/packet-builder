@@ -3,20 +3,36 @@
 use pest::iterators::Pair;
 
 use super::expr::parse_expr;
+use super::expr::parse_string_constant;
 use super::types::{to_endianness, type_from_name};
 use super::{Rule, int_literal, span_of};
 use crate::ast::{
-    ArrayLength, BitOrder, BitfieldExpr, BitfieldMember, CalculatedField, Endianness, ExprNode, PacketExpr, PacketItem,
-    Span, TypeExpr, TypeNode,
+    ArrayLength, AssertExpr, BitOrder, BitfieldExpr, BitfieldMember, CalculatedField, Constraint, Endianness, ExprNode,
+    FieldRules, PacketExpr, PacketItem, Span, TypeExpr, TypeNode,
 };
 
 fn parse_alignment(pair: Pair<Rule>) -> u64 {
     pair.into_inner().find(|p| p.as_rule() == Rule::numeric_constant).map(|n| int_literal(n.as_str())).unwrap_or(1)
 }
 
-/// The category named by `: Category`.
-fn category_tag(pair: Pair<Rule>) -> Option<(String, Span)> {
-    pair.into_inner().find(|p| p.as_rule() == Rule::identifier).map(|id| (id.as_str().to_string(), span_of(&id)))
+/// The category named by `: Category`, and whether it says `strict`.
+fn category_tag(pair: Pair<Rule>, rules: &mut FieldRules) -> Option<(String, Span)> {
+    let mut name = None;
+    for p in pair.into_inner() {
+        match p.as_rule() {
+            Rule::identifier => name = Some((p.as_str().to_string(), span_of(&p))),
+            Rule::strict_kw => rules.strict = true,
+            _ => {}
+        }
+    }
+    name
+}
+
+/// `== value` or `in lo..hi`.
+fn constraint(pair: Pair<Rule>) -> Option<Constraint> {
+    let range = pair.clone().into_inner().any(|p| p.as_rule() == Rule::in_kw);
+    let mut exprs = pair.into_inner().filter(|p| p.as_rule() == Rule::expr).map(parse_expr);
+    if range { Some(Constraint::Range(exprs.next()?, exprs.next()?)) } else { Some(Constraint::Equals(exprs.next()?)) }
 }
 
 /// Builds the parse tree's packets; type names depend on the file's word size.
@@ -69,6 +85,7 @@ impl TreeBuilder {
                                     let span = span_of(&elem);
                                     items.push(PacketItem::Align(parse_alignment(elem), span))
                                 }
+                                Rule::assert_directive => items.push(PacketItem::Assert(assert_directive(elem))),
                                 _ => {}
                             }
                         }
@@ -89,6 +106,7 @@ impl TreeBuilder {
         let mut field_endianness: Option<Endianness> = None;
         let mut align = None;
         let mut category = None;
+        let mut rules = FieldRules::default();
 
         for field in parser_rule.into_inner() {
             match field.as_rule() {
@@ -123,7 +141,9 @@ impl TreeBuilder {
                     }
                 }
                 Rule::endianness => field_endianness = to_endianness(field.as_str()),
-                Rule::category_tag => category = category_tag(field),
+                Rule::category_tag => category = category_tag(field, &mut rules),
+                Rule::constraint => rules.constraint = constraint(field),
+                Rule::lenient_kw => rules.lenient = true,
                 _ => {}
             }
         }
@@ -133,7 +153,7 @@ impl TreeBuilder {
             array = Some(ArrayLength::Remaining);
         }
 
-        TypeExpr { id: identifier, expr: type_node, array, endianness: field_endianness, align, category, span }
+        TypeExpr { id: identifier, expr: type_node, array, endianness: field_endianness, align, category, rules, span }
     }
 
     fn bitfield(&self, parser_rule: Pair<Rule>) -> BitfieldExpr {
@@ -158,6 +178,7 @@ impl TreeBuilder {
                     let mut width = 0;
                     let mut signed = false;
                     let mut category = None;
+                    let mut rules = FieldRules::default();
                     for m in part.into_inner() {
                         match m.as_rule() {
                             Rule::identifier => name = m.as_str().to_string(),
@@ -167,11 +188,13 @@ impl TreeBuilder {
                                     signed = s;
                                 }
                             }
-                            Rule::category_tag => category = category_tag(m),
+                            Rule::category_tag => category = category_tag(m, &mut rules),
+                            Rule::constraint => rules.constraint = constraint(m),
+                            Rule::lenient_kw => rules.lenient = true,
                             _ => {}
                         }
                     }
-                    members.push(BitfieldMember { name, width, signed, category, span: mspan });
+                    members.push(BitfieldMember { name, width, signed, category, rules, span: mspan });
                 }
                 _ => {}
             }
@@ -202,4 +225,22 @@ impl TreeBuilder {
             span,
         }
     }
+}
+
+fn assert_directive(pair: Pair<Rule>) -> AssertExpr {
+    let span = span_of(&pair);
+    let mut expr = ExprNode::NoExpr;
+    let mut source = String::new();
+    let mut message = None;
+    for p in pair.into_inner() {
+        match p.as_rule() {
+            Rule::expr => {
+                source = p.as_str().trim().to_string();
+                expr = parse_expr(p);
+            }
+            Rule::string => message = Some(parse_string_constant(p)),
+            _ => {}
+        }
+    }
+    AssertExpr { expr, source, message, span }
 }

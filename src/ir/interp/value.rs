@@ -39,6 +39,9 @@ impl Value {
         match (&m.array, &m.ty) {
             (Some(_), ty) if ty.is_byte() => Value::Bytes(Vec::new()),
             (Some(_), _) => Value::List(Vec::new()),
+            (None, ValueType::Int { width, signed }) if m.magic().is_some() => {
+                Value::Int(super::eval::wrap(m.magic().unwrap_or(0), *width, *signed))
+            }
             (None, ty) => Value::default_scalar(module, ty),
         }
     }

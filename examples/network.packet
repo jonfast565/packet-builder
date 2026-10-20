@@ -29,8 +29,8 @@ const IpProtocol uint8 {
 
 // IPv4 header (RFC 791). Sub-byte fields live directly in the bit stream.
 packet Ipv4 be {
-  version u4,               // IPV4_VERSION
-  ihl u4,                   // header length in WORD_BYTES units
+  version u4 == IPV4_VERSION,
+  ihl u4 in 5..15,          // header length in WORD_BYTES units
   dscp u6,
   ecn u2,
   total_length uint16,
@@ -58,7 +58,7 @@ packet Tcp be {
   destination_port uint16,
   sequence uint32,
   acknowledgment uint32,
-  data_offset u4,           // header length in WORD_BYTES units
+  data_offset u4 in 5..15,  // header length in WORD_BYTES units
   _ u3,
   flags bitfield u9 {
     ns u1, cwr u1, ece u1, urg u1, ack u1, psh u1, rst u1, syn u1, fin u1

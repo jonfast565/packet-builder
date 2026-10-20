@@ -3,7 +3,7 @@
 use super::eval::{Env, eval, store};
 use super::rt::{PbError, PbErrorKind, PbWriter};
 use super::value::{Struct, Value};
-use super::{intern, pad};
+use super::{check, checked_members, intern, pad};
 use crate::ast::Endianness;
 use crate::ir::{BitPart, Codec, Count, Module, Packet, Step, StrMode, ValueType};
 
@@ -52,10 +52,25 @@ impl Encoder<'_> {
         }
         let start = w.position_bits();
         for step in &p.steps {
+            for mi in checked_members(step) {
+                for c in p.members[mi].enforced_checks() {
+                    w.at(intern(self.field_name(p, step)));
+                    check(&c.cond, &c.message, &values, |m| w.error(PbErrorKind::Constraint, m))?;
+                }
+            }
             self.step(p, step, &values, start, w)?;
         }
         w.leave();
         Ok(())
+    }
+
+    /// The name errors report for a step's field.
+    fn field_name<'p>(&self, p: &'p Packet, step: &'p Step) -> &'p str {
+        match step {
+            Step::Field { member: Some(mi), .. } => &p.members[*mi].name,
+            Step::Bitfield { name, .. } => name,
+            _ => "_",
+        }
     }
 
     fn expr(&self, values: &[Value], e: &crate::ir::TExpr) -> i64 {
@@ -69,6 +84,11 @@ impl Encoder<'_> {
                 Ok(())
             }
             Step::Calc { .. } => Ok(()),
+            Step::Assert { index } => {
+                w.at("");
+                let a = &p.asserts[*index];
+                check(&a.cond, &a.message, values, |m| w.error(PbErrorKind::Constraint, m))
+            }
             Step::Field { member, codec, array, ty } => {
                 let name = member.map(|i| p.members[i].name.as_str()).unwrap_or("_");
                 w.at(intern(name));

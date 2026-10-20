@@ -4,8 +4,8 @@ use super::decode::Decoder;
 use super::encode::Encoder;
 use super::expr::store_value;
 use super::naming::{field_name, gofmt_widths, member_type};
-use crate::generators::common::{Out, StepEmitter, member_category};
-use crate::ir::Packet;
+use crate::generators::common::{Out, StepEmitter, magic_literal, member_category};
+use crate::ir::{Packet, ValueType};
 
 pub fn emit_packet(out: &mut Out, p: &Packet) {
     let name = &p.name;
@@ -19,6 +19,20 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
         }
         out.line(format!("{:<w$} {}", name, member_type(m), w = width));
     }
+    out.close("}");
+    out.line("");
+
+    out.line(format!("// New{} returns a {} whose members declared `== value` hold that value.", name, name));
+    out.open(format!("func New{}() *{} {{", name, name));
+    out.line(format!("p := &{}{{}}", name));
+    for m in &p.members {
+        match (&m.array, &m.ty, magic_literal(m)) {
+            (None, ValueType::Packet(n), _) => out.line(format!("p.{} = *New{}()", field_name(&m.name), n)),
+            (None, _, Some(v)) => out.line(format!("p.{} = {}", field_name(&m.name), v)),
+            _ => {}
+        }
+    }
+    out.line("return p");
     out.close("}");
     out.line("");
 

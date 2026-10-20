@@ -123,7 +123,26 @@ pub struct TypeExpr {
     pub align: Option<u64>,
     /// `: Category`: the named constants this field's values come from.
     pub category: Option<(String, Span)>,
+    pub rules: FieldRules,
     pub span: Span,
+}
+
+/// Validation written after a field's type.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct FieldRules {
+    /// `: Category strict`: only the category's values are valid.
+    pub strict: bool,
+    pub constraint: Option<Constraint>,
+    /// `lenient`: keep the value even when a check fails.
+    pub lenient: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Constraint {
+    /// `== value`
+    Equals(ExprNode),
+    /// `in lo..hi`, inclusive
+    Range(ExprNode, ExprNode),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -141,6 +160,7 @@ pub struct BitfieldMember {
     pub width: u32,
     pub signed: bool,
     pub category: Option<(String, Span)>,
+    pub rules: FieldRules,
     pub span: Span,
 }
 
@@ -172,6 +192,17 @@ pub enum PacketItem {
     Calculated(CalculatedField),
     /// `align N` on its own: pad to a multiple of N bytes from the packet start.
     Align(u64, Span),
+    /// `assert expr "message"`
+    Assert(AssertExpr),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AssertExpr {
+    pub expr: ExprNode,
+    /// The expression as written, for the default message.
+    pub source: String,
+    pub message: Option<String>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]

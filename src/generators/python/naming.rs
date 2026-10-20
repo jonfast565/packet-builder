@@ -1,7 +1,7 @@
 //! Python identifiers and type annotations.
 
 use crate::ast::Endianness;
-use crate::generators::common::Dialect;
+use crate::generators::common::{Dialect, magic_literal};
 use crate::ir::{Member, Packet, ValueType};
 
 const KEYWORDS: &[&str] = &[
@@ -26,7 +26,7 @@ pub fn annotation(m: &Member) -> String {
         Some(_) if m.ty.is_byte() => "bytes = b\"\"".into(),
         Some(_) => format!("List[{}] = field(default_factory=list)", scalar),
         None => match &m.ty {
-            ValueType::Int { .. } => "int = 0".into(),
+            ValueType::Int { .. } => format!("int = {}", magic_literal(m).unwrap_or_else(|| "0".into())),
             ValueType::Float { .. } => "float = 0.0".into(),
             ValueType::Mac => "bytes = bytes(6)".into(),
             ValueType::Packet(n) => format!("{} = field(default_factory=lambda: {}())", n, n),

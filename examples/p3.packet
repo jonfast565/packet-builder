@@ -37,20 +37,17 @@ const P3Type u7 {
 }
 
 packet P3Packet be {
-  sync uint8,               // always P3_SYNC
+  sync uint8 == P3_SYNC,
   crc uint16,               // CRC-16/ARC of everything from `length` up to the stop byte
-  length uint16,            // data bytes + P3_LENGTH_OVERHEAD
+  length uint16 in P3_LENGTH_OVERHEAD..0xffff,  // data bytes + P3_LENGTH_OVERHEAD
   tx_seq uint8,             // P3_SEQ_FIRST..P3_SEQ_LAST
   rx_seq uint8,             // last sequence number received from the other side
   kind bitfield uint8 {
-    always_set u1,          // the high bit of the type byte is always 1
-    type u7 : P3Type
+    always_set u1 == 1,     // the high bit of the type byte is always 1
+    type u7 : P3Type strict
   },
   data bytes[length - P3_LENGTH_OVERHEAD],
-  stop uint8,               // always P3_STOP
-  calc valid uint8 = sync == P3_SYNC and stop == P3_STOP and always_set == 1
-                     and type >= P3Type.data and type <= P3Type.heartbeat
-                     and length >= P3_LENGTH_OVERHEAD
+  stop uint8 == P3_STOP
 }
 
 // ---------------------------------------------------------------------
@@ -59,15 +56,15 @@ packet P3Packet be {
 const P3_TOKEN_LENGTH uint16 = 2 "every DATA packet starts with a two-character token"
 
 packet P3DataPacket be {
-  sync uint8,
+  sync uint8 == P3_SYNC,
   crc uint16,
-  length uint16,
+  length uint16 in P3_LENGTH_OVERHEAD + P3_TOKEN_LENGTH..0xffff,
   tx_seq uint8,
   rx_seq uint8,
-  kind bitfield uint8 { always_set u1, type u7 : P3Type },
+  kind bitfield uint8 { always_set u1 == 1, type u7 : P3Type strict },
   token char[P3_TOKEN_LENGTH],  // e.g. "Dd" (login), "SD" (go ahead after INIT), "AA" (chat)
   atoms bytes[length - P3_LENGTH_OVERHEAD - P3_TOKEN_LENGTH],  // FDO91 atom stream; see FdoStream
-  stop uint8
+  stop uint8 == P3_STOP
 }
 
 // The data of a DATA packet on its own.
@@ -127,14 +124,14 @@ packet P3Init be {
 
 // A complete INIT packet in one pass.
 packet P3InitPacket be {
-  sync uint8,
+  sync uint8 == P3_SYNC,
   crc uint16,
-  length uint16,            // P3_INIT_LENGTH
+  length uint16 == P3_INIT_LENGTH,
   tx_seq uint8,
   rx_seq uint8,
-  kind bitfield uint8 { always_set u1, type u7 : P3Type },
+  kind bitfield uint8 { always_set u1 == 1, type u7 : P3Type strict },
   init P3Init,
-  stop uint8
+  stop uint8 == P3_STOP
 }
 
 // ---------------------------------------------------------------------

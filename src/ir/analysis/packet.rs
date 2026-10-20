@@ -12,10 +12,10 @@ use super::consts::ConstTable;
 use super::context::Ctx;
 use super::cursor::{Cursor, const_factor};
 use super::types::{field_value_type, natural_align, value_type};
-use crate::ast::{ArrayLength, BitOrder, BitfieldExpr, Endianness, PacketExpr, PacketItem, TypeExpr, TypeNode};
+use crate::ast::{ArrayLength, BitOrder, BitfieldExpr, Endianness, PacketExpr, PacketItem, Span, TypeExpr, TypeNode};
 use crate::errors::Diagnostic;
 use crate::ir::expr::{TExpr, Ty, coerce};
-use crate::ir::model::{BitPart, Codec, Count, MemberKind, Packet, Step, StrMode, ValueType};
+use crate::ir::model::{Assertion, BitPart, Codec, Count, MemberKind, Packet, Step, StrMode, ValueType};
 
 pub(super) struct PacketBuilder<'a> {
     p: &'a PacketExpr,
@@ -32,6 +32,9 @@ pub(super) struct PacketBuilder<'a> {
     open_ended: bool,
     /// Alignment of this packet when nested (C struct rules under `align N`).
     alignment: u64,
+    /// `assert` items (pass 3) and whether each has an `Assert` step yet.
+    asserts: Vec<(Assertion, Span)>,
+    asserts_scheduled: Vec<bool>,
 }
 
 impl<'a> PacketBuilder<'a> {
@@ -47,6 +50,8 @@ impl<'a> PacketBuilder<'a> {
             cursor: Cursor::START,
             open_ended: false,
             alignment: 1,
+            asserts: Vec::new(),
+            asserts_scheduled: Vec::new(),
         }
     }
 
@@ -65,14 +70,17 @@ impl<'a> PacketBuilder<'a> {
             match item {
                 PacketItem::Field(f) => {
                     if f.id == "_" {
+                        ctx.rules("_", &f.rules, false, f.span);
                         continue;
                     }
                     ctx.declare(&f.id, field_value_type(f), MemberKind::Stored, f.span);
                     ctx.tag(&f.id, &f.category);
+                    ctx.rules(&f.id, &f.rules, f.array.is_some(), f.span);
                 }
                 PacketItem::Bitfield(b) => {
                     for m in &b.members {
                         if m.name == "_" {
+                            ctx.rules("_", &m.rules, false, m.span);
                             continue;
                         }
                         ctx.declare(
@@ -82,6 +90,7 @@ impl<'a> PacketBuilder<'a> {
                             m.span,
                         );
                         ctx.tag(&m.name, &m.category);
+                        ctx.rules(&m.name, &m.rules, false, m.span);
                     }
                 }
                 PacketItem::Calculated(c) => {
@@ -102,7 +111,7 @@ impl<'a> PacketBuilder<'a> {
                     };
                     ctx.declare(&c.name, ty, MemberKind::Calculated(TExpr::IntLit(0)), c.span);
                 }
-                PacketItem::Align(..) => {}
+                PacketItem::Align(..) | PacketItem::Assert(_) => {}
             }
         }
     }
@@ -128,10 +137,17 @@ impl<'a> PacketBuilder<'a> {
         }
     }
 
-    /// Pass 3: calculated field expressions.
+    /// Pass 3: calculated field expressions and assertions.
     fn resolve_calcs(&mut self) {
         let ctx = &mut self.ctx;
         for item in &self.p.items {
+            if let PacketItem::Assert(a) = item
+                && let Some(t) = ctx.check_expr(&a.expr, a.span)
+            {
+                let message = a.message.clone().unwrap_or_else(|| format!("assertion failed: {}", a.source));
+                self.asserts.push((Assertion { cond: coerce(t, Ty::Bool), message }, a.span));
+                self.asserts_scheduled.push(false);
+            }
             if let PacketItem::Calculated(c) = item
                 && let Some(t) = ctx.check_expr(&c.expr, c.span)
             {
@@ -154,7 +170,7 @@ impl<'a> PacketBuilder<'a> {
         self.schedule_calcs();
         for (item_idx, item) in p.items.iter().enumerate() {
             match item {
-                PacketItem::Calculated(_) => {}
+                PacketItem::Calculated(_) | PacketItem::Assert(_) => {}
                 PacketItem::Align(bytes, span) => {
                     if self.open_ended {
                         self.ctx.diags.push(Diagnostic::new(
@@ -180,8 +196,19 @@ impl<'a> PacketBuilder<'a> {
         }
     }
 
+    /// Add `Calc` and `Assert` steps whose inputs are now known.
     fn schedule_calcs(&mut self) {
         self.ctx.schedule_calcs(&mut self.steps, &self.available, &mut self.scheduled);
+        for (index, (a, _)) in self.asserts.iter().enumerate() {
+            let mut deps = Vec::new();
+            a.cond.deps(&mut deps);
+            if !self.asserts_scheduled[index]
+                && deps.iter().all(|d| self.available.contains(d) || self.scheduled.contains(d))
+            {
+                self.asserts_scheduled[index] = true;
+                self.steps.push(Step::Assert { index });
+            }
+        }
     }
 
     /// Padding requested before a field: its explicit `align N`, and under
@@ -360,6 +387,14 @@ impl<'a> PacketBuilder<'a> {
             }
         }
 
+        for (index, (_, span)) in self.asserts.iter().enumerate() {
+            if !self.asserts_scheduled[index] && self.ctx.diags.is_empty() {
+                self.ctx
+                    .diags
+                    .push(Diagnostic::new("this assertion uses a calculated field that depends on itself", *span));
+            }
+        }
+
         let align = self.cursor.align;
         if !align.is_aligned() {
             if align.modulus == 8 {
@@ -395,6 +430,7 @@ impl<'a> PacketBuilder<'a> {
             open_ended: self.open_ended,
             fixed_bits,
             alignment: if p.align.is_some() { self.alignment } else { 1 },
+            asserts: self.asserts.into_iter().map(|(a, _)| a).collect(),
         })
     }
 
@@ -406,6 +442,9 @@ impl<'a> PacketBuilder<'a> {
             if let Some(Count::Expr(e)) = &m.array {
                 e.deps(&mut stack);
             }
+        }
+        for (a, _) in &self.asserts {
+            a.cond.deps(&mut stack);
         }
         while let Some(m) = stack.pop() {
             if let MemberKind::Calculated(e) = &self.ctx.members[m].kind

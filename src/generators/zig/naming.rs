@@ -1,6 +1,6 @@
 //! Zig identifiers, types and default values.
 
-use crate::generators::common::Dialect;
+use crate::generators::common::{Dialect, magic_literal};
 use crate::ir::{Member, Packet, ValueType};
 
 const KEYWORDS: &[&str] = &[
@@ -119,7 +119,7 @@ pub fn member_type(m: &Member) -> String {
 pub fn default_value(m: &Member) -> String {
     match (&m.array, &m.ty) {
         (Some(_), _) => "&.{}".into(),
-        (None, ValueType::Int { .. }) => "0".into(),
+        (None, ValueType::Int { .. }) => magic_literal(m).unwrap_or_else(|| "0".into()),
         (None, ValueType::Float { .. }) => "0".into(),
         (None, ValueType::Mac) => "[_]u8{0} ** 6".into(),
         (None, ValueType::Packet(_)) => ".{}".into(),

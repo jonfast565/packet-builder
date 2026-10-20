@@ -47,3 +47,24 @@ fn pad(offset: usize, unit: usize) -> usize {
 fn sext(v: u64, width: u32) -> i64 {
     if width < 64 && (v >> (width - 1)) & 1 == 1 { (v | (u64::MAX << width)) as i64 } else { v as i64 }
 }
+
+/// Members whose enforced checks apply to a step (the field it reads or
+/// writes, or a bitfield's parts).
+fn checked_members(step: &crate::ir::Step) -> Vec<usize> {
+    use crate::ir::Step;
+    match step {
+        Step::Field { member: Some(mi), array: None, .. } => vec![*mi],
+        Step::Bitfield { parts, .. } => parts.iter().map(|b| b.member).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Fail with a `constraint` error unless `cond` holds.
+fn check(
+    cond: &crate::ir::TExpr,
+    message: &str,
+    values: &[Value],
+    fail: impl FnOnce(String) -> Error,
+) -> Result<(), Error> {
+    if eval::eval(cond, &eval::Env { values }).bool() { Ok(()) } else { Err(fail(message.to_string())) }
+}

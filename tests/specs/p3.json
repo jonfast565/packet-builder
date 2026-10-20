@@ -14,8 +14,7 @@
         "always_set": 1,
         "type": 35,
         "data": "039d116180000000050f00001fb4b53ec00014d1032000000000040a0000014b070504ffff0000000000fffec8f718000001b207",
-        "stop": 13,
-        "valid": 1
+        "stop": 13
       }
     },
     {
@@ -116,8 +115,7 @@
         "tx_seq": 16,
         "rx_seq": 17,
         "type": 36,
-        "data": "",
-        "valid": 1
+        "data": ""
       }
     },
     {
@@ -125,8 +123,7 @@
       "packet": "P3Packet",
       "hex": "5a26bc00037f10a60d",
       "expect": {
-        "type": 38,
-        "valid": 1
+        "type": 38
       }
     },
     {
@@ -134,8 +131,7 @@
       "packet": "P3Packet",
       "hex": "5a9a6c00031212a50d",
       "expect": {
-        "type": 37,
-        "valid": 1
+        "type": 37
       }
     },
     {
@@ -145,8 +141,7 @@
       "expect": {
         "type": 32,
         "length": 88,
-        "data": "44640016000100010a0400000001010b040000000503010a736f6d65677579202020011d00011d00010a040000000203010970617373776f726431011d00010a0400000010010b0400000001011d00011d00000200",
-        "valid": 1
+        "data": "44640016000100010a0400000001010b040000000503010a736f6d65677579202020011d00011d00010a040000000203010970617373776f726431011d00010a0400000010010b0400000001011d00011d00000200"
       }
     },
     {
@@ -318,31 +313,25 @@
       }
     },
     {
-      "name": "bad sync byte decodes but is flagged",
+      "name": "bad sync byte is rejected",
       "packet": "P3Packet",
       "hex": "5b6a0c00031011a40d",
-      "expect": {
-        "sync": 91,
-        "valid": 0
-      }
+      "error_kind": "constraint",
+      "error_path": "P3Packet.sync"
     },
     {
-      "name": "missing stop byte is flagged",
+      "name": "missing stop byte is rejected",
       "packet": "P3Packet",
       "hex": "5a6a0c00031011a40a",
-      "expect": {
-        "stop": 10,
-        "valid": 0
-      }
+      "error_kind": "constraint",
+      "error_path": "P3Packet.stop"
     },
     {
-      "name": "type byte without the high bit is flagged",
+      "name": "type byte without the high bit is rejected",
       "packet": "P3Packet",
       "hex": "5a6a0c00031011240d",
-      "expect": {
-        "always_set": 0,
-        "valid": 0
-      }
+      "error_kind": "constraint",
+      "error_path": "P3Packet.kind"
     },
     {
       "name": "length below 3 is rejected",

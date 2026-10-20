@@ -37,6 +37,10 @@ impl StepEmitter for Decoder<'_> {
         self.scope.packet
     }
 
+    fn check(&self, out: &mut Out, cond: &TExpr, _message: &str) {
+        out.line(format!("if (!{}) return pb_r.fail(PbError.Constraint);", self.scope.expr(cond)));
+    }
+
     fn locate(&self, out: &mut Out, field: &str) {
         out.line(format!("pb_r.at(\"{}\");", field));
     }

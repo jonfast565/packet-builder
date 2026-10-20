@@ -2,7 +2,7 @@
 
 use super::expr::store_value;
 use super::naming::{Rust, ident, scalar_type};
-use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mask};
+use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mask, string_literal};
 use crate::ir::{BitPart, Codec, Count, Member, Packet, StrMode, TExpr, ValueType};
 
 /// Expression that reads one element.
@@ -40,6 +40,14 @@ impl<'a> Decoder<'a> {
 impl StepEmitter for Decoder<'_> {
     fn packet(&self) -> &Packet {
         self.scope.packet
+    }
+
+    fn check(&self, out: &mut Out, cond: &TExpr, message: &str) {
+        out.line(format!(
+            "if !{} {{ return Err(pb_r.error(PbErrorKind::Constraint, {}.into())); }}",
+            self.scope.expr(cond),
+            string_literal(message)
+        ));
     }
 
     fn locate(&self, out: &mut Out, field: &str) {

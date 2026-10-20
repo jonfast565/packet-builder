@@ -40,7 +40,7 @@ fn main() -> Result<(), PbError> {
         let packet = P3Packet::decode_from(&mut reader)?;
         let raw = &bytes[start..reader.position_bits() / 8];
         let crc_ok = crc16_arc(&raw[3..raw.len() - 1]) == packet.crc;
-        println!("type 0x{:02x} tx 0x{:02x} valid {} crc ok {}", packet.r#type, packet.tx_seq, packet.valid, crc_ok);
+        println!("type 0x{:02x} tx 0x{:02x} crc ok {}", packet.r#type, packet.tx_seq, crc_ok);
 
         match packet.r#type {
             P3Type::INIT => {

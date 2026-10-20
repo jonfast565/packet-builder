@@ -3,11 +3,13 @@
 //! - [`analyze`] (this file): packet names and dependency order.
 //! - `packet`: per-packet passes ([`PacketBuilder`](packet::PacketBuilder)).
 //! - `consts`: named constants and categories, and `: Category` tags.
+//! - `checks`: `== value`, `in lo..hi`, `strict` and `lenient` on fields.
 //! - `context`: the member table and diagnostics shared by those passes.
 //! - `typecheck`, `codec`: expression and wire-format resolution.
 //! - `cursor`: what is known about the bit offset while laying out fields.
 //! - `types`: facts about source type names.
 
+mod checks;
 mod codec;
 mod consts;
 mod context;

@@ -11,7 +11,7 @@ import struct
 from packets import (
     FLAP_START, Channel, Charset, Flap, FlapSignon, FragmentId, IcbmChannel,
     IcbmMessage, IcbmReceive, IcbmSend, IcbmSubtype, IcbmTlv, MessageText,
-    PbError, PbReader, ServerReady, ServiceSubtype, SnacFamily, SnacHeader, Tlv,
+    PbReader, ServerReady, ServiceSubtype, SnacFamily, SnacHeader, Tlv,
 )
 
 # What a client receives right after connecting to a BOS server: the sign-on
@@ -45,9 +45,7 @@ def message_text(tlvs):
 
 def main():
     reply = None
-    for frame in frames(STREAM):
-        if not frame.valid:
-            raise PbError(PbError.CONSTRAINT, "not a FLAP frame")
+    for frame in frames(STREAM):  # a bad start byte or channel raises PbError
         if frame.channel == Channel.SIGNON:
             print("sign-on, protocol version", FlapSignon.decode(frame.payload).version)
             continue

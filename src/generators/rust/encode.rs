@@ -1,8 +1,8 @@
 //! Rust encoder statements.
 
 use super::naming::{Rust, ident};
-use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mask};
-use crate::ir::{BitPart, Codec, Count, Member, Packet, StrMode, ValueType};
+use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mask, string_literal};
+use crate::ir::{BitPart, Codec, Count, Member, Packet, StrMode, TExpr, ValueType};
 
 /// Statements that write one element held in `v`.
 fn write_elem(out: &mut Out, codec: &Codec, ty: &ValueType, v: &str) {
@@ -45,6 +45,18 @@ impl<'a> Encoder<'a> {
 impl StepEmitter for Encoder<'_> {
     fn packet(&self) -> &Packet {
         self.scope.packet
+    }
+
+    fn check(&self, out: &mut Out, cond: &TExpr, message: &str) {
+        out.line(format!(
+            "if !{} {{ return Err(pb_w.error(PbErrorKind::Constraint, {}.into())); }}",
+            self.scope.expr(cond),
+            string_literal(message)
+        ));
+    }
+
+    fn encoding(&self) -> bool {
+        true
     }
 
     fn locate(&self, out: &mut Out, field: &str) {

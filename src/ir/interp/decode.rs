@@ -3,7 +3,7 @@
 use super::eval::{Env, eval, store};
 use super::rt::{PbError, PbErrorKind, PbReader};
 use super::value::{Struct, Value};
-use super::{intern, pad, sext};
+use super::{check, checked_members, intern, pad, sext};
 use crate::ir::{BitPart, Codec, Count, Module, Packet, Step, StrMode, ValueType};
 
 /// Decode packet `name` from the start of `data`; trailing bytes are ignored.
@@ -38,6 +38,11 @@ impl Decoder<'_, '_, '_> {
         let start = self.r.position_bits();
         for step in &p.steps {
             self.step(p, step, &mut values, start)?;
+            for mi in checked_members(step) {
+                for c in p.members[mi].enforced_checks() {
+                    check(&c.cond, &c.message, &values, |m| self.r.error(PbErrorKind::Constraint, m))?;
+                }
+            }
         }
         self.r.leave();
         Ok(Struct { packet: p.name.clone(), fields: p.members.iter().map(|m| m.name.clone()).zip(values).collect() })
@@ -53,6 +58,11 @@ impl Decoder<'_, '_, '_> {
             Step::Align { bytes } => {
                 let skip = pad(self.r.position_bits() - start, *bytes as usize * 8);
                 self.r.skip_bits(skip)
+            }
+            Step::Assert { index } => {
+                self.r.at("");
+                let a = &p.asserts[*index];
+                check(&a.cond, &a.message, values, |m| self.r.error(PbErrorKind::Constraint, m))
             }
             Step::Calc { member } => {
                 let m = &p.members[*member];

@@ -81,6 +81,14 @@ lsb_kw      = @{ "lsb" }
 align_kw    = @{ "align" }
 wordsize_kw = @{ "wordsize" }
 
+// Validation. Only `assert` is reserved (it starts a rule); the others are
+// only special after a field's type.
+assert_kw  = @{ "assert" }
+in_kw      = @{ "in" ~ !(alnum | underscore) }
+strict_kw  = @{ "strict" ~ !(alnum | underscore) }
+lenient_kw = @{ "lenient" ~ !(alnum | underscore) }
+dotdot     = @{ ".." }
+
 // ===============================
 // Keyword reservation
 // ===============================
@@ -92,7 +100,7 @@ keyword = _{
   | sqrt_kw | min_kw | max_kw
   | le_kw | be_kw
   | bitfield_kw | msb_kw | lsb_kw
-  | align_kw | wordsize_kw
+  | align_kw | wordsize_kw | assert_kw
   // Type names are not reserved: they are only special in type position, so
   // a field may be called `word` or `string`.
 }
@@ -188,7 +196,7 @@ alignment = { align_kw ~ numeric_constant }
 bit_order = @{ msb_kw | lsb_kw }
 
 // Endianness specifier (optional per packet/field)
-endianness = @{ le_kw | be_kw }
+endianness = @{ (le_kw | be_kw) ~ !(alnum | underscore) }
 
 // ===============================
 // Expressions, loosest first: or, and, not, comparison, |, xor, &, << >>,
@@ -220,10 +228,16 @@ parameter_list = { lparen ~ (expr ~ (comma ~ expr)*)? ~ comma? ~ rparen } // all
 function_call = { intrinsic_function ~ parameter_list }
 
 // Accessors & declarations
-declaration = { identifier ~ field_type ~ array_specifier? ~ endianness? ~ alignment? ~ category_tag? }
+declaration = {
+    identifier ~ field_type ~ array_specifier? ~ endianness? ~ alignment? ~ category_tag? ~ constraint? ~ lenient_kw?
+}
 
-// `: Category` notes which named constants a field's values come from.
-category_tag = { colon ~ identifier }
+// `: Category` notes which named constants a field's values come from;
+// `strict` rejects any other value.
+category_tag = { colon ~ identifier ~ strict_kw? }
+
+// `== MAGIC` (the field always holds this value) or `in 1..255` (inclusive).
+constraint = { (eq ~ expr) | (in_kw ~ expr ~ dotdot ~ expr) }
 
 // A fixed-size integer container split into named sub-fields:
 //   flags bitfield uint8 { one u1, two u2, _ u5 }
@@ -232,7 +246,7 @@ bitfield_declaration = {
     identifier ~ bitfield_kw ~ (type_name | bit_type) ~ endianness? ~ bit_order? ~ alignment?
     ~ lbracket ~ bitfield_member ~ (comma ~ bitfield_member)* ~ comma? ~ rbracket
 }
-bitfield_member = { identifier ~ bit_type ~ category_tag? }
+bitfield_member = { identifier ~ bit_type ~ category_tag? ~ constraint? ~ lenient_kw? }
 accessor    = { aggregate_accessor | qualified_accessor | direct_value_accessor }
 
 // `Category.member`: a named constant from a category.
@@ -277,7 +291,10 @@ packet  = {
 
 rule_list = { rule ~ (comma ~ rule)* ~ comma? }
 
-rule = { calculated_field | align_directive | bitfield_declaration | declaration }
+rule = { calculated_field | align_directive | assert_directive | bitfield_declaration | declaration }
+
+// `assert expr "message"`: decoding and encoding fail when expr is false.
+assert_directive = { assert_kw ~ expr ~ string? }
 
 // Pad with zero bytes up to the next multiple of N bytes from the packet start.
 align_directive = { align_kw ~ numeric_constant }

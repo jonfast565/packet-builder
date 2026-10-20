@@ -1,13 +1,27 @@
 //! Field-by-field layout report (the `layout` command).
 
-use super::model::{Codec, Count, Member, Module, Packet, Step, StrMode, ValueType};
+use super::model::{CheckKind, Codec, Count, Member, Module, Packet, Step, StrMode, ValueType};
 
-/// `u8` becomes `u8 : Channel` for a member tagged with a category.
+/// `u8` becomes `u8 : Channel strict == 0x2a lenient` with the member's
+/// category and checks.
 fn with_category(kind: String, member: Option<&Member>) -> String {
-    match member.and_then(|m| m.category.as_ref()) {
-        Some(c) => format!("{} : {}", kind, c),
-        None => kind,
+    let Some(m) = member else { return kind };
+    let mut out = kind;
+    if let Some(c) = &m.category {
+        out = format!("{} : {}", out, c);
     }
+    for check in &m.checks {
+        match &check.kind {
+            CheckKind::InCategory(_) => out.push_str(" strict"),
+            CheckKind::Equals(v) if *v >= 10 => out.push_str(&format!(" == 0x{:x}", v)),
+            CheckKind::Equals(v) => out.push_str(&format!(" == {}", v)),
+            CheckKind::Range(lo, hi) => out.push_str(&format!(" in {}..{}", lo, hi)),
+        }
+    }
+    if m.lenient {
+        out.push_str(" lenient");
+    }
+    out
 }
 
 /// One row of a packet's layout, for display.
@@ -31,7 +45,7 @@ impl Module {
         let mut offset = Some(0u64);
         for step in &packet.steps {
             match step {
-                Step::Calc { .. } => {}
+                Step::Calc { .. } | Step::Assert { .. } => {}
                 Step::Align { bytes } => {
                     let unit = bytes * 8;
                     let size = offset.map(|o| (unit - o % unit) % unit);

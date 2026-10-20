@@ -103,7 +103,7 @@ fn rust_p3_demo() {
     )
     .unwrap();
     let out = harness::run(&mut Command::new(dir.join("demo")), "p3 demo").unwrap();
-    assert!(out.contains("type 0x23 tx 0x7f valid 1 crc ok true"), "{}", out);
-    assert!(out.contains("type 0x20 tx 0x10 valid 1 crc ok true"), "{}", out);
+    assert!(out.contains("type 0x23 tx 0x7f crc ok true"), "{}", out);
+    assert!(out.contains("type 0x20 tx 0x10 crc ok true"), "{}", out);
     assert!(out.contains("DATA Dd: 14 atoms, screen name someguy"), "{}", out);
 }

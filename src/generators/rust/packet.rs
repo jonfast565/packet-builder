@@ -4,13 +4,14 @@ use super::decode::Decoder;
 use super::encode::Encoder;
 use super::expr::store_value;
 use super::naming::{ident, member_type, scalar_type};
-use crate::generators::common::{Out, StepEmitter, member_category};
+use crate::generators::common::{Out, StepEmitter, magic_literal, member_category};
 use crate::ir::Packet;
 
 pub fn emit_packet(out: &mut Out, p: &Packet) {
     let name = &p.name;
 
-    out.line("#[derive(Debug, Clone, PartialEq, Default)]");
+    let magic = p.members.iter().any(|m| m.magic().is_some());
+    out.line(if magic { "#[derive(Debug, Clone, PartialEq)]" } else { "#[derive(Debug, Clone, PartialEq, Default)]" });
     out.open(format!("pub struct {} {{", name));
     for m in &p.members {
         if let Some(cat) = member_category(m) {
@@ -20,6 +21,21 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     }
     out.close("}");
     out.line("");
+
+    if magic {
+        // Members with `== value` start with that value.
+        out.open(format!("impl Default for {} {{", name));
+        out.open("fn default() -> Self {");
+        out.open(format!("{} {{", name));
+        for m in &p.members {
+            let v = magic_literal(m).unwrap_or_else(|| "Default::default()".into());
+            out.line(format!("{}: {},", ident(&m.name), v));
+        }
+        out.close("}");
+        out.close("}");
+        out.close("}");
+        out.line("");
+    }
 
     out.open(format!("impl {} {{", name));
 

@@ -43,7 +43,15 @@ impl<'a> Ctx<'a> {
                 span,
             ));
         }
-        self.members.push(Member { name: name.to_string(), ty, array: None, kind, category: None });
+        self.members.push(Member {
+            name: name.to_string(),
+            ty,
+            array: None,
+            kind,
+            category: None,
+            checks: Vec::new(),
+            lenient: false,
+        });
     }
 
     /// Add calculated fields to the decode steps once their inputs are known.

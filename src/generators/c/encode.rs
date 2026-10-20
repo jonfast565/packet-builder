@@ -2,7 +2,7 @@
 
 use super::naming::{C, ident, len_ident};
 use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mask};
-use crate::ir::{BitPart, Codec, Count, Member, Packet, StrMode, ValueType};
+use crate::ir::{BitPart, Codec, Count, Member, Packet, StrMode, TExpr, ValueType};
 
 fn write_elem(out: &mut Out, codec: &Codec, ty: &ValueType, v: &str) {
     if let ValueType::Int { width, signed } = ty
@@ -49,6 +49,14 @@ impl<'a> Encoder<'a> {
 impl StepEmitter for Encoder<'_> {
     fn packet(&self) -> &Packet {
         self.scope.packet
+    }
+
+    fn check(&self, out: &mut Out, cond: &TExpr, _message: &str) {
+        out.line(format!("PB_CHECK({} ? PB_OK : PB_ERR_CONSTRAINT);", self.scope.expr(cond)));
+    }
+
+    fn encoding(&self) -> bool {
+        true
     }
 
     fn locate(&self, out: &mut Out, field: &str) {

@@ -10,8 +10,7 @@
         "channel": 1,
         "sequence": 7994,
         "length": 4,
-        "payload": "00000001",
-        "valid": 1
+        "payload": "00000001"
       }
     },
     {
@@ -36,18 +35,15 @@
       "expect": {
         "channel": 5,
         "length": 0,
-        "payload": "",
-        "valid": 1
+        "payload": ""
       }
     },
     {
-      "name": "FLAP with a bad start byte decodes but is flagged",
+      "name": "FLAP with a bad start byte is rejected",
       "packet": "Flap",
       "hex": "210200000000",
-      "expect": {
-        "start": 33,
-        "valid": 0
-      }
+      "error_kind": "constraint",
+      "error_path": "Flap.start"
     },
     {
       "name": "FLAP truncated payload",
@@ -252,8 +248,7 @@
         "channel": 2,
         "sequence": 4660,
         "length": 29,
-        "payload": "00170006000000000000000100076578616d706c65004b0000005a0000",
-        "valid": 1
+        "payload": "00170006000000000000000100076578616d706c65004b0000005a0000"
       }
     },
     {

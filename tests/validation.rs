@@ -301,3 +301,47 @@ fn category_tags_are_checked() {
     );
     assert_error("const K int8 { a = 0 - 1 }\npacket P { x uint8 : K }", "`K.a` = -1 does not fit `x` (u8)");
 }
+
+#[test]
+fn checks_need_single_integers() {
+    assert_error("packet P { a uint8[2] == 1 }", "`a` is not a single integer");
+    assert_error("packet P { s cstring == 1 }", "`s` is not a single integer");
+}
+
+#[test]
+fn checked_values_are_constants_that_fit() {
+    assert_error("packet P { a uint8, b uint8 == a }", "must be a constant integer expression");
+    assert_error("packet P { a uint8 == 300 }", "300 does not fit `a`");
+    assert_error("packet P { a u3 in 0..9 }", "9 does not fit `a`");
+    assert_error("packet P { a uint8 in 5..1 }", "the range 5..1 of `a` is empty");
+}
+
+#[test]
+fn strict_needs_a_category() {
+    assert_error("const K uint8 { x = 1 }\npacket P { a uint8 : K, b uint8 strict }", "expected");
+    assert_error("packet P { a uint8 : Missing strict }", "unknown category `Missing`");
+}
+
+#[test]
+fn lenient_needs_a_check() {
+    assert_error("packet P { a uint8 lenient }", "`lenient` on `a` has no check to relax");
+}
+
+#[test]
+fn padding_cannot_be_checked() {
+    assert_error("packet P { _ uint8 == 0 }", "padding (`_`) cannot have checks");
+}
+
+#[test]
+fn assertions_are_type_checked() {
+    assert_error("packet P { a uint8, assert b > 1 }", "unknown field `b`");
+    assert_error("packet P { assert uint8 }", "unknown field `uint8`");
+}
+
+#[test]
+fn checks_compile() {
+    compile(
+        "const K u4 { x = 1 }\npacket P be { a uint8 == 1, b u4 : K strict, c u4 in 0..3 lenient, assert a + c < 9 }",
+    )
+    .unwrap();
+}

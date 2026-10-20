@@ -3,7 +3,7 @@
 
 use super::naming::{Zig, ident};
 use crate::generators::common::{Dialect, Mode, Out, Scope, StepEmitter, mask};
-use crate::ir::{BitPart, Codec, Count, Member, Packet, StrMode, ValueType};
+use crate::ir::{BitPart, Codec, Count, Member, Packet, StrMode, TExpr, ValueType};
 
 fn write_elem(out: &mut Out, codec: &Codec, v: &str) {
     match codec {
@@ -36,6 +36,14 @@ impl<'a> Encoder<'a> {
 impl StepEmitter for Encoder<'_> {
     fn packet(&self) -> &Packet {
         self.scope.packet
+    }
+
+    fn check(&self, out: &mut Out, cond: &TExpr, _message: &str) {
+        out.line(format!("if (!{}) return pb_w.fail(PbError.Constraint);", self.scope.expr(cond)));
+    }
+
+    fn encoding(&self) -> bool {
+        true
     }
 
     fn locate(&self, out: &mut Out, field: &str) {

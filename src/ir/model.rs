@@ -115,6 +115,15 @@ pub struct Packet {
     pub fixed_bits: Option<u64>,
     /// Alignment in bytes of the packet when nested (from `packet P align N`).
     pub alignment: u64,
+    /// `assert` items, in source order (`Step::Assert` refers to them).
+    pub asserts: Vec<Assertion>,
+}
+
+/// `assert cond "message"`.
+#[derive(Debug, Clone)]
+pub struct Assertion {
+    pub cond: TExpr,
+    pub message: String,
 }
 
 impl Packet {
@@ -140,9 +149,47 @@ pub struct Member {
     pub kind: MemberKind,
     /// `: Category`: the named constants this member's values come from.
     pub category: Option<String>,
+    /// Declared checks on the value (`== v`, `in a..b`, `: Category strict`).
+    pub checks: Vec<Check>,
+    /// `lenient`: generated codecs do not enforce `checks`.
+    pub lenient: bool,
+}
+
+/// A declared check on a member's value. Decoding fails with a `constraint`
+/// error when `cond` is false (after reading the member); encoding fails
+/// before writing it.
+#[derive(Debug, Clone)]
+pub struct Check {
+    pub kind: CheckKind,
+    pub cond: TExpr,
+    /// What the value must be, for error messages ("`start` must be 0x2a").
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum CheckKind {
+    /// `== value`: a magic value; the member also defaults to it.
+    Equals(i64),
+    /// `in lo..hi`, inclusive.
+    Range(i64, i64),
+    /// `: Category strict`: one of the category's values.
+    InCategory(String),
 }
 
 impl Member {
+    /// The value of a `== value` check: what the member defaults to.
+    pub fn magic(&self) -> Option<i64> {
+        self.checks.iter().find_map(|c| match c.kind {
+            CheckKind::Equals(v) => Some(v),
+            _ => None,
+        })
+    }
+
+    /// The checks generated codecs enforce (none for `lenient` members).
+    pub fn enforced_checks(&self) -> &[Check] {
+        if self.lenient { &[] } else { &self.checks }
+    }
+
     pub fn is_calculated(&self) -> bool {
         matches!(self.kind, MemberKind::Calculated(_))
     }
@@ -291,6 +338,8 @@ pub enum Step {
     /// Skip (decode) or zero-fill (encode) to the next multiple of `bytes`
     /// bytes counted from the start of the packet.
     Align { bytes: u64 },
+    /// Check `Packet::asserts[index]`, once its inputs are known.
+    Assert { index: usize },
 }
 
 #[derive(Debug, Clone)]

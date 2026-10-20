@@ -1,6 +1,6 @@
 //! C# identifiers and types.
 
-use crate::generators::common::{Dialect, GenOptions, pascal_case};
+use crate::generators::common::{Dialect, GenOptions, magic_literal, pascal_case};
 use crate::ir::{Member, Packet, ValueType, storage_for};
 
 /// C# property name for a member of packet `packet`.
@@ -53,7 +53,7 @@ pub fn default_value(m: &Member) -> Option<String> {
         (None, ValueType::Mac) => Some("new byte[6]".into()),
         (None, ValueType::Packet(n)) => Some(format!("new {}()", n)),
         (None, ValueType::Str) => Some("\"\"".into()),
-        _ => None,
+        _ => magic_literal(m),
     }
 }
 

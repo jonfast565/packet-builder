@@ -305,6 +305,37 @@ packet Flap be {
   rejected, as are names the generated code already uses (`Math`, `EOF`,
   `INT8_MAX`, anything starting with `pb`, ...).
 
+### Validation
+
+Fields can say which values are valid. Decoding fails with a `constraint`
+error (naming the field) as soon as a value breaks a check, and encoding
+checks before writing:
+
+```
+packet Flap be {
+  start uint8 == FLAP_START,        // a magic value
+  channel uint8 : Channel strict,   // one of the category's values
+  ttl uint8 in 1..64,               // an inclusive range of constants
+  version uint8 == 2 lenient,       // documented, but not enforced
+  flags bitfield uint8 { mode u3 in 0..5, _ u5 },
+  length uint16,
+  payload bytes[length],
+  assert length <= 1024 "payload too large"
+}
+```
+
+* `== value` declares a magic value. Members with one start out holding
+  it (struct defaults in Rust, Python, C#, Zig; `P_init()` in C; `NewP()` in
+  Go), so building a packet only takes the fields that vary.
+* `in lo..hi` and `== value` take constant expressions that must fit the
+  field. Checks apply to single integer fields and bitfield members.
+* `: Category strict` accepts only the values listed in the category.
+* `lenient` keeps the checks in the description (`layout` and the Wireshark
+  dissector show them) without enforcing them in generated codecs.
+* `assert expr "message"` checks any condition over the packet's fields
+  (calculated ones included) as soon as its inputs are decoded, and before
+  encoding writes anything. The message is optional.
+
 ### Expressions
 
 * literals: `42`, `0x2a`, `0b1010`, `1.5`

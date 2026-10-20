@@ -33,12 +33,11 @@ const Channel uint8 {
 }
 
 packet Flap be {
-  start uint8,              // always FLAP_START
-  channel uint8 : Channel,
+  start uint8 == FLAP_START,
+  channel uint8 : Channel strict,
   sequence uint16,
   length uint16,
-  payload bytes[length],
-  calc valid uint8 = start == FLAP_START and channel >= Channel.signon and channel <= Channel.keep_alive
+  payload bytes[length]
 }
 ```
 
@@ -51,8 +50,10 @@ packet Flap be {
 * `bytes[length]` takes its size from a field decoded earlier. The decoder
   checks `length` against the remaining input before allocating, so a corrupt
   frame produces an error instead of a huge allocation or an over-read.
-* `valid` is a **calculated field**. It is evaluated during decoding and is
-  not written when encoding.
+* `start uint8 == FLAP_START` is a **magic value**: decoding anything else
+  fails with a `constraint` error (`Flap.start: ...`), encoding checks it
+  too, and a new `Flap` starts out holding it. `strict` on `channel` does the
+  same with the values of the `Channel` category.
 * The encoder checks that `payload` really has `length` bytes.
 
 ## 2. SNAC header: a bitfield and an optional block
