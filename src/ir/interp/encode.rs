@@ -5,7 +5,9 @@ use super::rt::{PbError, PbErrorKind, PbWriter};
 use super::value::{Struct, Value};
 use super::{check, checked_members, intern, pad};
 use crate::ast::Endianness;
-use crate::ir::{BitPart, Codec, Count, Module, Packet, Step, StrMode, ValueType};
+use std::collections::HashMap;
+
+use crate::ir::{BitPart, Codec, Count, Mark, Module, Packet, Step, StrMode, ValueType};
 
 /// Encode `value`, a packet named `name`. Members missing from the value
 /// count as zero.
@@ -48,17 +50,45 @@ impl Encoder<'_> {
         // generated encoders.
         for (m, e) in p.encode_calc_members() {
             let idx = p.members.iter().position(|x| x.name == m.name).expect("member");
-            values[idx] = store(eval(e, &Env { values: &values }), &m.ty);
+            let v = eval(e, &Env::new(&values));
+            // Derived values are range-checked when written, so keep them whole.
+            values[idx] = if m.is_derived() { Value::Int(v.int() as i128) } else { store(v, &m.ty) };
         }
         let start = w.position_bits();
-        for step in &p.steps {
-            for mi in checked_members(step) {
+        let mut marks = HashMap::from([(Mark::PacketStart, start)]);
+        for (i, step) in p.steps.iter().enumerate() {
+            for mi in checked_members(step).into_iter().filter(|m| !p.patches.contains(m)) {
                 for c in p.members[mi].enforced_checks() {
                     w.at(intern(self.field_name(p, step)));
                     check(&c.cond, &c.message, &values, |m| w.error(PbErrorKind::Constraint, m))?;
                 }
             }
+            marks.insert(Mark::Before(i), w.position_bits());
             self.step(p, step, &values, start, w)?;
+            marks.insert(Mark::After(i), w.position_bits());
+        }
+        marks.insert(Mark::PacketEnd, w.position_bits());
+        // Fields derived from the encoded bytes: compute, check, patch.
+        for &mi in &p.patches {
+            let m = &p.members[mi];
+            let (Some(si), Some(e)) = (p.field_step(mi), m.derived_expr()) else { continue };
+            let Step::Field { codec, ty, .. } = &p.steps[si] else { continue };
+            w.at(intern(&m.name));
+            let v = {
+                let wr: &PbWriter = w;
+                let sum = |a, f, t, hf, ht| wr.checksum(a, f, t, hf, ht);
+                eval(e, &Env { values: &values, marks: Some(&marks), checksum: Some(&sum) }).int()
+            };
+            values[mi] = Value::Int(v as i128);
+            for c in m.enforced_checks() {
+                check(&c.cond, &c.message, &values, |msg| w.error(PbErrorKind::Constraint, msg))?;
+            }
+            let raw = int_bits(ty, &values[mi], w)?;
+            let at = marks[&Mark::Before(si)];
+            match codec {
+                Codec::Bytes { nbytes, endian } => w.patch_uint(at, raw, *nbytes, little(endian)),
+                _ => w.patch_bits(at, raw, codec.bits()),
+            }
         }
         w.leave();
         Ok(())
@@ -74,7 +104,7 @@ impl Encoder<'_> {
     }
 
     fn expr(&self, values: &[Value], e: &crate::ir::TExpr) -> i64 {
-        eval(e, &Env { values }).int()
+        eval(e, &Env::new(values)).int()
     }
 
     fn step(&self, p: &Packet, step: &Step, values: &[Value], start: usize, w: &mut PbWriter) -> Result<(), PbError> {
@@ -84,6 +114,7 @@ impl Encoder<'_> {
                 Ok(())
             }
             Step::Calc { .. } => Ok(()),
+            Step::Assert { index } if p.depends_on_wire(&p.asserts[*index].cond) => Ok(()),
             Step::Assert { index } => {
                 w.at("");
                 let a = &p.asserts[*index];
@@ -92,6 +123,11 @@ impl Encoder<'_> {
             Step::Field { member, codec, array, ty } => {
                 let name = member.map(|i| p.members[i].name.as_str()).unwrap_or("_");
                 w.at(intern(name));
+                // A length only known after encoding the body is not checked.
+                let array = &match array {
+                    Some(Count::Expr(e)) if member.is_some() && p.depends_on_wire(e) => Some(Count::Remaining),
+                    a => a.clone(),
+                };
                 match (member, codec) {
                     (Some(mi), Codec::Str(mode)) => self.string(values, &values[*mi], mode, array.as_ref(), w),
                     (None, codec) => {
@@ -101,6 +137,11 @@ impl Encoder<'_> {
                             Some(Count::Expr(e)) => w.write_zero_bits(self.expr(values, e).max(0) as usize * bits),
                             Some(Count::Remaining) => {}
                         }
+                        Ok(())
+                    }
+                    (Some(mi), codec) if array.is_none() && p.patches.contains(mi) => {
+                        // A placeholder, patched after the last step.
+                        w.write_zero_bits(codec.bits() as usize);
                         Ok(())
                     }
                     (Some(mi), codec) => match array {

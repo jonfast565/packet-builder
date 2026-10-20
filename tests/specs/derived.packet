@@ -1,0 +1,90 @@
+// Derived fields: lengths, counts, sizes and checksums that encoding
+// computes and decoding verifies. Used by tests/codegen.rs.
+
+// Lengths and counts derived from values: encoding computes them up front.
+packet Lengths be {
+  len uint16 = len(data),
+  data bytes[len],
+  count uint8 = len(items),
+  items uint16[count],
+  name_len uint8 = len(name),
+  name string[name_len]
+}
+
+// A count over a rest-of-input array, verified when decoding.
+packet Counted be {
+  count uint8 = len(items),
+  items uint16[]
+}
+
+// Sizes measured on the encoded bytes: encoding writes placeholders and
+// patches them; the length check of `body` is skipped when encoding.
+packet Sizes be {
+  total uint16 = sizeof(self),
+  head uint8 = sizeof(total..head),
+  body_at uint8 = offsetof(body),
+  body bytes[total - 4]
+}
+
+// A checksum over the whole header, its own bytes counted as zero (IPv4
+// style), next to a length it covers.
+packet Header be {
+  version uint8 == 4,
+  len uint8 = sizeof(self),
+  checksum uint16 = internet(self),
+  opts bytes[len - 4]
+}
+
+// The CRC covers a length that is itself patched: lengths go first.
+packet Framed be {
+  crc uint16 = crc16_arc(length..payload),
+  length uint16 = sizeof(payload),
+  payload bytes[length]
+}
+
+// Derived bit fields, written directly and patched.
+packet BitLen be {
+  n u4 = len(items),
+  _ u4,
+  items uint8[n]
+}
+
+packet BitSize be {
+  size u4 = sizeof(self),
+  flags u4,
+  data bytes[size - 1]
+}
+
+// `lenient` keeps a wrong value when decoding; encoding still computes it.
+packet LenientSum be {
+  data bytes[2],
+  sum uint8 = xor8(data) lenient
+}
+
+// A value that does not fit is an encode error.
+packet SizeRange be {
+  s u2 = sizeof(self) lenient,
+  _ u6,
+  data bytes[]
+}
+
+// An assertion over a derived size is checked when decoding only.
+packet WireAssert be {
+  size uint8 = sizeof(self),
+  data bytes[],
+  assert size < 4 "too big"
+}
+
+// Every checksum algorithm over "123456789" (the standard check value).
+packet CkCrc8 be { data bytes[9], sum uint8 = crc8(data) }
+packet CkCrc16Arc be { data bytes[9], sum uint16 = crc16_arc(data) }
+packet CkCrc16CcittFalse be { data bytes[9], sum uint16 = crc16_ccitt_false(data) }
+packet CkCrc16Xmodem be { data bytes[9], sum uint16 = crc16_xmodem(data) }
+packet CkCrc16Kermit be { data bytes[9], sum uint16 = crc16_kermit(data) }
+packet CkCrc16Modbus be { data bytes[9], sum uint16 = crc16_modbus(data) }
+packet CkCrc32 be { data bytes[9], sum uint32 = crc32(data) }
+packet CkCrc32c be { data bytes[9], sum uint32 = crc32c(data) }
+packet CkInternet be { data bytes[9], sum uint16 = internet(data) }
+packet CkFletcher16 be { data bytes[9], sum uint16 = fletcher16(data) }
+packet CkSum8 be { data bytes[9], sum uint8 = sum8(data) }
+packet CkXor8 be { data bytes[9], sum uint8 = xor8(data) }

@@ -22,6 +22,9 @@ pub enum ExprNode {
     // function call: name(args...)
     Call(String, Vec<ExprNode>),
 
+    // a function over fields: len(x), sizeof(a..b), offsetof(f), crc32(self)
+    RangeCall(String, FieldRange),
+
     GuardExpression(Box<ExprNode>, Box<ExprNode>, Box<ExprNode>), // when cond then a otherwise b
 
     // aggregates: sumof foo / productof bar
@@ -59,6 +62,15 @@ pub enum ExprNode {
     // boolean
     And(Box<ExprNode>, Box<ExprNode>),
     Or(Box<ExprNode>, Box<ExprNode>),
+}
+
+/// The argument of a function over fields.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FieldRange {
+    /// `self`: the whole packet.
+    Whole,
+    /// `a` or `a..b` (inclusive).
+    Fields(String, Option<String>),
 }
 
 /// Source location of a declaration (byte offsets into the input).
@@ -123,6 +135,8 @@ pub struct TypeExpr {
     pub align: Option<u64>,
     /// `: Category`: the named constants this field's values come from.
     pub category: Option<(String, Span)>,
+    /// `= expr`: a derived field, computed when encoding.
+    pub derive: Option<ExprNode>,
     pub rules: FieldRules,
     pub span: Span,
 }
@@ -186,6 +200,7 @@ pub struct CalculatedField {
 
 /// One entry of a packet body, in source order.
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::large_enum_variant)] // a parse tree, built once
 pub enum PacketItem {
     Field(TypeExpr),
     Bitfield(BitfieldExpr),

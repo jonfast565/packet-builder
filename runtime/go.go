@@ -312,6 +312,12 @@ func (r *PbReader) Count(n int64, elemBits int) int {
 	return int(n)
 }
 
+// Checksum computes algorithm algo over the input between two bit positions
+// (whole bytes); the bytes between holeFrom and holeTo count as zero.
+func (r *PbReader) Checksum(algo, from, to, holeFrom, holeTo int) uint64 {
+	return pbChecksum(algo, r.data, from/8, to/8, holeFrom/8, holeTo/8)
+}
+
 // PbWriter builds a byte buffer; integers may be written at any bit
 // position. The first error is sticky.
 type PbWriter struct {
@@ -409,6 +415,38 @@ func (w *PbWriter) WriteZeroBits(bits int64) {
 	}
 }
 
+// PatchUint overwrites nbytes bytes at bit position at (byte aligned).
+func (w *PbWriter) PatchUint(at int, value uint64, nbytes int, little bool) {
+	if at/8+nbytes > len(w.buf) {
+		return // only after an earlier error
+	}
+	for i := 0; i < nbytes; i++ {
+		shift := 8 * (nbytes - 1 - i)
+		if little {
+			shift = 8 * i
+		}
+		w.buf[at/8+i] = byte(value >> uint(shift))
+	}
+}
+
+// PatchBits overwrites width bits at bit position at, MSB first.
+func (w *PbWriter) PatchBits(at int, value uint64, width int) {
+	if (at+width+7)/8 > len(w.buf) {
+		return // only after an earlier error
+	}
+	for i := 0; i < width; i++ {
+		bit := byte((value >> uint(width-1-i)) & 1)
+		b, off := (at+i)/8, uint(7-(at+i)%8)
+		w.buf[b] = (w.buf[b] &^ (1 << off)) | (bit << off)
+	}
+}
+
+// Checksum computes algorithm algo over the output between two bit
+// positions (whole bytes); the bytes between holeFrom and holeTo count as zero.
+func (w *PbWriter) Checksum(algo, from, to, holeFrom, holeTo int) uint64 {
+	return pbChecksum(algo, w.buf, from/8, to/8, holeFrom/8, holeTo/8)
+}
+
 func (w *PbWriter) CheckLen(actual int, expected int64) {
 	if int64(actual) != expected {
 		w.Fail(PbMismatch, "%d element(s) but the length expression says %d", actual, expected)
@@ -424,6 +462,99 @@ func (w *PbWriter) CheckU(v uint64, width int) {
 func (w *PbWriter) CheckI(v int64, width int) {
 	if width < 64 && (v < -(int64(1)<<uint(width-1)) || v > (int64(1)<<uint(width-1))-1) {
 		w.Fail(PbRange, "value %d does not fit in %d signed bit(s)", v, width)
+	}
+}
+
+// pbSize is the number of whole bytes between two bit positions.
+func pbSize(from, to int) int64 { return int64((to - from) / 8) }
+
+// pbCRC holds the CRC parameters by algorithm number: width, polynomial
+// (reflected for reflected CRCs), initial value, reflected, final XOR.
+var pbCRC = [8]struct {
+	width      int
+	poly, init uint64
+	reflected  bool
+	xorout     uint64
+}{
+	{8, 0x07, 0, false, 0},                         // crc8 (CRC-8/SMBUS)
+	{16, 0xa001, 0, true, 0},                       // crc16_arc
+	{16, 0x1021, 0xffff, false, 0},                 // crc16_ccitt_false (CRC-16/IBM-3740)
+	{16, 0x1021, 0, false, 0},                      // crc16_xmodem
+	{16, 0x8408, 0, true, 0},                       // crc16_kermit
+	{16, 0xa001, 0xffff, true, 0},                  // crc16_modbus
+	{32, 0xedb88320, 0xffffffff, true, 0xffffffff}, // crc32 (CRC-32/ISO-HDLC)
+	{32, 0x82f63b78, 0xffffffff, true, 0xffffffff}, // crc32c (CRC-32/ISCSI)
+}
+
+// pbChecksum computes algorithm algo over buf[from:to] with
+// buf[holeFrom:holeTo] as zeros. 8: Internet checksum (RFC 1071),
+// 9: Fletcher-16, 10: sum8, 11: xor8.
+func pbChecksum(algo int, buf []byte, from, to, holeFrom, holeTo int) uint64 {
+	at := func(i int) uint64 {
+		if i >= holeFrom && i < holeTo {
+			return 0
+		}
+		return uint64(buf[i])
+	}
+	switch {
+	case algo < 8:
+		p := pbCRC[algo]
+		mask := uint64(1)<<uint(p.width) - 1
+		crc := p.init
+		for i := from; i < to; i++ {
+			if p.reflected {
+				crc ^= at(i)
+				for k := 0; k < 8; k++ {
+					if crc&1 != 0 {
+						crc = crc>>1 ^ p.poly
+					} else {
+						crc >>= 1
+					}
+				}
+			} else {
+				crc ^= at(i) << uint(p.width-8)
+				for k := 0; k < 8; k++ {
+					if crc&(1<<uint(p.width-1)) != 0 {
+						crc = (crc<<1 ^ p.poly) & mask
+					} else {
+						crc = crc << 1 & mask
+					}
+				}
+			}
+		}
+		return (crc ^ p.xorout) & mask
+	case algo == 8:
+		var sum uint64
+		for i := from; i < to; i++ {
+			if (i-from)%2 == 0 {
+				sum += at(i) << 8
+			} else {
+				sum += at(i)
+			}
+		}
+		for sum>>16 != 0 {
+			sum = sum&0xffff + sum>>16
+		}
+		return ^sum & 0xffff
+	case algo == 9:
+		var a, b uint64
+		for i := from; i < to; i++ {
+			a = (a + at(i)) % 255
+			b = (b + a) % 255
+		}
+		return b<<8 | a
+	case algo == 10:
+		var a uint64
+		for i := from; i < to; i++ {
+			a = (a + at(i)) & 0xff
+		}
+		return a
+	default:
+		var a uint64
+		for i := from; i < to; i++ {
+			a ^= at(i)
+		}
+		return a
 	}
 }
 

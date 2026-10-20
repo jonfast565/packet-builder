@@ -166,6 +166,11 @@ class PbReader(_PbTrace):
         except UnicodeDecodeError:
             raise self.error(PbError.TEXT, "invalid UTF-8") from None
 
+    def checksum(self, algo, start, end, hole_start, hole_end):
+        """Checksum `algo` of the input between two bit positions (whole
+        bytes); the bytes between `hole_start` and `hole_end` count as zero."""
+        return _pb_checksum(algo, self.data, start // 8, end // 8, hole_start // 8, hole_end // 8)
+
 
 class PbWriter(_PbTrace):
     """Builds a byte buffer; integers may be written at any bit position."""
@@ -208,6 +213,25 @@ class PbWriter(_PbTrace):
     def finish(self):
         return bytes(self.buf)
 
+    def patch_uint(self, at, value, nbytes, little):
+        """Overwrite `nbytes` bytes at bit position `at` (byte aligned)."""
+        start = at // 8
+        self.buf[start:start + nbytes] = (value & ((1 << (8 * nbytes)) - 1)).to_bytes(
+            nbytes, "little" if little else "big"
+        )
+
+    def patch_bits(self, at, value, width):
+        """Overwrite `width` bits at bit position `at`, MSB first."""
+        for i in range(width):
+            bit = (value >> (width - 1 - i)) & 1
+            byte, off = (at + i) // 8, 7 - (at + i) % 8
+            self.buf[byte] = (self.buf[byte] & ~(1 << off)) | (bit << off)
+
+    def checksum(self, algo, start, end, hole_start, hole_end):
+        """Checksum `algo` of the output between two bit positions (whole
+        bytes); the bytes between `hole_start` and `hole_end` count as zero."""
+        return _pb_checksum(algo, self.buf, start // 8, end // 8, hole_start // 8, hole_end // 8)
+
     def utf8_bytes(self, text):
         try:
             return text.encode("utf-8")
@@ -235,6 +259,58 @@ class PbWriter(_PbTrace):
     def check_i(self, v, width):
         if not -(1 << (width - 1)) <= v < (1 << (width - 1)):
             raise self.error(PbError.RANGE, "value %d does not fit in %d signed bit(s)" % (v, width))
+
+
+# CRC parameters by algorithm number: width, polynomial (reflected for
+# reflected CRCs), initial value, reflected, final XOR.
+_PB_CRC = (
+    (8, 0x07, 0, False, 0),  # crc8 (CRC-8/SMBUS)
+    (16, 0xA001, 0, True, 0),  # crc16_arc
+    (16, 0x1021, 0xFFFF, False, 0),  # crc16_ccitt_false (CRC-16/IBM-3740)
+    (16, 0x1021, 0, False, 0),  # crc16_xmodem
+    (16, 0x8408, 0, True, 0),  # crc16_kermit
+    (16, 0xA001, 0xFFFF, True, 0),  # crc16_modbus
+    (32, 0xEDB88320, 0xFFFFFFFF, True, 0xFFFFFFFF),  # crc32 (CRC-32/ISO-HDLC)
+    (32, 0x82F63B78, 0xFFFFFFFF, True, 0xFFFFFFFF),  # crc32c (CRC-32/ISCSI)
+)
+
+
+def _pb_checksum(algo, buf, start, end, hole_start, hole_end):
+    """Checksum `algo` of buf[start:end] with buf[hole_start:hole_end] as
+    zeros. 8: Internet checksum (RFC 1071), 9: Fletcher-16, 10: sum8, 11: xor8."""
+    data = bytearray(buf[start:end])
+    for i in range(max(hole_start, start), min(hole_end, end)):
+        data[i - start] = 0
+    if algo < 8:
+        width, poly, crc, reflected, xorout = _PB_CRC[algo]
+        mask = (1 << width) - 1
+        for b in data:
+            if reflected:
+                crc ^= b
+                for _ in range(8):
+                    crc = (crc >> 1) ^ poly if crc & 1 else crc >> 1
+            else:
+                crc ^= b << (width - 8)
+                for _ in range(8):
+                    crc = ((crc << 1) ^ poly if crc & (1 << (width - 1)) else crc << 1) & mask
+        return (crc ^ xorout) & mask
+    if algo == 8:
+        total = sum((b << 8) if i % 2 == 0 else b for i, b in enumerate(data))
+        while total >> 16:
+            total = (total & 0xFFFF) + (total >> 16)
+        return ~total & 0xFFFF
+    if algo == 9:
+        a = b = 0
+        for x in data:
+            a = (a + x) % 255
+            b = (b + a) % 255
+        return (b << 8) | a
+    if algo == 10:
+        return sum(data) & 0xFF
+    x = 0
+    for b in data:
+        x ^= b
+    return x
 
 
 def _pb_pad(offset, unit):

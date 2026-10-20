@@ -2,8 +2,7 @@
 
 use super::decode::Decoder;
 use super::encode::Encoder;
-use super::expr::store_value;
-use super::naming::{default_value, ident, member_type, owns_memory, scalar_type};
+use super::naming::{default_value, ident, member_type, owns_memory};
 use crate::generators::common::{Out, StepEmitter, member_category};
 use crate::ir::{Packet, ValueType};
 
@@ -69,7 +68,7 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
         if allocates {
             out.line("errdefer p.deinit(allocator);");
         }
-        if p.uses_align() {
+        if p.needs_start(false) {
             out.line("const pb_start = pb_r.positionBits();");
         }
     } else {
@@ -99,12 +98,7 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     body.push();
     body.push();
     for (m, e) in p.encode_calc_members() {
-        body.line(format!(
-            "const pbc_{}: {} = {};",
-            m.name,
-            scalar_type(&m.ty),
-            store_value(encoder.scope.expr(e), &m.ty)
-        ));
+        encoder.define_local(&mut body, m, e);
     }
     encoder.emit_steps(&mut body);
     out.open(format!("pub fn encodeTo(self: *const {}, pb_w: *PbWriter) PbError!void {{", name));
@@ -113,7 +107,7 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     } else {
         out.line("_ = self;");
     }
-    if p.uses_align() {
+    if p.needs_start(true) {
         out.line("const pb_start = pb_w.positionBits();");
     }
     out.line(format!("try pb_w.enter(\"{}\");", name));

@@ -15,11 +15,14 @@ pub(super) struct Ctx<'a> {
     pub members: Vec<Member>,
     pub names: HashMap<String, usize>,
     pub diags: Vec<Diagnostic>,
+    /// While type-checking a derived field: `sizeof`, `offsetof` and
+    /// checksums are allowed.
+    pub allow_wire: bool,
 }
 
 impl<'a> Ctx<'a> {
     pub fn new(packet: &'a PacketExpr, done: &'a HashMap<String, Packet>, consts: &'a ConstTable) -> Self {
-        Ctx { packet, done, consts, members: Vec::new(), names: HashMap::new(), diags: Vec::new() }
+        Ctx { packet, done, consts, members: Vec::new(), names: HashMap::new(), diags: Vec::new(), allow_wire: false }
     }
 
     pub fn declare(&mut self, name: &str, ty: ValueType, kind: MemberKind, span: Span) {

@@ -258,6 +258,12 @@ impl<'a> PbReader<'a> {
     pub fn utf8(&self, raw: Vec<u8>) -> Result<String, PbError> {
         String::from_utf8(raw).map_err(|_| self.error(PbErrorKind::Text, "invalid UTF-8".into()))
     }
+
+    /// Checksum `algo` of the input between two bit positions (whole bytes);
+    /// the bytes between `hole_from` and `hole_to` count as zero.
+    pub fn checksum(&self, algo: u32, from: usize, to: usize, hole_from: usize, hole_to: usize) -> u64 {
+        pb_checksum(algo, self.data, from / 8, to / 8, hole_from / 8, hole_to / 8)
+    }
 }
 
 /// Builds a byte buffer; integers may be written at any bit position.
@@ -341,6 +347,29 @@ impl PbWriter {
         self.buf
     }
 
+    /// Overwrite `nbytes` bytes at bit position `at` (byte aligned).
+    pub fn patch_uint(&mut self, at: usize, value: u64, nbytes: u32, little: bool) {
+        for i in 0..nbytes {
+            let shift = if little { 8 * i } else { 8 * (nbytes - 1 - i) };
+            self.buf[at / 8 + i as usize] = (value >> shift) as u8;
+        }
+    }
+
+    /// Overwrite `width` bits at bit position `at`, MSB first.
+    pub fn patch_bits(&mut self, at: usize, value: u64, width: u32) {
+        for i in 0..width as usize {
+            let bit = ((value >> (width as usize - 1 - i)) & 1) as u8;
+            let (byte, off) = ((at + i) / 8, 7 - (at + i) % 8);
+            self.buf[byte] = (self.buf[byte] & !(1 << off)) | (bit << off);
+        }
+    }
+
+    /// Checksum `algo` of the output between two bit positions (whole
+    /// bytes); the bytes between `hole_from` and `hole_to` count as zero.
+    pub fn checksum(&self, algo: u32, from: usize, to: usize, hole_from: usize, hole_to: usize) -> u64 {
+        pb_checksum(algo, &self.buf, from / 8, to / 8, hole_from / 8, hole_to / 8)
+    }
+
     pub fn check_fits(&self, len: usize, size: i64) -> Result<(), PbError> {
         if size < 0 || len as u64 > size as u64 {
             return Err(self.error(PbErrorKind::Range, format!("{} byte(s) do not fit in {}", len, size)));
@@ -383,6 +412,66 @@ impl PbWriter {
             }
         }
         Ok(())
+    }
+}
+
+/// CRC parameters by algorithm number: width, polynomial (reflected for
+/// reflected CRCs), initial value, reflected, final XOR.
+const PB_CRC: [(u32, u64, u64, bool, u64); 8] = [
+    (8, 0x07, 0, false, 0),                             // crc8 (CRC-8/SMBUS)
+    (16, 0xa001, 0, true, 0),                           // crc16_arc
+    (16, 0x1021, 0xffff, false, 0),                     // crc16_ccitt_false (CRC-16/IBM-3740)
+    (16, 0x1021, 0, false, 0),                          // crc16_xmodem
+    (16, 0x8408, 0, true, 0),                           // crc16_kermit
+    (16, 0xa001, 0xffff, true, 0),                      // crc16_modbus
+    (32, 0xedb88320, 0xffffffff, true, 0xffffffff),     // crc32 (CRC-32/ISO-HDLC)
+    (32, 0x82f63b78, 0xffffffff, true, 0xffffffff),     // crc32c (CRC-32/ISCSI)
+];
+
+/// Checksum `algo` of `buf[from..to]`, with `buf[hole_from..hole_to]` as
+/// zeros. 8: Internet checksum (RFC 1071), 9: Fletcher-16, 10: sum8, 11: xor8.
+fn pb_checksum(algo: u32, buf: &[u8], from: usize, to: usize, hole_from: usize, hole_to: usize) -> u64 {
+    let bytes = (from..to).map(|i| if i >= hole_from && i < hole_to { 0u64 } else { buf[i] as u64 });
+    match algo {
+        0..=7 => {
+            let (width, poly, init, reflected, xorout) = PB_CRC[algo as usize];
+            let mask = (1u64 << width) - 1;
+            let mut crc = init;
+            for b in bytes {
+                if reflected {
+                    crc ^= b;
+                    for _ in 0..8 {
+                        crc = if crc & 1 != 0 { (crc >> 1) ^ poly } else { crc >> 1 };
+                    }
+                } else {
+                    crc ^= b << (width - 8);
+                    for _ in 0..8 {
+                        crc = (if crc & (1 << (width - 1)) != 0 { (crc << 1) ^ poly } else { crc << 1 }) & mask;
+                    }
+                }
+            }
+            (crc ^ xorout) & mask
+        }
+        8 => {
+            let mut sum = 0u64;
+            for (i, b) in bytes.enumerate() {
+                sum += if i % 2 == 0 { b << 8 } else { b };
+            }
+            while sum >> 16 != 0 {
+                sum = (sum & 0xffff) + (sum >> 16);
+            }
+            !sum & 0xffff
+        }
+        9 => {
+            let (mut a, mut b) = (0u64, 0u64);
+            for x in bytes {
+                a = (a + x) % 255;
+                b = (b + a) % 255;
+            }
+            (b << 8) | a
+        }
+        10 => bytes.fold(0, |acc, b| (acc + b) & 0xff),
+        _ => bytes.fold(0, |acc, b| acc ^ b),
     }
 }
 

@@ -352,6 +352,89 @@ PB_FN int pb_write_zero_bits(pb_writer *w, int64_t bits) {
     return PB_OK;
 }
 
+/* Overwrite nbytes bytes at bit position `at` (byte aligned). */
+PB_FN void pb_patch_uint(pb_writer *w, size_t at, uint64_t value, unsigned nbytes, int little) {
+    unsigned i;
+    for (i = 0; i < nbytes; i++) {
+        unsigned shift = little ? 8 * i : 8 * (nbytes - 1 - i);
+        w->buf[at / 8 + i] = (uint8_t)(value >> shift);
+    }
+}
+
+/* Overwrite `width` bits at bit position `at`, MSB first. */
+PB_FN void pb_patch_bits(pb_writer *w, size_t at, uint64_t value, unsigned width) {
+    unsigned i;
+    for (i = 0; i < width; i++) {
+        unsigned bit = (unsigned)((value >> (width - 1 - i)) & 1u);
+        size_t byte = (at + i) / 8;
+        unsigned off = 7 - (unsigned)((at + i) % 8);
+        w->buf[byte] = (uint8_t)((w->buf[byte] & ~(1u << off)) | (bit << off));
+    }
+}
+
+/* Checksum `algo` of buf[from..to), with buf[hole_from..hole_to) as zeros.
+ * 0-7: CRCs (crc8, crc16_arc, crc16_ccitt_false, crc16_xmodem, crc16_kermit,
+ * crc16_modbus, crc32, crc32c), 8: Internet checksum (RFC 1071),
+ * 9: Fletcher-16, 10: sum8, 11: xor8. */
+PB_FN uint64_t pb_checksum(unsigned algo, const uint8_t *buf, size_t from, size_t to, size_t hole_from, size_t hole_to) {
+    size_t i;
+    uint64_t a = 0, b = 0;
+    for (i = from; i < to; i++) {
+        uint64_t x = (i >= hole_from && i < hole_to) ? 0 : buf[i];
+        switch (algo) {
+        case 8: a += (i - from) % 2 == 0 ? x << 8 : x; break;
+        case 9: a = (a + x) % 255; b = (b + a) % 255; break;
+        case 10: a = (a + x) & 0xff; break;
+        case 11: a ^= x; break;
+        default: break;
+        }
+    }
+    if (algo == 8) {
+        while (a >> 16) a = (a & 0xffff) + (a >> 16);
+        return ~a & 0xffff;
+    }
+    if (algo == 9) return (b << 8) | a;
+    if (algo >= 10) return a;
+    {
+        unsigned width = 16;
+        uint64_t poly = 0x1021, init = 0, xorout = 0, crc, mask;
+        int reflected = 0;
+        unsigned k;
+        switch (algo) {
+        case 0: width = 8; poly = 0x07; break;
+        case 1: poly = 0xa001; reflected = 1; break;
+        case 2: init = 0xffff; break;
+        case 3: break;
+        case 4: poly = 0x8408; reflected = 1; break;
+        case 5: poly = 0xa001; init = 0xffff; reflected = 1; break;
+        case 6: width = 32; poly = 0xedb88320u; init = xorout = 0xffffffffu; reflected = 1; break;
+        default: width = 32; poly = 0x82f63b78u; init = xorout = 0xffffffffu; reflected = 1; break;
+        }
+        mask = (((uint64_t)1) << width) - 1;
+        crc = init;
+        for (i = from; i < to; i++) {
+            uint64_t x = (i >= hole_from && i < hole_to) ? 0 : buf[i];
+            if (reflected) {
+                crc ^= x;
+                for (k = 0; k < 8; k++) crc = (crc & 1) ? (crc >> 1) ^ poly : crc >> 1;
+            } else {
+                crc ^= x << (width - 8);
+                for (k = 0; k < 8; k++) crc = ((crc & ((uint64_t)1 << (width - 1))) ? (crc << 1) ^ poly : crc << 1) & mask;
+            }
+        }
+        return (crc ^ xorout) & mask;
+    }
+}
+
+/* Checksum of the input or output between two bit positions (whole bytes). */
+PB_FN uint64_t pb_reader_checksum(const pb_reader *r, unsigned algo, size_t from, size_t to, size_t hole_from, size_t hole_to) {
+    return pb_checksum(algo, r->data, from / 8, to / 8, hole_from / 8, hole_to / 8);
+}
+
+PB_FN uint64_t pb_writer_checksum(const pb_writer *w, unsigned algo, size_t from, size_t to, size_t hole_from, size_t hole_to) {
+    return pb_checksum(algo, w->buf, from / 8, to / 8, hole_from / 8, hole_to / 8);
+}
+
 PB_FN int pb_check_fits(size_t len, int64_t size) {
     return (size < 0 || (uint64_t)len > (uint64_t)size) ? PB_ERR_RANGE : PB_OK;
 }

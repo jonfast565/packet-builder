@@ -1,8 +1,9 @@
 //! C# encoder statements.
 
-use super::naming::CSharp;
-use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mask, string_literal};
-use crate::ir::{BitPart, Codec, Count, Member, Packet, StrMode, TExpr, ValueType};
+use super::expr::store_value;
+use super::naming::{CSharp, scalar_type};
+use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mark_var, mask, string_literal};
+use crate::ir::{BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, ValueType};
 
 fn write_elem(out: &mut Out, codec: &Codec, ty: &ValueType, v: &str) {
     match ty {
@@ -68,8 +69,53 @@ impl StepEmitter for Encoder<'_> {
         out.line(format!("pbW.At(\"{}\");", field));
     }
 
+    fn mark(&self, out: &mut Out, mark: Mark) {
+        out.line(format!("long {} = pbW.PositionBits;", mark_var(mark)));
+    }
+
+    fn define_local(&self, out: &mut Out, m: &Member, value: &TExpr) {
+        if m.is_derived() {
+            out.line(format!("long pbc_{} = {};", m.name, self.scope.expr(value)));
+        } else {
+            out.line(format!(
+                "{} pbc_{} = {};",
+                scalar_type(&m.ty),
+                m.name,
+                store_value(self.scope.expr(value), &m.ty)
+            ));
+        }
+    }
+
+    fn write_derived(&self, out: &mut Out, m: &Member, codec: &Codec, at: Option<Mark>) {
+        let v = format!("pbc_{}", m.name);
+        if let ValueType::Int { width, signed } = &m.ty {
+            if *signed {
+                out.line(format!("pbW.CheckI({}, {});", v, width));
+            } else {
+                out.line(format!("pbW.CheckU(unchecked((ulong){}), {});", v, width));
+            }
+        }
+        match (codec, at) {
+            (Codec::Bytes { nbytes, endian }, None) => {
+                out.line(format!("pbW.WriteUint(unchecked((ulong){}), {}, {});", v, nbytes, CSharp::little(endian)))
+            }
+            (Codec::Bytes { nbytes, endian }, Some(at)) => out.line(format!(
+                "pbW.PatchUint({}, unchecked((ulong){}), {}, {});",
+                mark_var(at),
+                v,
+                nbytes,
+                CSharp::little(endian)
+            )),
+            (Codec::Bits { width }, None) => out.line(format!("pbW.WriteBits(unchecked((ulong){}), {});", v, width)),
+            (Codec::Bits { width }, Some(at)) => {
+                out.line(format!("pbW.PatchBits({}, unchecked((ulong){}), {});", mark_var(at), v, width))
+            }
+            _ => unreachable!("derived fields are integers"),
+        }
+    }
+
     fn align(&self, out: &mut Out, bytes: u64) {
-        out.line(format!("pbW.WriteZeroBits(Pb.Pad(pbW.PositionBits - pbStart, {}));", bytes * 8))
+        out.line(format!("pbW.WriteZeroBits(Pb.Pad(pbW.PositionBits - pb_start, {}));", bytes * 8))
     }
 
     fn string(&self, out: &mut Out, m: &Member, mode: &StrMode, array: Option<&Count>) {
@@ -92,7 +138,7 @@ impl StepEmitter for Encoder<'_> {
                 out.line("pbW.WriteBytes(pbB);");
                 out.line("pbW.WriteZeroBits((pbN - pbB.Length) * 8);");
             }
-            (_, Some(Count::Expr(e))) => {
+            (_, Some(Count::Expr(e))) if !self.packet().depends_on_wire(e) => {
                 out.line(format!("pbW.CheckLen(pbB.Length, {});", self.scope.expr(e)));
                 out.line("pbW.WriteBytes(pbB);");
             }
@@ -118,7 +164,9 @@ impl StepEmitter for Encoder<'_> {
 
     fn array(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec, count: &Count) {
         let place = self.scope.field(m);
-        if let Count::Expr(e) = count {
+        if let Count::Expr(e) = count
+            && !self.packet().depends_on_wire(e)
+        {
             out.line(format!("pbW.CheckLen({}.Length, {});", place, self.scope.expr(e)));
         }
         if ty.is_byte() {

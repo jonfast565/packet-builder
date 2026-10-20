@@ -5,7 +5,7 @@
 use pest::iterators::Pair;
 
 use super::Rule;
-use crate::ast::ExprNode;
+use crate::ast::{ExprNode, FieldRange};
 
 pub(super) fn parse_expr(parser_rule: Pair<Rule>) -> ExprNode {
     // entry: expr -> bool_or
@@ -183,6 +183,7 @@ fn parse_primary(parser_rule: Pair<Rule>) -> ExprNode {
             Rule::guard_expression => parse_guard_expression(node),
             Rule::literal => parse_literal(node),
             Rule::function_call => parse_function_call(node),
+            Rule::range_call => parse_range_call(node),
             Rule::accessor => parse_accessor(node),
             Rule::inner_expr => parse_inner_expr(node),
             _ => ExprNode::NoExpr,
@@ -214,6 +215,29 @@ fn parse_function_call(parser_rule: Pair<Rule>) -> ExprNode {
         }
     }
     ExprNode::Call(fname, args)
+}
+
+fn parse_range_call(parser_rule: Pair<Rule>) -> ExprNode {
+    // range_call = { identifier ~ lparen ~ field_range ~ rparen }
+    let mut name = String::new();
+    let mut range = FieldRange::Whole;
+    for p in parser_rule.into_inner() {
+        match p.as_rule() {
+            Rule::identifier => name = p.as_str().to_string(),
+            Rule::field_range => {
+                let ids: Vec<String> = p
+                    .into_inner()
+                    .filter(|x| x.as_rule() == Rule::identifier)
+                    .map(|x| x.as_str().to_string())
+                    .collect();
+                if let Some(first) = ids.first() {
+                    range = FieldRange::Fields(first.clone(), ids.get(1).cloned());
+                }
+            }
+            _ => {}
+        }
+    }
+    ExprNode::RangeCall(name, range)
 }
 
 fn parse_accessor(parser_rule: Pair<Rule>) -> ExprNode {

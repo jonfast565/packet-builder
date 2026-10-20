@@ -2,9 +2,9 @@
 
 use super::context::Ctx;
 use super::types::field_value_type;
-use crate::ast::{ExprNode, PacketItem, Span};
+use crate::ast::{ExprNode, FieldRange, PacketItem, Span};
 use crate::errors::Diagnostic;
-use crate::ir::expr::{AggOp, ArithOp, CmpOp, Func, LogicOp, TExpr, Ty, UnaryOp, coerce, numeric_join};
+use crate::ir::expr::{AggOp, ArithOp, Checksum, CmpOp, Func, LogicOp, Mark, TExpr, Ty, UnaryOp, coerce, numeric_join};
 use crate::ir::model::ValueType;
 
 impl<'a> Ctx<'a> {
@@ -107,6 +107,7 @@ impl<'a> Ctx<'a> {
                     other => return Err(format!("unknown function `{}`", other)),
                 }
             }
+            RangeCall(name, range) => self.range_call(name, range)?,
             GuardExpression(c, t, o) => {
                 let cond = coerce(self.typecheck(c)?, Ty::Bool);
                 let (t, o) = (self.typecheck(t)?, self.typecheck(o)?);
@@ -176,6 +177,78 @@ impl<'a> Ctx<'a> {
                 TExpr::Logic { op, a: Box::new(a), b: Box::new(b) }
             }
         })
+    }
+
+    /// `len(x)`, `sizeof(...)`, `offsetof(f)` and checksums.
+    fn range_call(&self, name: &str, range: &FieldRange) -> Result<TExpr, String> {
+        if name == "len" {
+            let FieldRange::Fields(field, None) = range else {
+                return Err("len takes one field: `len(items)`".into());
+            };
+            let idx = self.lookup(field)?;
+            let m = &self.members[idx];
+            if !self.is_array(idx) && m.ty != ValueType::Str {
+                return Err(format!("`{}` is not an array or a string, so it has no length", field));
+            }
+            return Ok(TExpr::Len { member: idx });
+        }
+        let algo = Checksum::from_name(name);
+        if algo.is_none() && name != "sizeof" && name != "offsetof" {
+            return Err(format!("unknown function `{}`", name));
+        }
+        if !self.allow_wire {
+            return Err(format!(
+                "`{}` depends on the encoded bytes, so it can only be used to derive a field (`name uint16 = {}(...)`)",
+                name, name
+            ));
+        }
+        let (from, to) = match range {
+            FieldRange::Whole => (Mark::PacketStart, Mark::PacketEnd),
+            FieldRange::Fields(a, b) => {
+                let first = self.wire_item(a)?;
+                let last = match b {
+                    Some(b) => self.wire_item(b)?,
+                    None => first,
+                };
+                if last < first {
+                    return Err(format!(
+                        "`{}` comes after `{}`; write the range in wire order",
+                        a,
+                        b.as_deref().unwrap_or("")
+                    ));
+                }
+                (Mark::Before(first), Mark::After(last))
+            }
+        };
+        Ok(match (name, algo) {
+            ("offsetof", _) => match range {
+                FieldRange::Fields(_, None) => TExpr::Size { from: Mark::PacketStart, to: from },
+                _ => return Err("offsetof takes one field: `offsetof(payload)`".into()),
+            },
+            ("sizeof", _) => TExpr::Size { from, to },
+            (_, Some(algo)) => TExpr::Checksum { algo, from, to, hole: None },
+            _ => unreachable!("checked above"),
+        })
+    }
+
+    /// The source item of a field that is on the wire (marks refer to items
+    /// until the layout pass maps them to steps).
+    fn wire_item(&self, name: &str) -> Result<usize, String> {
+        self.packet
+            .items
+            .iter()
+            .position(|it| match it {
+                PacketItem::Field(f) => f.id == name && name != "_",
+                PacketItem::Bitfield(b) => b.id == name,
+                _ => false,
+            })
+            .ok_or_else(|| {
+                if self.names.contains_key(name) {
+                    format!("`{}` is not a field on the wire (a bitfield member or a calculated field)", name)
+                } else {
+                    format!("unknown field `{}` in packet `{}`", name, self.packet.name)
+                }
+            })
     }
 
     /// Arrays are known after pass 2; before that, look at the source.

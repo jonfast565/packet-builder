@@ -18,29 +18,15 @@ const STREAM: &str = concat!(
     "011d00011d000002000d",
 );
 
-/// CRC-16/ARC (poly 0x8005 reflected, init 0), as used by P3.
-fn crc16_arc(data: &[u8]) -> u16 {
-    let mut crc = 0u16;
-    for &byte in data {
-        crc ^= byte as u16;
-        for _ in 0..8 {
-            crc = if crc & 1 != 0 { (crc >> 1) ^ 0xA001 } else { crc >> 1 };
-        }
-    }
-    crc
-}
-
 fn main() -> Result<(), PbError> {
     let bytes: Vec<u8> =
         (0..STREAM.len() / 2).map(|i| u8::from_str_radix(&STREAM[2 * i..2 * i + 2], 16).unwrap()).collect();
 
+    // Decoding checks each packet's CRC: a corrupt packet is an error.
     let mut reader = PbReader::new(&bytes);
     while reader.remaining_bits() > 0 {
-        let start = reader.position_bits() / 8;
         let packet = P3Packet::decode_from(&mut reader)?;
-        let raw = &bytes[start..reader.position_bits() / 8];
-        let crc_ok = crc16_arc(&raw[3..raw.len() - 1]) == packet.crc;
-        println!("type 0x{:02x} tx 0x{:02x} crc ok {}", packet.r#type, packet.tx_seq, crc_ok);
+        println!("type 0x{:02x} tx 0x{:02x} crc 0x{:04x}", packet.r#type, packet.tx_seq, packet.crc);
 
         match packet.r#type {
             P3Type::INIT => {

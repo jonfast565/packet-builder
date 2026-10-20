@@ -345,3 +345,39 @@ fn checks_compile() {
     )
     .unwrap();
 }
+
+#[test]
+fn wire_functions_only_derive_fields() {
+    assert_error("packet P { a uint8, calc x uint8 = sizeof(a) }", "can only be used to derive a field");
+    assert_error("packet P { a uint8, b uint8[crc8(a)] }", "can only be used to derive a field");
+    assert_error("packet P { a uint8 = foo(a) }", "unknown function `foo`");
+}
+
+#[test]
+fn derived_fields_are_single_integers() {
+    assert_error("packet P { a uint8[2] = 1 }", "derived field `a` must be a single integer");
+    assert_error("packet P { a float32 = 1 }", "derived field `a` must be a single integer");
+    assert_error("packet P { _ uint8 = 1 }", "padding (`_`) cannot be derived");
+}
+
+#[test]
+fn derived_fields_need_sensible_inputs() {
+    assert_error("packet P { a uint8, b uint8 = len(a) }", "`a` is not an array or a string");
+    assert_error("packet P { a uint8 = a + 1 }", "uses its own value");
+    assert_error("packet P { a uint8, b uint8, c uint8 = sizeof(b..a) }", "comes after");
+    assert_error("packet P { a uint8 = crc8(b), b uint8 = crc8(a) }", "depends on a field that depends on it");
+    assert_error("packet P { f bitfield uint8 { x u4, y u4 }, s uint8 = sizeof(x) }", "not a field on the wire");
+}
+
+#[test]
+fn measured_ranges_are_whole_bytes() {
+    assert_error("packet P { a u4, s u4 = sizeof(a) }", "does not start and end on byte boundaries");
+}
+
+#[test]
+fn derived_fields_compile() {
+    compile(
+        "packet P be { n uint8 = len(xs), xs uint16[n], s uint16 = sizeof(self) lenient, c uint32 = crc32(n..xs) }",
+    )
+    .unwrap();
+}

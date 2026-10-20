@@ -4,7 +4,9 @@ use super::eval::{Env, eval, store};
 use super::rt::{PbError, PbErrorKind, PbReader};
 use super::value::{Struct, Value};
 use super::{check, checked_members, intern, pad, sext};
-use crate::ir::{BitPart, Codec, Count, Module, Packet, Step, StrMode, ValueType};
+use std::collections::HashMap;
+
+use crate::ir::{BitPart, Codec, Count, Mark, Module, Packet, Step, StrMode, ValueType};
 
 /// Decode packet `name` from the start of `data`; trailing bytes are ignored.
 pub fn decode(module: &Module, name: &str, data: &[u8]) -> Result<Value, PbError> {
@@ -36,12 +38,33 @@ impl Decoder<'_, '_, '_> {
         self.r.enter(intern(&p.name))?;
         let mut values: Vec<Value> = p.members.iter().map(|m| Value::default_for(self.module, m)).collect();
         let start = self.r.position_bits();
-        for step in &p.steps {
+        let mut marks = HashMap::from([(Mark::PacketStart, start)]);
+        for (i, step) in p.steps.iter().enumerate() {
+            marks.insert(Mark::Before(i), self.r.position_bits());
             self.step(p, step, &mut values, start)?;
+            marks.insert(Mark::After(i), self.r.position_bits());
             for mi in checked_members(step) {
                 for c in p.members[mi].enforced_checks() {
                     check(&c.cond, &c.message, &values, |m| self.r.error(PbErrorKind::Constraint, m))?;
                 }
+            }
+        }
+        marks.insert(Mark::PacketEnd, self.r.position_bits());
+        // Derived fields must hold what their expressions give.
+        for &mi in &p.derived {
+            let m = &p.members[mi];
+            let (false, Some(e)) = (m.lenient, m.derived_expr()) else { continue };
+            let r: &PbReader = self.r;
+            let sum = |a, f, t, hf, ht| r.checksum(a, f, t, hf, ht);
+            let want = eval(e, &Env { values: &values, marks: Some(&marks), checksum: Some(&sum) }).int();
+            let got = match values[mi] {
+                Value::Int(v) => v as i64,
+                _ => 0,
+            };
+            if got != want {
+                self.r.at(intern(&m.name));
+                let msg = format!("`{}` is {} but the data gives {}", m.name, got, want);
+                return Err(self.r.error(PbErrorKind::Mismatch, msg));
             }
         }
         self.r.leave();
@@ -49,7 +72,7 @@ impl Decoder<'_, '_, '_> {
     }
 
     fn count(&mut self, e: &crate::ir::TExpr, values: &[Value], elem_bits: u64) -> Result<usize, PbError> {
-        let n = eval(e, &Env { values }).int();
+        let n = eval(e, &Env::new(values)).int();
         self.r.count(n, elem_bits)
     }
 
@@ -67,7 +90,7 @@ impl Decoder<'_, '_, '_> {
             Step::Calc { member } => {
                 let m = &p.members[*member];
                 if let Some(e) = m.calc_expr() {
-                    values[*member] = store(eval(e, &Env { values }), &m.ty);
+                    values[*member] = store(eval(e, &Env::new(values)), &m.ty);
                 }
                 Ok(())
             }

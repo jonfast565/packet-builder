@@ -1,8 +1,9 @@
 //! Rust spelling of expressions.
 
 use super::naming::{Rust, scalar_type};
+use crate::generators::common::Mode;
 use crate::generators::common::{ExprLang, Scope};
-use crate::ir::{AggOp, ArithOp, Func, Ty, UnaryOp, ValueType, storage_for};
+use crate::ir::{AggOp, ArithOp, Checksum, Func, Ty, UnaryOp, ValueType, storage_for};
 
 impl ExprLang for Scope<'_, Rust> {
     fn int_lit(&self, v: i64) -> String {
@@ -83,6 +84,20 @@ impl ExprLang for Scope<'_, Rust> {
             Func::Min => format!("{}.min({})", args[0], args[1]),
             Func::Max => format!("{}.max({})", args[0], args[1]),
         }
+    }
+
+    fn len(&self, member: usize) -> String {
+        format!("({}.len() as i64)", self.place(member))
+    }
+
+    fn size(&self, from: &str, to: &str) -> String {
+        format!("((({} - {}) / 8) as i64)", to, from)
+    }
+
+    fn checksum(&self, algo: Checksum, from: &str, to: &str, hole: Option<(&str, &str)>) -> String {
+        let rw = if self.mode == Mode::Encode { "pb_w" } else { "pb_r" };
+        let (hf, ht) = hole.unwrap_or(("0", "0"));
+        format!("({}.checksum({}, {}, {}, {}, {}) as i64)", rw, algo.id(), from, to, hf, ht)
     }
 
     fn convert(&self, e: String, from: Ty, to: Ty) -> String {

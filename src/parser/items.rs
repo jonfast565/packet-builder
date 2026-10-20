@@ -107,6 +107,7 @@ impl TreeBuilder {
         let mut align = None;
         let mut category = None;
         let mut rules = FieldRules::default();
+        let mut derive = None;
 
         for field in parser_rule.into_inner() {
             match field.as_rule() {
@@ -144,6 +145,7 @@ impl TreeBuilder {
                 Rule::category_tag => category = category_tag(field, &mut rules),
                 Rule::constraint => rules.constraint = constraint(field),
                 Rule::lenient_kw => rules.lenient = true,
+                Rule::derivation => derive = field.into_inner().find(|p| p.as_rule() == Rule::expr).map(parse_expr),
                 _ => {}
             }
         }
@@ -153,7 +155,17 @@ impl TreeBuilder {
             array = Some(ArrayLength::Remaining);
         }
 
-        TypeExpr { id: identifier, expr: type_node, array, endianness: field_endianness, align, category, rules, span }
+        TypeExpr {
+            id: identifier,
+            expr: type_node,
+            array,
+            endianness: field_endianness,
+            align,
+            category,
+            derive,
+            rules,
+            span,
+        }
     }
 
     fn bitfield(&self, parser_rule: Pair<Rule>) -> BitfieldExpr {

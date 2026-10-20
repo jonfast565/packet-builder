@@ -1,7 +1,7 @@
 //! Expression emission: [`emit_expr`] walks a [`TExpr`] and asks an
 //! [`ExprLang`] for the target-language spelling of each node (Visitor).
 
-use crate::ir::{AggOp, ArithOp, CmpOp, Func, LogicOp, TExpr, Ty, UnaryOp};
+use crate::ir::{AggOp, ArithOp, Checksum, CmpOp, Func, LogicOp, Mark, TExpr, Ty, UnaryOp};
 
 /// Whether an expression is evaluated while decoding (every member lives in
 /// the target struct) or while encoding (calculated members are locals).
@@ -38,6 +38,24 @@ pub trait ExprLang {
     fn guard(&self, cond: String, then: String, other: String, ty: Ty) -> String;
     fn call(&self, func: Func, args: Vec<String>, ty: Ty) -> String;
     fn convert(&self, e: String, from: Ty, to: Ty) -> String;
+    /// Element count of an array member, or the byte length of a string, as i64.
+    fn len(&self, member: usize) -> String;
+    /// Whole bytes between two recorded bit positions (variables), as i64.
+    fn size(&self, from: &str, to: &str) -> String;
+    /// A checksum of the bytes between two recorded bit positions; `hole`
+    /// (two more positions) counts as zero. Read from the reader when
+    /// decoding and from the writer when encoding, as i64.
+    fn checksum(&self, algo: Checksum, from: &str, to: &str, hole: Option<(&str, &str)>) -> String;
+}
+
+/// The variable that holds a recorded position.
+pub fn mark_var(m: Mark) -> String {
+    match m {
+        Mark::PacketStart => "pb_start".into(),
+        Mark::PacketEnd => "pbm_end".into(),
+        Mark::Before(i) => format!("pbm_b{}", i),
+        Mark::After(i) => format!("pbm_a{}", i),
+    }
 }
 
 pub fn cmp_symbol(op: CmpOp) -> &'static str {
@@ -67,5 +85,11 @@ pub fn emit_expr<L: ExprLang + ?Sized>(l: &L, e: &TExpr) -> String {
         TExpr::Call { func, args, ty } => l.call(*func, args.iter().map(|a| emit_expr(l, a)).collect(), *ty),
         TExpr::Convert { e, to } => l.convert(emit_expr(l, e), e.ty(), *to),
         TExpr::Unary { op, e, ty } => l.unary(*op, emit_expr(l, e), *ty),
+        TExpr::Len { member } => l.len(*member),
+        TExpr::Size { from, to } => l.size(&mark_var(*from), &mark_var(*to)),
+        TExpr::Checksum { algo, from, to, hole } => {
+            let hole = hole.map(|(a, b)| (mark_var(a), mark_var(b)));
+            l.checksum(*algo, &mark_var(*from), &mark_var(*to), hole.as_ref().map(|(a, b)| (a.as_str(), b.as_str())))
+        }
     }
 }

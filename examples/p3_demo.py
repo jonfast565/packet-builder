@@ -6,11 +6,9 @@ Generate the parser first:
     PYTHONPATH=examples/out python3 examples/p3_demo.py
 """
 
-import struct
-
 from packets import (
-    P3_LENGTH_OVERHEAD, P3_SEQ_FIRST, FdoProtocol, FdoStream,
-    P3Init, P3Message, P3Packet, P3Type, PbError, PbReader, Platform,
+    P3_SEQ_FIRST, FdoProtocol, FdoStream, P3Init, P3Message, P3Packet, P3Type,
+    PbReader, Platform,
 )
 
 # What a server receives from a client: the INIT packet (captured from a
@@ -24,35 +22,18 @@ STREAM = bytes.fromhex(
 )
 
 
-def crc16_arc(data):
-    """CRC-16/ARC (poly 0x8005 reflected, init 0), as used by P3."""
-    crc = 0
-    for byte in data:
-        crc ^= byte
-        for _ in range(8):
-            crc = (crc >> 1) ^ 0xA001 if crc & 1 else crc >> 1
-    return crc
-
-
 def packets(stream):
-    """Split a byte stream into P3 packets, checking each CRC."""
+    """Split a byte stream into P3 packets. Decoding checks the CRC
+    (`crc uint16 = crc16_arc(length..data)`) and raises PbError if it is wrong."""
     reader = PbReader(stream)
     while reader.remaining_bits() > 0:
-        start = reader.position_bits() // 8
-        packet = P3Packet.decode_from(reader)
-        raw = stream[start:reader.position_bits() // 8]
-        if crc16_arc(raw[3:-1]) != packet.crc:
-            raise PbError(PbError.MISMATCH, "CRC mismatch")
-        yield packet
+        yield P3Packet.decode_from(reader)
 
 
 def control_packet(packet_type, tx_seq, rx_seq):
-    """Build a control packet (ACK, NAK, ...) with a correct CRC."""
-    # sync, always_set and stop default to their fixed values (`== P3_SYNC`, ...).
-    packet = P3Packet(length=P3_LENGTH_OVERHEAD, tx_seq=tx_seq, rx_seq=rx_seq, type=packet_type)
-    wire = packet.encode()
-    packet.crc = crc16_arc(wire[3:-1])
-    return packet.encode()
+    """Build a control packet (ACK, NAK, ...). The encoder computes `length`
+    and `crc`; sync, always_set and stop default to their fixed values."""
+    return P3Packet(tx_seq=tx_seq, rx_seq=rx_seq, type=packet_type).encode()
 
 
 def main():

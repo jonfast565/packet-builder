@@ -3,7 +3,6 @@
 
 use super::decode::Decoder;
 use super::encode::Encoder;
-use super::expr::store_value;
 use super::naming::{ident, len_ident, scalar_type};
 use crate::generators::common::{Out, StepEmitter, magic_literal, member_category};
 use crate::ir::{Packet, ValueType};
@@ -124,7 +123,7 @@ pub fn emit_implementation(out: &mut Out, p: &Packet) {
     out.line("uint64_t pb_u = 0;");
     out.line("memset(p, 0, sizeof *p);");
     out.line(format!("PB_TRY(pb_enter(&pb_r->tr, \"{}\"));", name));
-    if p.uses_align() {
+    if p.needs_start(false) {
         out.line("size_t pb_start = pb_reader_position(pb_r);");
     }
     out.line("(void)pb_u;");
@@ -162,11 +161,11 @@ pub fn emit_implementation(out: &mut Out, p: &Packet) {
     out.open(format!("int {}_encode_to(const {} *p, pb_writer *pb_w) {{", name, name));
     let encoder = Encoder::new(p);
     for (m, e) in p.encode_calc_members() {
-        out.line(format!("{} pbc_{} = {};", scalar_type(&m.ty), m.name, store_value(encoder.scope.expr(e), &m.ty)));
+        encoder.define_local(out, m, e);
     }
     out.line("(void)p;");
     out.line("(void)pb_w;");
-    if p.uses_align() {
+    if p.needs_start(true) {
         out.line("size_t pb_start = pb_writer_position(pb_w);");
     }
     out.line(format!("PB_CHECK(pb_enter(&pb_w->tr, \"{}\"));", name));

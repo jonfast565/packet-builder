@@ -18,6 +18,9 @@ fn with_category(kind: String, member: Option<&Member>) -> String {
             CheckKind::Range(lo, hi) => out.push_str(&format!(" in {}..{}", lo, hi)),
         }
     }
+    if m.is_derived() {
+        out.push_str(" (derived)");
+    }
     if m.lenient {
         out.push_str(" lenient");
     }

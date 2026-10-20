@@ -1,8 +1,9 @@
 //! Python spelling of expressions.
 
 use super::naming::Python;
+use crate::generators::common::Mode;
 use crate::generators::common::{Dialect, ExprLang, Scope};
-use crate::ir::{AggOp, ArithOp, Func, LogicOp, Ty, UnaryOp, ValueType};
+use crate::ir::{AggOp, ArithOp, Checksum, Func, LogicOp, Ty, UnaryOp, ValueType};
 
 /// u64 values must wrap to i64 to match the other languages.
 fn needs_wrap(ty: &ValueType) -> bool {
@@ -96,6 +97,23 @@ impl ExprLang for Scope<'_, Python> {
             Func::Min => format!("min({}, {})", args[0], args[1]),
             Func::Max => format!("max({}, {})", args[0], args[1]),
         }
+    }
+
+    fn len(&self, member: usize) -> String {
+        match self.member(member).ty {
+            ValueType::Str => format!("len({}.encode(\"utf-8\"))", self.place(member)),
+            _ => format!("len({})", self.place(member)),
+        }
+    }
+
+    fn size(&self, from: &str, to: &str) -> String {
+        format!("(({} - {}) // 8)", to, from)
+    }
+
+    fn checksum(&self, algo: Checksum, from: &str, to: &str, hole: Option<(&str, &str)>) -> String {
+        let rw = if self.mode == Mode::Encode { "pb_w" } else { "pb_r" };
+        let (hf, ht) = hole.unwrap_or(("0", "0"));
+        format!("{}.checksum({}, {}, {}, {}, {})", rw, algo.id(), from, to, hf, ht)
     }
 
     fn convert(&self, e: String, from: Ty, to: Ty) -> String {

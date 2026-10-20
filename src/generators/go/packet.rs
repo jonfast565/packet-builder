@@ -2,7 +2,6 @@
 
 use super::decode::Decoder;
 use super::encode::Encoder;
-use super::expr::store_value;
 use super::naming::{field_name, gofmt_widths, member_type};
 use crate::generators::common::{Out, StepEmitter, magic_literal, member_category};
 use crate::ir::{Packet, ValueType};
@@ -56,8 +55,8 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
 
     out.open(format!("func pbDecode{}(pbR *PbReader) (p {}) {{", name, name));
     out.line(format!("pbR.Enter(\"{}\")", name));
-    if p.uses_align() {
-        out.line("pbStart := pbR.PositionBits()");
+    if p.needs_start(false) {
+        out.line("pb_start := pbR.PositionBits()");
     }
     Decoder::new(p).emit_steps(out);
     out.line("pbR.Leave()");
@@ -76,12 +75,12 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
 
     out.open(format!("func (p *{}) EncodeTo(pbW *PbWriter) error {{", name));
     out.line(format!("pbW.Enter(\"{}\")", name));
-    if p.uses_align() {
-        out.line("pbStart := pbW.PositionBits()");
+    if p.needs_start(true) {
+        out.line("pb_start := pbW.PositionBits()");
     }
     let encoder = Encoder::new(p);
     for (m, e) in p.encode_calc_members() {
-        out.line(format!("pbc_{} := {}", m.name, store_value(e, encoder.scope.expr(e), &m.ty)));
+        encoder.define_local(out, m, e);
     }
     encoder.emit_steps(out);
     out.line("pbW.Leave()");

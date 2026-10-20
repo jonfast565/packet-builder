@@ -28,7 +28,7 @@
     {
       "name": "IPv4 fragment with an option and odd bit fields",
       "packet": "Ipv4",
-      "hex": "46b90020beef20b9030600000a0000010a00000294040000",
+      "hex": "46b90020beef20b903062e700a0000010a00000294040000",
       "expect": {
         "version": 4,
         "ihl": 6,
@@ -39,7 +39,8 @@
         "fragment_offset": 185,
         "options": "94040000",
         "header_length": 24,
-        "payload_length": 8
+        "payload_length": 8,
+        "checksum": 11888
       }
     },
     {
@@ -169,6 +170,23 @@
         "ethertype": 2048,
         "payload": "45000073000040004011b861c0a80001c0a800c7"
       }
+    },
+    {
+      "name": "IPv4 header checksum mismatch",
+      "packet": "Ipv4",
+      "hex": "46b90020beef20b9030600000a0000010a00000294040000",
+      "error_kind": "mismatch",
+      "error_path": "Ipv4.checksum"
+    },
+    {
+      "name": "IPv4 ihl and checksum are computed when encoding",
+      "packet": "Ipv4",
+      "hex": "46b90020beef20b903062e700a0000010a00000294040000",
+      "set": {
+        "ihl": 5,
+        "checksum": 0
+      },
+      "encoded": "46b90020beef20b903062e700a0000010a00000294040000"
     }
   ]
 }

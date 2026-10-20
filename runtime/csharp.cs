@@ -207,6 +207,11 @@
             try { return Pb.StrictUtf8.GetString(raw, 0, n); }
             catch (ArgumentException) { throw Error(PbErrorKind.Text, "invalid UTF-8"); }
         }
+
+        /// <summary>Checksum algo of the input between two bit positions (whole
+        /// bytes); the bytes between holeFrom and holeTo count as zero.</summary>
+        public ulong Checksum(int algo, long from, long to, long holeFrom, long holeTo) =>
+            Pb.Checksum(algo, data, from / 8, to / 8, holeFrom / 8, holeTo / 8);
     }
 
     /// <summary>Builds a byte buffer; integers may be written at any bit position.</summary>
@@ -252,6 +257,33 @@
             if (bits > 0) WriteBits(0, (int)bits);
         }
 
+        /// <summary>Overwrite nbytes bytes at bit position at (byte aligned).</summary>
+        public void PatchUint(long at, ulong value, int nbytes, bool little)
+        {
+            for (int i = 0; i < nbytes; i++)
+            {
+                int shift = little ? 8 * i : 8 * (nbytes - 1 - i);
+                buf[(int)(at / 8) + i] = (byte)(value >> shift);
+            }
+        }
+
+        /// <summary>Overwrite width bits at bit position at, MSB first.</summary>
+        public void PatchBits(long at, ulong value, int width)
+        {
+            for (int i = 0; i < width; i++)
+            {
+                int bit = (int)((value >> (width - 1 - i)) & 1);
+                int b = (int)((at + i) / 8);
+                int off = 7 - (int)((at + i) % 8);
+                buf[b] = (byte)((buf[b] & ~(1 << off)) | (bit << off));
+            }
+        }
+
+        /// <summary>Checksum algo of the output between two bit positions (whole
+        /// bytes); the bytes between holeFrom and holeTo count as zero.</summary>
+        public ulong Checksum(int algo, long from, long to, long holeFrom, long holeTo) =>
+            Pb.Checksum(algo, buf.ToArray(), from / 8, to / 8, holeFrom / 8, holeTo / 8);
+
         public byte[] Utf8Bytes(string s)
         {
             try { return Pb.StrictUtf8.GetBytes(s); }
@@ -290,6 +322,65 @@
     internal static class Pb
     {
         internal static readonly System.Text.UTF8Encoding StrictUtf8 = new System.Text.UTF8Encoding(false, true);
+
+        // CRC parameters by algorithm number: width, polynomial (reflected for
+        // reflected CRCs), initial value, reflected, final XOR.
+        private static readonly (int Width, ulong Poly, ulong Init, bool Reflected, ulong XorOut)[] Crc =
+        {
+            (8, 0x07, 0, false, 0),                          // crc8 (CRC-8/SMBUS)
+            (16, 0xA001, 0, true, 0),                        // crc16_arc
+            (16, 0x1021, 0xFFFF, false, 0),                  // crc16_ccitt_false (CRC-16/IBM-3740)
+            (16, 0x1021, 0, false, 0),                       // crc16_xmodem
+            (16, 0x8408, 0, true, 0),                        // crc16_kermit
+            (16, 0xA001, 0xFFFF, true, 0),                   // crc16_modbus
+            (32, 0xEDB88320, 0xFFFFFFFF, true, 0xFFFFFFFF),  // crc32 (CRC-32/ISO-HDLC)
+            (32, 0x82F63B78, 0xFFFFFFFF, true, 0xFFFFFFFF),  // crc32c (CRC-32/ISCSI)
+        };
+
+        /// <summary>Checksum algo of buf[from..to) with buf[holeFrom..holeTo) as
+        /// zeros. 8: Internet checksum (RFC 1071), 9: Fletcher-16, 10: sum8, 11: xor8.</summary>
+        public static ulong Checksum(int algo, byte[] buf, long from, long to, long holeFrom, long holeTo)
+        {
+            ulong At(long i) => i >= holeFrom && i < holeTo ? 0UL : buf[i];
+            if (algo < 8)
+            {
+                var p = Crc[algo];
+                ulong mask = (1UL << p.Width) - 1, crc = p.Init;
+                for (long i = from; i < to; i++)
+                {
+                    if (p.Reflected)
+                    {
+                        crc ^= At(i);
+                        for (int k = 0; k < 8; k++) crc = (crc & 1) != 0 ? (crc >> 1) ^ p.Poly : crc >> 1;
+                    }
+                    else
+                    {
+                        crc ^= At(i) << (p.Width - 8);
+                        for (int k = 0; k < 8; k++)
+                            crc = ((crc & (1UL << (p.Width - 1))) != 0 ? (crc << 1) ^ p.Poly : crc << 1) & mask;
+                    }
+                }
+                return (crc ^ p.XorOut) & mask;
+            }
+            ulong a = 0, b = 0;
+            for (long i = from; i < to; i++)
+            {
+                ulong x = At(i);
+                switch (algo)
+                {
+                    case 8: a += (i - from) % 2 == 0 ? x << 8 : x; break;
+                    case 9: a = (a + x) % 255; b = (b + a) % 255; break;
+                    case 10: a = (a + x) & 0xFF; break;
+                    default: a ^= x; break;
+                }
+            }
+            if (algo == 8)
+            {
+                while ((a >> 16) != 0) a = (a & 0xFFFF) + (a >> 16);
+                return ~a & 0xFFFF;
+            }
+            return algo == 9 ? (b << 8) | a : a;
+        }
 
         /// <summary>Padding needed after offset bits to reach a multiple of unit bits.</summary>
         public static long Pad(long offset, long unit) => (unit - offset % unit) % unit;

@@ -2,7 +2,6 @@
 
 use super::decode::Decoder;
 use super::encode::Encoder;
-use super::expr::store_value;
 use super::naming::{annotation, ident};
 use crate::generators::common::{Out, StepEmitter, member_category};
 use crate::ir::Packet;
@@ -29,7 +28,7 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     out.open(format!("def decode_from(cls, pb_r) -> \"{}\":", p.name));
     out.line(format!("pb_r.enter(\"{}\")", p.name));
     out.line("p = cls()");
-    if p.uses_align() {
+    if p.needs_start(false) {
         out.line("pb_start = pb_r.position_bits()");
     }
     Decoder::new(p).emit_steps(out);
@@ -45,12 +44,12 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     out.open("def encode_to(self, pb_w) -> None:");
     out.line(format!("pb_w.enter(\"{}\")", p.name));
     out.line("p = self");
-    if p.uses_align() {
+    if p.needs_start(true) {
         out.line("pb_start = pb_w.position_bits()");
     }
     let encoder = Encoder::new(p);
     for (m, e) in p.encode_calc_members() {
-        out.line(format!("pbc_{} = {}", m.name, store_value(encoder.scope.expr(e), &m.ty)));
+        encoder.define_local(out, m, e);
     }
     encoder.emit_steps(out);
     out.line("pb_w.leave()");

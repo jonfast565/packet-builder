@@ -66,5 +66,5 @@ fn check(
     values: &[Value],
     fail: impl FnOnce(String) -> Error,
 ) -> Result<(), Error> {
-    if eval::eval(cond, &eval::Env { values }).bool() { Ok(()) } else { Err(fail(message.to_string())) }
+    if eval::eval(cond, &eval::Env::new(values)).bool() { Ok(()) } else { Err(fail(message.to_string())) }
 }

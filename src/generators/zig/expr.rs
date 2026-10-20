@@ -1,8 +1,9 @@
 //! Zig spelling of expressions.
 
 use super::naming::{Zig, scalar_type};
+use crate::generators::common::Mode;
 use crate::generators::common::{ExprLang, Scope};
-use crate::ir::{AggOp, ArithOp, Func, LogicOp, Ty, UnaryOp, ValueType};
+use crate::ir::{AggOp, ArithOp, Checksum, Func, LogicOp, Ty, UnaryOp, ValueType};
 
 impl ExprLang for Scope<'_, Zig> {
     fn int_lit(&self, v: i64) -> String {
@@ -78,6 +79,20 @@ impl ExprLang for Scope<'_, Zig> {
             Func::Min => format!("@min({}, {})", args[0], args[1]),
             Func::Max => format!("@max({}, {})", args[0], args[1]),
         }
+    }
+
+    fn len(&self, member: usize) -> String {
+        format!("@as(i64, @intCast({}.len))", self.place(member))
+    }
+
+    fn size(&self, from: &str, to: &str) -> String {
+        format!("@as(i64, @intCast(({} - {}) / 8))", to, from)
+    }
+
+    fn checksum(&self, algo: Checksum, from: &str, to: &str, hole: Option<(&str, &str)>) -> String {
+        let rw = if self.mode == Mode::Encode { "pb_w" } else { "pb_r" };
+        let (hf, ht) = hole.unwrap_or(("0", "0"));
+        format!("@as(i64, @bitCast({}.checksum({}, {}, {}, {}, {})))", rw, algo.id(), from, to, hf, ht)
     }
 
     fn convert(&self, e: String, from: Ty, to: Ty) -> String {

@@ -18,8 +18,16 @@ fn cmp(op: CmpOp, member: usize, v: i64) -> TExpr {
 
 impl Ctx<'_> {
     /// Turn a field's validation rules into checks on member `name`.
-    pub fn rules(&mut self, name: &str, rules: &FieldRules, is_array: bool, span: Span) {
+    pub fn rules(&mut self, name: &str, rules: &FieldRules, is_array: bool, derived: bool, span: Span) {
         if *rules == FieldRules::default() {
+            return;
+        }
+        if derived && rules.lenient && rules == &(FieldRules { lenient: true, ..FieldRules::default() }) {
+            // `lenient` on a derived field with no other checks: only
+            // verification is relaxed.
+            if let Some(&idx) = self.names.get(name) {
+                self.members[idx].lenient = true;
+            }
             return;
         }
         if name == "_" {
@@ -90,7 +98,7 @@ impl Ctx<'_> {
             }
             None => {}
         }
-        if rules.lenient && checks.is_empty() {
+        if rules.lenient && checks.is_empty() && !derived {
             self.diags.push(Diagnostic::new(format!("`lenient` on `{}` has no check to relax", name), span));
         }
         let m = &mut self.members[idx];

@@ -197,19 +197,21 @@ reply frame: 2a021f3d004a00040006000000000030313233343536373800010961696d62...
 
 The reply is built by filling in the generated dataclasses and calling
 `encode()`. It's a SNAC(04,06) inside a FLAP frame, with the sender's cookie
-echoed back:
+echoed back. Every length in OSCAR is a **derived field** (`length uint16 =
+len(value)`), so the encoders compute them; decoding checks them:
 
 ```python
+fragments = IcbmMessage(fragments=[
+    IcbmFragment(id=FragmentId.CAPABILITIES, version=1, data=b"\x01"),
+    IcbmFragment(id=FragmentId.TEXT, version=1, data=MessageText(charset=Charset.ASCII, text=text).encode()),
+]).encode()
 send = IcbmSend(
     header=SnacHeader(family=SnacFamily.ICBM, subtype=IcbmSubtype.SEND, request_id=0x30),
     cookie=cookie, channel=IcbmChannel.PLAIN_TEXT,
     screen_name=sender,                               # length prefix is written for you
-    tlvs=[Tlv(type=IcbmTlv.MESSAGE_DATA, length=len(fragments), value=fragments),
-          Tlv(type=IcbmTlv.STORE_OFFLINE, length=0, value=b"")],
+    tlvs=[Tlv(type=IcbmTlv.MESSAGE_DATA, value=fragments), Tlv(type=IcbmTlv.STORE_OFFLINE)],
 )
-payload = send.encode()
-wire = Flap(start=FLAP_START, channel=Channel.SNAC, sequence=seq + 1,
-            length=len(payload), payload=payload).encode()
+wire = Flap(channel=Channel.SNAC, sequence=seq + 1, payload=send.encode()).encode()
 ```
 
 ## 6. The same in other languages

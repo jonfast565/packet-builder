@@ -2,8 +2,8 @@
 
 use super::expr::store_value;
 use super::naming::{Zig, ident, scalar_type};
-use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mask};
-use crate::ir::{BitPart, Codec, Count, Member, Packet, StrMode, TExpr, ValueType};
+use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mark_var, mask};
+use crate::ir::{BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, ValueType};
 
 fn read_elem(codec: &Codec, ty: &ValueType) -> String {
     let st = scalar_type(ty);
@@ -43,6 +43,18 @@ impl StepEmitter for Decoder<'_> {
 
     fn locate(&self, out: &mut Out, field: &str) {
         out.line(format!("pb_r.at(\"{}\");", field));
+    }
+
+    fn mark(&self, out: &mut Out, mark: Mark) {
+        out.line(format!("const {} = pb_r.positionBits();", mark_var(mark)));
+    }
+
+    fn verify(&self, out: &mut Out, m: &Member, value: &TExpr) {
+        out.line(format!(
+            "if (pbI64(p.{}) != {}) return pb_r.fail(PbError.Mismatch);",
+            ident(&m.name),
+            self.scope.expr(value)
+        ));
     }
 
     fn align(&self, out: &mut Out, bytes: u64) {

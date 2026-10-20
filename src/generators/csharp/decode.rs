@@ -2,8 +2,8 @@
 
 use super::expr::store_value;
 use super::naming::{CSharp, scalar_type};
-use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mask, string_literal};
-use crate::ir::{BitPart, Codec, Count, Member, Packet, StrMode, TExpr, ValueType};
+use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mark_var, mask, string_literal};
+use crate::ir::{BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, ValueType};
 
 fn read_elem(codec: &Codec, ty: &ValueType) -> String {
     let st = scalar_type(ty);
@@ -59,8 +59,21 @@ impl StepEmitter for Decoder<'_> {
         out.line(format!("pbR.At(\"{}\");", field));
     }
 
+    fn mark(&self, out: &mut Out, mark: Mark) {
+        out.line(format!("long {} = pbR.PositionBits;", mark_var(mark)));
+    }
+
+    fn verify(&self, out: &mut Out, m: &Member, value: &TExpr) {
+        out.line(format!(
+            "if (unchecked((long){}) != {}) throw pbR.Error(PbErrorKind.Mismatch, {});",
+            self.scope.field(m),
+            self.scope.expr(value),
+            string_literal(&format!("`{}` does not match the value computed from the data", m.name))
+        ));
+    }
+
     fn align(&self, out: &mut Out, bytes: u64) {
-        out.line(format!("pbR.SkipBits(Pb.Pad(pbR.PositionBits - pbStart, {}));", bytes * 8))
+        out.line(format!("pbR.SkipBits(Pb.Pad(pbR.PositionBits - pb_start, {}));", bytes * 8))
     }
 
     fn calc(&self, out: &mut Out, m: &Member, e: &TExpr) {

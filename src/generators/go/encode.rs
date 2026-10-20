@@ -1,8 +1,9 @@
 //! Go encoder statements. Like decoding, the writer records the first error.
 
+use super::expr::store_value;
 use super::naming::{Go, field_name};
-use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mask, string_literal};
-use crate::ir::{BitPart, Codec, Count, Member, Packet, StrMode, TExpr, ValueType};
+use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mark_var, mask, string_literal};
+use crate::ir::{BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, ValueType};
 
 fn write_elem(out: &mut Out, codec: &Codec, ty: &ValueType, v: &str) {
     if let ValueType::Int { width, signed } = ty
@@ -60,8 +61,44 @@ impl StepEmitter for Encoder<'_> {
         out.line(format!("pbW.At(\"{}\")", field));
     }
 
+    fn mark(&self, out: &mut Out, mark: Mark) {
+        out.line(format!("{} := pbW.PositionBits()", mark_var(mark)));
+    }
+
+    fn define_local(&self, out: &mut Out, m: &Member, value: &TExpr) {
+        if m.is_derived() {
+            out.line(format!("var pbc_{} int64 = {}", m.name, self.scope.expr(value)));
+        } else {
+            out.line(format!("pbc_{} := {}", m.name, store_value(value, self.scope.expr(value), &m.ty)));
+        }
+    }
+
+    fn write_derived(&self, out: &mut Out, m: &Member, codec: &Codec, at: Option<Mark>) {
+        let v = format!("pbc_{}", m.name);
+        if let ValueType::Int { width, signed } = &m.ty {
+            if *signed {
+                out.line(format!("pbW.CheckI({}, {})", v, width));
+            } else {
+                out.line(format!("pbW.CheckU(uint64({}), {})", v, width));
+            }
+        }
+        match (codec, at) {
+            (Codec::Bytes { nbytes, endian }, None) => {
+                out.line(format!("pbW.WriteUint(uint64({}), {}, {})", v, nbytes, Go::little(endian)))
+            }
+            (Codec::Bytes { nbytes, endian }, Some(at)) => {
+                out.line(format!("pbW.PatchUint({}, uint64({}), {}, {})", mark_var(at), v, nbytes, Go::little(endian)))
+            }
+            (Codec::Bits { width }, None) => out.line(format!("pbW.WriteBits(uint64({}), {})", v, width)),
+            (Codec::Bits { width }, Some(at)) => {
+                out.line(format!("pbW.PatchBits({}, uint64({}), {})", mark_var(at), v, width))
+            }
+            _ => unreachable!("derived fields are integers"),
+        }
+    }
+
     fn align(&self, out: &mut Out, bytes: u64) {
-        out.line(format!("pbW.WriteZeroBits(int64(pbPad(pbW.PositionBits()-pbStart, {})))", bytes * 8))
+        out.line(format!("pbW.WriteZeroBits(int64(pbPad(pbW.PositionBits()-pb_start, {})))", bytes * 8))
     }
 
     fn string(&self, out: &mut Out, m: &Member, mode: &StrMode, array: Option<&Count>) {
@@ -85,7 +122,7 @@ impl StepEmitter for Encoder<'_> {
                 out.line("pbW.WriteBytes(pbB)");
                 out.line("pbW.WriteZeroBits((pbN - int64(len(pbB))) * 8)");
             }
-            (_, Some(Count::Expr(e))) => {
+            (_, Some(Count::Expr(e))) if !self.packet().depends_on_wire(e) => {
                 out.line(format!("pbW.CheckLen(len(pbB), {})", self.scope.expr(e)));
                 out.line("pbW.WriteBytes(pbB)");
             }
@@ -109,7 +146,9 @@ impl StepEmitter for Encoder<'_> {
 
     fn array(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec, count: &Count) {
         let place = format!("p.{}", field_name(&m.name));
-        if let Count::Expr(e) = count {
+        if let Count::Expr(e) = count
+            && !self.packet().depends_on_wire(e)
+        {
             out.line(format!("pbW.CheckLen(len({}), {})", place, self.scope.expr(e)));
         }
         if ty.is_byte() {

@@ -358,13 +358,14 @@
       "error": true
     },
     {
-      "name": "length must match the data on encode",
+      "name": "length and CRC are computed on encode",
       "packet": "P3Packet",
       "hex": "5a6a0a0058107fa044640016000100010a0400000001010b040000000503010a736f6d65677579202020011d00011d00010a040000000203010970617373776f726431011d00010a0400000010010b0400000001011d00011d000002000d",
       "set": {
-        "length": 10
+        "length": 10,
+        "crc": 0
       },
-      "encode_error": true
+      "encoded": "5a6a0a0058107fa044640016000100010a0400000001010b040000000503010a736f6d65677579202020011d00011d00010a040000000203010970617373776f726431011d00010a0400000010010b0400000001011d00011d000002000d"
     },
     {
       "name": "7-bit type field on encode",
@@ -383,6 +384,13 @@
         "token": "Ddd"
       },
       "encode_error": true
+    },
+    {
+      "name": "CRC mismatch",
+      "packet": "P3Packet",
+      "hex": "5a6a0d00031011a40d",
+      "error_kind": "mismatch",
+      "error_path": "P3Packet.crc"
     }
   ]
 }

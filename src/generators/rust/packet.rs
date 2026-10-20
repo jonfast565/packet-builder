@@ -2,8 +2,7 @@
 
 use super::decode::Decoder;
 use super::encode::Encoder;
-use super::expr::store_value;
-use super::naming::{ident, member_type, scalar_type};
+use super::naming::{ident, member_type};
 use crate::generators::common::{Out, StepEmitter, magic_literal, member_category};
 use crate::ir::Packet;
 
@@ -49,7 +48,7 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     out.open(format!("pub fn decode_from(pb_r: &mut PbReader) -> Result<{}, PbError> {{", name));
     out.line(format!("pb_r.enter(\"{}\")?;", name));
     out.line(format!("let mut p = {}::default();", name));
-    if p.uses_align() {
+    if p.needs_start(false) {
         out.line("let pb_start = pb_r.position_bits();");
     }
     Decoder::new(p).emit_steps(out);
@@ -68,17 +67,12 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     out.open("pub fn encode_to(&self, pb_w: &mut PbWriter) -> Result<(), PbError> {");
     out.line(format!("pb_w.enter(\"{}\")?;", name));
     out.line("let p = self;");
-    if p.uses_align() {
+    if p.needs_start(true) {
         out.line("let pb_start = pb_w.position_bits();");
     }
     let encoder = Encoder::new(p);
     for (m, e) in p.encode_calc_members() {
-        out.line(format!(
-            "let pbc_{}: {} = {};",
-            m.name,
-            scalar_type(&m.ty),
-            store_value(encoder.scope.expr(e), &m.ty)
-        ));
+        encoder.define_local(out, m, e);
     }
     encoder.emit_steps(out);
     out.line("pb_w.leave();");

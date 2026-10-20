@@ -38,8 +38,8 @@ const P3Type u7 {
 
 packet P3Packet be {
   sync uint8 == P3_SYNC,
-  crc uint16,               // CRC-16/ARC of everything from `length` up to the stop byte
-  length uint16 in P3_LENGTH_OVERHEAD..0xffff,  // data bytes + P3_LENGTH_OVERHEAD
+  crc uint16 = crc16_arc(length..data),  // everything from `length` up to the stop byte
+  length uint16 = len(data) + P3_LENGTH_OVERHEAD,
   tx_seq uint8,             // P3_SEQ_FIRST..P3_SEQ_LAST
   rx_seq uint8,             // last sequence number received from the other side
   kind bitfield uint8 {
@@ -57,8 +57,8 @@ const P3_TOKEN_LENGTH uint16 = 2 "every DATA packet starts with a two-character 
 
 packet P3DataPacket be {
   sync uint8 == P3_SYNC,
-  crc uint16,
-  length uint16 in P3_LENGTH_OVERHEAD + P3_TOKEN_LENGTH..0xffff,
+  crc uint16 = crc16_arc(length..atoms),
+  length uint16 = len(atoms) + P3_LENGTH_OVERHEAD + P3_TOKEN_LENGTH,
   tx_seq uint8,
   rx_seq uint8,
   kind bitfield uint8 { always_set u1 == 1, type u7 : P3Type strict },
@@ -125,7 +125,7 @@ packet P3Init be {
 // A complete INIT packet in one pass.
 packet P3InitPacket be {
   sync uint8 == P3_SYNC,
-  crc uint16,
+  crc uint16 = crc16_arc(length..init),
   length uint16 == P3_INIT_LENGTH,
   tx_seq uint8,
   rx_seq uint8,

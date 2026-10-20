@@ -2,8 +2,8 @@
 
 use super::expr::store_value;
 use super::naming::{Rust, ident, scalar_type};
-use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mask, string_literal};
-use crate::ir::{BitPart, Codec, Count, Member, Packet, StrMode, TExpr, ValueType};
+use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mark_var, mask, string_literal};
+use crate::ir::{BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, ValueType};
 
 /// Expression that reads one element.
 fn read_elem(codec: &Codec, ty: &ValueType) -> String {
@@ -52,6 +52,19 @@ impl StepEmitter for Decoder<'_> {
 
     fn locate(&self, out: &mut Out, field: &str) {
         out.line(format!("pb_r.at(\"{}\");", field));
+    }
+
+    fn mark(&self, out: &mut Out, mark: Mark) {
+        out.line(format!("let {} = pb_r.position_bits();", mark_var(mark)));
+    }
+
+    fn verify(&self, out: &mut Out, m: &Member, value: &TExpr) {
+        out.line(format!(
+            "if (p.{} as i64) != {} {{ return Err(pb_r.error(PbErrorKind::Mismatch, {}.into())); }}",
+            ident(&m.name),
+            self.scope.expr(value),
+            string_literal(&format!("`{}` does not match the value computed from the data", m.name))
+        ));
     }
 
     fn align(&self, out: &mut Out, bytes: u64) {

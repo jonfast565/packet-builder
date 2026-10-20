@@ -30,7 +30,7 @@ packet Flap be {
   start uint8 == FLAP_START,
   channel uint8 : Channel strict,
   sequence uint16,          // per-direction sequence number
-  length uint16,            // payload size in bytes
+  length uint16 = len(payload),
   payload bytes[length]
 }
 
@@ -54,7 +54,7 @@ packet FlapSignon be {
 // ---------------------------------------------------------------------
 packet Tlv be {
   type uint16,
-  length uint16,
+  length uint16 = len(value),
   value bytes[length]
 }
 
@@ -87,7 +87,7 @@ packet SnacHeader be {
 }
 
 packet SnacVersionInfo be {
-  length uint16,
+  length uint16 = len(tlvs),
   tlvs bytes[length]
 }
 
@@ -145,13 +145,13 @@ packet FamilySubtype be {
 
 packet RateGroup be {
   class_id uint16,
-  pair_count uint16,
+  pair_count uint16 = len(pairs),
   pairs FamilySubtype[pair_count]
 }
 
 packet RateInfo be {
   header SnacHeader,
-  class_count uint16,
+  class_count uint16 = len(classes),
   classes RateClass[class_count],
   groups RateGroup[]
 }
@@ -173,7 +173,7 @@ packet AuthKeyRequest be {
 // SNAC(17,07) the salt to hash the password with.
 packet AuthKeyResponse be {
   header SnacHeader,
-  key_length uint16,
+  key_length uint16 = len(key),
   key bytes[key_length]
 }
 
@@ -212,7 +212,7 @@ packet IcbmReceive be {
   channel uint16 : IcbmChannel,
   screen_name string(uint8),
   warning_level uint16,     // sender's warning level in tenths of a percent
-  user_tlv_count uint16,
+  user_tlv_count uint16 = len(user_tlvs),
   user_tlvs Tlv[user_tlv_count],
   tlvs Tlv[],
   calc warning_percent float64 = warning_level / 10.0
@@ -228,7 +228,7 @@ const FragmentId uint8 {
 packet IcbmFragment be {
   id uint8 : FragmentId,
   version uint8,
-  length uint16,
+  length uint16 = len(data),
   data bytes[length]
 }
 

@@ -215,6 +215,12 @@ pub const PbReader = struct {
         return out;
     }
 
+    /// Checksum `algo` of the input between two bit positions (whole bytes);
+    /// the bytes between `hole_from` and `hole_to` count as zero.
+    pub fn checksum(self: *const PbReader, algo: u32, from: usize, to: usize, hole_from: usize, hole_to: usize) u64 {
+        return pbChecksum(algo, self.data, from / 8, to / 8, hole_from / 8, hole_to / 8);
+    }
+
     /// Validate a decoded element count against the data that is left.
     pub fn count(self: *PbReader, n: i64, elem_bits: u64) PbError!usize {
         if (n < 0) return self.fail(PbError.Invalid);
@@ -315,10 +321,110 @@ pub const PbWriter = struct {
         if (width < 64 and (len >> @intCast(width)) != 0) return self.fail(PbError.Range);
     }
 
+    /// Overwrite `nbytes` bytes at bit position `pos` (byte aligned).
+    pub fn patchUint(self: *PbWriter, pos: usize, value: u64, nbytes: u4, little: bool) void {
+        var i: u6 = 0;
+        while (i < nbytes) : (i += 1) {
+            const shift: u6 = if (little) 8 * i else 8 * (@as(u6, nbytes) - 1 - i);
+            self.buf.items[pos / 8 + i] = @truncate(value >> shift);
+        }
+    }
+
+    /// Overwrite `width` bits at bit position `pos`, MSB first.
+    pub fn patchBits(self: *PbWriter, pos: usize, value: u64, width: u7) void {
+        var i: usize = 0;
+        while (i < width) : (i += 1) {
+            const bit: u8 = @intCast((value >> @intCast(width - 1 - i)) & 1);
+            const off: u3 = @intCast(7 - (pos + i) % 8);
+            const byte = &self.buf.items[(pos + i) / 8];
+            byte.* = (byte.* & ~(@as(u8, 1) << off)) | (bit << off);
+        }
+    }
+
+    /// Checksum `algo` of the output between two bit positions (whole
+    /// bytes); the bytes between `hole_from` and `hole_to` count as zero.
+    pub fn checksum(self: *const PbWriter, algo: u32, from: usize, to: usize, hole_from: usize, hole_to: usize) u64 {
+        return pbChecksum(algo, self.buf.items, from / 8, to / 8, hole_from / 8, hole_to / 8);
+    }
+
+    /// A computed value must fit an unsigned field of `width` bits (any bit
+    /// pattern fits 64 bits).
+    pub fn checkU(self: *PbWriter, v: i64, width: u7) PbError!void {
+        if (width < 64 and (v < 0 or (@as(u64, @intCast(v)) >> @intCast(width)) != 0)) return self.fail(PbError.Range);
+    }
+
+    /// A computed value must fit a signed field of `width` bits.
+    pub fn checkI(self: *PbWriter, v: i64, width: u7) PbError!void {
+        if (width >= 64) return;
+        const half = @as(i64, 1) << @intCast(width - 1);
+        if (v < -half or v >= half) return self.fail(PbError.Range);
+    }
+
     pub fn checkLen(self: *PbWriter, actual: usize, expected: i64) PbError!void {
         if (expected < 0 or actual != @as(u64, @intCast(expected))) return self.fail(PbError.Mismatch);
     }
 };
+
+const PbCrc = struct { width: u6, poly: u64, init: u64, reflected: bool, xorout: u64 };
+
+/// CRC parameters by algorithm number (polynomials of reflected CRCs are
+/// reflected).
+const pb_crc = [8]PbCrc{
+    .{ .width = 8, .poly = 0x07, .init = 0, .reflected = false, .xorout = 0 }, // crc8 (CRC-8/SMBUS)
+    .{ .width = 16, .poly = 0xa001, .init = 0, .reflected = true, .xorout = 0 }, // crc16_arc
+    .{ .width = 16, .poly = 0x1021, .init = 0xffff, .reflected = false, .xorout = 0 }, // crc16_ccitt_false
+    .{ .width = 16, .poly = 0x1021, .init = 0, .reflected = false, .xorout = 0 }, // crc16_xmodem
+    .{ .width = 16, .poly = 0x8408, .init = 0, .reflected = true, .xorout = 0 }, // crc16_kermit
+    .{ .width = 16, .poly = 0xa001, .init = 0xffff, .reflected = true, .xorout = 0 }, // crc16_modbus
+    .{ .width = 32, .poly = 0xedb88320, .init = 0xffffffff, .reflected = true, .xorout = 0xffffffff }, // crc32
+    .{ .width = 32, .poly = 0x82f63b78, .init = 0xffffffff, .reflected = true, .xorout = 0xffffffff }, // crc32c
+};
+
+/// Checksum `algo` of buf[from..to] with buf[hole_from..hole_to] as zeros.
+/// 8: Internet checksum (RFC 1071), 9: Fletcher-16, 10: sum8, 11: xor8.
+fn pbChecksum(algo: u32, buf: []const u8, from: usize, to: usize, hole_from: usize, hole_to: usize) u64 {
+    if (algo < 8) {
+        const p = pb_crc[algo];
+        const mask: u64 = (@as(u64, 1) << p.width) - 1;
+        var crc = p.init;
+        var i = from;
+        while (i < to) : (i += 1) {
+            const x: u64 = if (i >= hole_from and i < hole_to) 0 else buf[i];
+            var k: u4 = 0;
+            if (p.reflected) {
+                crc ^= x;
+                while (k < 8) : (k += 1) crc = if (crc & 1 != 0) (crc >> 1) ^ p.poly else crc >> 1;
+            } else {
+                crc ^= x << (p.width - 8);
+                while (k < 8) : (k += 1) {
+                    crc = (if (crc & (@as(u64, 1) << (p.width - 1)) != 0) (crc << 1) ^ p.poly else crc << 1) & mask;
+                }
+            }
+        }
+        return (crc ^ p.xorout) & mask;
+    }
+    var a: u64 = 0;
+    var b: u64 = 0;
+    var i = from;
+    while (i < to) : (i += 1) {
+        const x: u64 = if (i >= hole_from and i < hole_to) 0 else buf[i];
+        switch (algo) {
+            8 => a += if ((i - from) % 2 == 0) x << 8 else x,
+            9 => {
+                a = (a + x) % 255;
+                b = (b + a) % 255;
+            },
+            10 => a = (a + x) & 0xff,
+            else => a ^= x,
+        }
+    }
+    if (algo == 8) {
+        while (a >> 16 != 0) a = (a & 0xffff) + (a >> 16);
+        return ~a & 0xffff;
+    }
+    if (algo == 9) return (b << 8) | a;
+    return a;
+}
 
 /// Padding needed after `offset` bits to reach a multiple of `unit` bits.
 fn pbPad(offset: usize, unit: usize) usize {

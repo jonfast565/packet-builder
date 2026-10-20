@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use super::expr::TExpr;
+use super::expr::{Mark, TExpr};
 use crate::ast::Endianness;
 pub use crate::ast::Radix;
 
@@ -117,6 +117,15 @@ pub struct Packet {
     pub alignment: u64,
     /// `assert` items, in source order (`Step::Assert` refers to them).
     pub asserts: Vec<Assertion>,
+    /// Derived members, which decoding verifies after the last step.
+    pub derived: Vec<usize>,
+    /// Derived members whose value depends on the encoded bytes (`sizeof`,
+    /// `offsetof`, checksums): encoding writes a placeholder and patches it
+    /// after the last step, in this order.
+    pub patches: Vec<usize>,
+    /// Members only known after encoding the body: `patches` and the
+    /// calculated members that depend on them.
+    pub wire_dependent: Vec<usize>,
 }
 
 /// `assert cond "message"`.
@@ -132,12 +141,56 @@ impl Packet {
         self.steps.iter().any(|s| matches!(s, Step::Align { .. }))
     }
 
-    /// Calculated members that encoding evaluates up front, with their expressions.
+    /// Members that encoding evaluates up front (calculated members lengths
+    /// need, and derived members that only depend on values), with their
+    /// expressions, dependencies first.
     pub fn encode_calc_members(&self) -> impl Iterator<Item = (&Member, &TExpr)> {
         self.encode_calcs.iter().filter_map(|&c| {
             let m = &self.members[c];
-            m.calc_expr().map(|e| (m, e))
+            m.calc_expr().or(m.derived_expr()).map(|e| (m, e))
         })
+    }
+
+    /// True if `e` reads a member only known after encoding the body; such
+    /// length checks and assertions are skipped when encoding.
+    pub fn depends_on_wire(&self, e: &TExpr) -> bool {
+        let mut deps = Vec::new();
+        e.deps(&mut deps);
+        deps.iter().any(|d| self.wire_dependent.contains(d))
+    }
+
+    /// The step that reads or writes stored member `member`.
+    pub fn field_step(&self, member: usize) -> Option<usize> {
+        self.steps.iter().position(|s| matches!(s, Step::Field { member: Some(m), .. } if *m == member))
+    }
+
+    /// The positions decoding (`encoding == false`) or encoding records: the
+    /// marks read by verified or patched derived fields, and the position of
+    /// each patched field.
+    pub fn marks(&self, encoding: bool) -> Vec<Mark> {
+        let mut out = Vec::new();
+        let members: &[usize] = if encoding { &self.patches } else { &self.derived };
+        for &m in members {
+            let member = &self.members[m];
+            if !encoding && member.lenient {
+                continue;
+            }
+            if let Some(e) = member.derived_expr() {
+                e.marks(&mut out);
+            }
+            if encoding && let Some(step) = self.field_step(m) {
+                out.push(Mark::Before(step));
+            }
+        }
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    /// True if decoding or encoding needs the packet's start position
+    /// (`pb_start`): for alignment, or for a mark.
+    pub fn needs_start(&self, encoding: bool) -> bool {
+        self.uses_align() || self.marks(encoding).contains(&Mark::PacketStart)
     }
 }
 
@@ -201,6 +254,18 @@ impl Member {
             _ => None,
         }
     }
+
+    /// The expression of a derived member (`length uint16 = len(payload)`).
+    pub fn derived_expr(&self) -> Option<&TExpr> {
+        match &self.kind {
+            MemberKind::Derived(e) => Some(e),
+            _ => None,
+        }
+    }
+
+    pub fn is_derived(&self) -> bool {
+        matches!(self.kind, MemberKind::Derived(_))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -208,6 +273,9 @@ pub enum MemberKind {
     Stored,
     BitfieldPart,
     Calculated(TExpr),
+    /// Stored on the wire, but computed when encoding and verified when
+    /// decoding.
+    Derived(TExpr),
 }
 
 #[derive(Debug, Clone, PartialEq)]

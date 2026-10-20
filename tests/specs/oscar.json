@@ -52,13 +52,13 @@
       "error": true
     },
     {
-      "name": "FLAP length field must match payload on encode",
+      "name": "FLAP length is computed from the payload on encode",
       "packet": "Flap",
       "hex": "2a02000100020017",
       "set": {
         "length": 3
       },
-      "encode_error": true
+      "encoded": "2a02000100020017"
     },
     {
       "name": "SNAC(01,03) server ready",

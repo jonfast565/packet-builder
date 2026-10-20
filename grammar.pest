@@ -36,7 +36,7 @@ rarray = @{ "]" }
 comma  = @{ "," }
 colon  = @{ ":" }
 dot    = @{ "." }
-assign = @{ "=" }          
+assign = @{ "=" ~ !"=" }
 
 gt   = @{ ">" ~ !">" }
 gte  = @{ ">=" }
@@ -217,7 +217,7 @@ product         = { unary   ~ ((mult | div | modulo) ~ unary)* }
 unary           = { (minus | bnot)* ~ power }
 power           = { primary ~ (pw ~ primary)? }
 
-primary         = { guard_expression | literal | function_call | accessor | inner_expr }
+primary         = { guard_expression | literal | function_call | range_call | accessor | inner_expr }
 
 inner_expr      = { lparen ~ expr ~ rparen }
 literal         = { numeric_constant | string }
@@ -227,10 +227,22 @@ intrinsic_function = @{ sqrt_kw | min_kw | max_kw }
 parameter_list = { lparen ~ (expr ~ (comma ~ expr)*)? ~ comma? ~ rparen } // allows trailing comma
 function_call = { intrinsic_function ~ parameter_list }
 
+// Functions over fields rather than values: len(items), sizeof(a..b),
+// sizeof(self), offsetof(f), crc32(header..payload). The name is checked
+// during analysis.
+self_kw    = @{ "self" ~ !(alnum | underscore) }
+field_range = { self_kw | (identifier ~ (dotdot ~ identifier)?) }
+range_call = { identifier ~ lparen ~ field_range ~ rparen }
+
 // Accessors & declarations
 declaration = {
-    identifier ~ field_type ~ array_specifier? ~ endianness? ~ alignment? ~ category_tag? ~ constraint? ~ lenient_kw?
+    identifier ~ field_type ~ array_specifier? ~ endianness? ~ alignment? ~ category_tag? ~ derivation?
+    ~ constraint? ~ lenient_kw?
 }
+
+// `length uint16 = len(payload)`: encoding computes the value; decoding
+// checks it.
+derivation = { assign ~ expr }
 
 // `: Category` notes which named constants a field's values come from;
 // `strict` rejects any other value.

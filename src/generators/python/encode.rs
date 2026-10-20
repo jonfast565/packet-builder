@@ -1,8 +1,9 @@
 //! Python encoder statements.
 
+use super::expr::store_value;
 use super::naming::{Python, float_format, ident};
-use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mask, string_literal};
-use crate::ir::{BitPart, Codec, Count, Member, Packet, StrMode, TExpr, ValueType};
+use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mark_var, mask, string_literal};
+use crate::ir::{BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, ValueType};
 
 fn write_elem(out: &mut Out, codec: &Codec, ty: &ValueType, v: &str) {
     match ty {
@@ -54,6 +55,42 @@ impl StepEmitter for Encoder<'_> {
         out.line(format!("pb_w.at(\"{}\")", field));
     }
 
+    fn mark(&self, out: &mut Out, mark: Mark) {
+        out.line(format!("{} = pb_w.position_bits()", mark_var(mark)));
+    }
+
+    fn define_local(&self, out: &mut Out, m: &Member, value: &TExpr) {
+        if m.is_derived() {
+            out.line(format!("pbc_{} = {}", m.name, self.scope.expr(value)));
+        } else {
+            out.line(format!("pbc_{} = {}", m.name, store_value(self.scope.expr(value), &m.ty)));
+        }
+    }
+
+    fn write_derived(&self, out: &mut Out, m: &Member, codec: &Codec, at: Option<Mark>) {
+        let v = format!("pbc_{}", m.name);
+        if let ValueType::Int { width, signed } = &m.ty {
+            if *signed {
+                out.line(format!("pb_w.check_i({}, {})", v, width));
+            } else {
+                out.line(format!("pb_w.check_u({}, {})", v, width));
+            }
+        }
+        match (codec, at) {
+            (Codec::Bytes { nbytes, endian }, None) => {
+                out.line(format!("pb_w.write_uint({}, {}, {})", v, nbytes, Python::little(endian)))
+            }
+            (Codec::Bytes { nbytes, endian }, Some(at)) => {
+                out.line(format!("pb_w.patch_uint({}, {}, {}, {})", mark_var(at), v, nbytes, Python::little(endian)))
+            }
+            (Codec::Bits { width }, None) => out.line(format!("pb_w.write_bits({}, {})", v, width)),
+            (Codec::Bits { width }, Some(at)) => {
+                out.line(format!("pb_w.patch_bits({}, {}, {})", mark_var(at), v, width))
+            }
+            _ => unreachable!("derived fields are integers"),
+        }
+    }
+
     fn align(&self, out: &mut Out, bytes: u64) {
         out.line(format!("pb_w.write_zero_bits(_pb_pad(pb_w.position_bits() - pb_start, {}))", bytes * 8))
     }
@@ -75,7 +112,7 @@ impl StepEmitter for Encoder<'_> {
                 out.line("pb_w.check_fits(len(pb_b), pb_n)");
                 out.line("pb_w.write_bytes(pb_b + bytes(pb_n - len(pb_b)))");
             }
-            (_, Some(Count::Expr(e))) => {
+            (_, Some(Count::Expr(e))) if !self.packet().depends_on_wire(e) => {
                 out.line(format!("pb_w.check_len(len(pb_b), {})", self.scope.expr(e)));
                 out.line("pb_w.write_bytes(pb_b)");
             }
@@ -100,7 +137,9 @@ impl StepEmitter for Encoder<'_> {
 
     fn array(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec, count: &Count) {
         let place = format!("p.{}", ident(&m.name));
-        if let Count::Expr(e) = count {
+        if let Count::Expr(e) = count
+            && !self.packet().depends_on_wire(e)
+        {
             out.line(format!("pb_w.check_len(len({}), {})", place, self.scope.expr(e)));
         }
         if ty.is_byte() {

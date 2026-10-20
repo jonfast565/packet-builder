@@ -1,8 +1,9 @@
 //! C encoder statements. `PB_CHECK` returns the error code on failure.
 
-use super::naming::{C, ident, len_ident};
-use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mask};
-use crate::ir::{BitPart, Codec, Count, Member, Packet, StrMode, TExpr, ValueType};
+use super::expr::store_value;
+use super::naming::{C, ident, len_ident, scalar_type};
+use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mark_var, mask};
+use crate::ir::{BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, ValueType};
 
 fn write_elem(out: &mut Out, codec: &Codec, ty: &ValueType, v: &str) {
     if let ValueType::Int { width, signed } = ty
@@ -63,6 +64,53 @@ impl StepEmitter for Encoder<'_> {
         out.line(format!("pb_at(&pb_w->tr, \"{}\");", field));
     }
 
+    fn mark(&self, out: &mut Out, mark: Mark) {
+        out.line(format!("size_t {} = pb_writer_position(pb_w);", mark_var(mark)));
+    }
+
+    fn define_local(&self, out: &mut Out, m: &Member, value: &TExpr) {
+        if m.is_derived() {
+            out.line(format!("int64_t pbc_{} = {};", m.name, self.scope.expr(value)));
+        } else {
+            out.line(format!(
+                "{} pbc_{} = {};",
+                scalar_type(&m.ty),
+                m.name,
+                store_value(self.scope.expr(value), &m.ty)
+            ));
+        }
+    }
+
+    fn write_derived(&self, out: &mut Out, m: &Member, codec: &Codec, at: Option<Mark>) {
+        let v = format!("pbc_{}", m.name);
+        if let ValueType::Int { width, signed } = &m.ty {
+            if *signed {
+                out.line(format!("PB_CHECK(pb_check_i({}, {}));", v, width));
+            } else {
+                out.line(format!("PB_CHECK(pb_check_u((uint64_t){}, {}));", v, width));
+            }
+        }
+        match (codec, at) {
+            (Codec::Bytes { nbytes, endian }, None) => {
+                out.line(format!("PB_CHECK(pb_write_uint(pb_w, (uint64_t){}, {}, {}));", v, nbytes, C::little(endian)))
+            }
+            (Codec::Bytes { nbytes, endian }, Some(at)) => out.line(format!(
+                "pb_patch_uint(pb_w, {}, (uint64_t){}, {}, {});",
+                mark_var(at),
+                v,
+                nbytes,
+                C::little(endian)
+            )),
+            (Codec::Bits { width }, None) => {
+                out.line(format!("PB_CHECK(pb_write_bits(pb_w, (uint64_t){}, {}));", v, width))
+            }
+            (Codec::Bits { width }, Some(at)) => {
+                out.line(format!("pb_patch_bits(pb_w, {}, (uint64_t){}, {});", mark_var(at), v, width))
+            }
+            _ => unreachable!("derived fields are integers"),
+        }
+    }
+
     fn align(&self, out: &mut Out, bytes: u64) {
         out.line(format!(
             "PB_CHECK(pb_write_zero_bits(pb_w, (int64_t)pb_pad(pb_writer_position(pb_w) - pb_start, {})));",
@@ -93,7 +141,7 @@ impl StepEmitter for Encoder<'_> {
                 out.line(format!("PB_CHECK(pb_write_zero_bits(pb_w, (pb_n - (int64_t){}) * 8));", len));
                 out.close("}");
             }
-            (_, Some(Count::Expr(e))) => {
+            (_, Some(Count::Expr(e))) if !self.packet().depends_on_wire(e) => {
                 out.line(format!("PB_CHECK(pb_check_len({}, {}));", len, self.scope.expr(e)));
                 out.line(format!("PB_CHECK(pb_write_bytes(pb_w, (const uint8_t *){}, {}));", s, len));
             }
@@ -121,7 +169,9 @@ impl StepEmitter for Encoder<'_> {
     fn array(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec, count: &Count) {
         let place = format!("p->{}", ident(&m.name));
         let len = self.len(m);
-        if let Count::Expr(e) = count {
+        if let Count::Expr(e) = count
+            && !self.packet().depends_on_wire(e)
+        {
             out.line(format!("PB_CHECK(pb_check_len({}, {}));", len, self.scope.expr(e)));
         }
         if ty.is_byte() {

@@ -2,8 +2,7 @@
 
 use super::decode::Decoder;
 use super::encode::Encoder;
-use super::expr::store_value;
-use super::naming::{default_value, member_type, prop_name, scalar_type};
+use super::naming::{default_value, member_type, prop_name};
 use crate::generators::common::{Out, StepEmitter, member_category};
 use crate::ir::Packet;
 
@@ -29,8 +28,8 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     out.open("{");
     out.line(format!("pbR.Enter(\"{}\");", name));
     out.line(format!("var p = new {}();", name));
-    if p.uses_align() {
-        out.line("long pbStart = pbR.PositionBits;");
+    if p.needs_start(false) {
+        out.line("long pb_start = pbR.PositionBits;");
     }
     Decoder::new(p).emit_steps(out);
     out.line("pbR.Leave();");
@@ -48,12 +47,12 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     out.open("{");
     out.line(format!("pbW.Enter(\"{}\");", name));
     out.line("var p = this;");
-    if p.uses_align() {
-        out.line("long pbStart = pbW.PositionBits;");
+    if p.needs_start(true) {
+        out.line("long pb_start = pbW.PositionBits;");
     }
     let encoder = Encoder::new(p);
     for (m, e) in p.encode_calc_members() {
-        out.line(format!("{} pbc_{} = {};", scalar_type(&m.ty), m.name, store_value(encoder.scope.expr(e), &m.ty)));
+        encoder.define_local(out, m, e);
     }
     encoder.emit_steps(out);
     out.line("pbW.Leave();");

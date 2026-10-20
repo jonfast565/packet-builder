@@ -4,6 +4,7 @@
 //! - `packet`: per-packet passes ([`PacketBuilder`](packet::PacketBuilder)).
 //! - `consts`: named constants and categories, and `: Category` tags.
 //! - `checks`: `== value`, `in lo..hi`, `strict` and `lenient` on fields.
+//! - `derive`: derived fields, their marks and the encode order.
 //! - `context`: the member table and diagnostics shared by those passes.
 //! - `typecheck`, `codec`: expression and wire-format resolution.
 //! - `cursor`: what is known about the bit offset while laying out fields.
@@ -14,6 +15,7 @@ mod codec;
 mod consts;
 mod context;
 mod cursor;
+mod derive;
 mod packet;
 mod typecheck;
 mod types;

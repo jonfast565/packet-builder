@@ -18,12 +18,12 @@ use crate::ir::expr::{TExpr, Ty, coerce};
 use crate::ir::model::{Assertion, BitPart, Codec, Count, MemberKind, Packet, Step, StrMode, ValueType};
 
 pub(super) struct PacketBuilder<'a> {
-    p: &'a PacketExpr,
-    ctx: Ctx<'a>,
+    pub(super) p: &'a PacketExpr,
+    pub(super) ctx: Ctx<'a>,
     default_endian: Endianness,
     /// Count of every `Field` item, in item order (pass 2).
     field_counts: Vec<Option<Count>>,
-    steps: Vec<Step>,
+    pub(super) steps: Vec<Step>,
     /// Members decoded so far.
     available: HashSet<usize>,
     /// Calculated members already given a `Calc` step.
@@ -33,8 +33,21 @@ pub(super) struct PacketBuilder<'a> {
     /// Alignment of this packet when nested (C struct rules under `align N`).
     alignment: u64,
     /// `assert` items (pass 3) and whether each has an `Assert` step yet.
-    asserts: Vec<(Assertion, Span)>,
+    pub(super) asserts: Vec<(Assertion, Span)>,
     asserts_scheduled: Vec<bool>,
+    /// For each field or bitfield item: its step and whether the bit offset
+    /// is a whole number of bytes before and after it.
+    pub(super) item_steps: HashMap<usize, ItemStep>,
+    /// Whether the offset was byte aligned just before the last field step.
+    aligned_before: bool,
+}
+
+/// Where a source item ended up.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct ItemStep {
+    pub step: usize,
+    pub aligned_before: bool,
+    pub aligned_after: bool,
 }
 
 impl<'a> PacketBuilder<'a> {
@@ -52,6 +65,8 @@ impl<'a> PacketBuilder<'a> {
             alignment: 1,
             asserts: Vec::new(),
             asserts_scheduled: Vec::new(),
+            item_steps: HashMap::new(),
+            aligned_before: true,
         }
     }
 
@@ -59,6 +74,7 @@ impl<'a> PacketBuilder<'a> {
         self.declare_members();
         self.resolve_counts();
         self.resolve_calcs();
+        self.resolve_derived();
         self.lay_out();
         self.finish()
     }
@@ -70,17 +86,17 @@ impl<'a> PacketBuilder<'a> {
             match item {
                 PacketItem::Field(f) => {
                     if f.id == "_" {
-                        ctx.rules("_", &f.rules, false, f.span);
+                        ctx.rules("_", &f.rules, false, false, f.span);
                         continue;
                     }
                     ctx.declare(&f.id, field_value_type(f), MemberKind::Stored, f.span);
                     ctx.tag(&f.id, &f.category);
-                    ctx.rules(&f.id, &f.rules, f.array.is_some(), f.span);
+                    ctx.rules(&f.id, &f.rules, f.array.is_some(), f.derive.is_some(), f.span);
                 }
                 PacketItem::Bitfield(b) => {
                     for m in &b.members {
                         if m.name == "_" {
-                            ctx.rules("_", &m.rules, false, m.span);
+                            ctx.rules("_", &m.rules, false, false, m.span);
                             continue;
                         }
                         ctx.declare(
@@ -90,7 +106,7 @@ impl<'a> PacketBuilder<'a> {
                             m.span,
                         );
                         ctx.tag(&m.name, &m.category);
-                        ctx.rules(&m.name, &m.rules, false, m.span);
+                        ctx.rules(&m.name, &m.rules, false, false, m.span);
                     }
                 }
                 PacketItem::Calculated(c) => {
@@ -184,8 +200,12 @@ impl<'a> PacketBuilder<'a> {
                     let count = self.field_counts[field_no].clone();
                     field_no += 1;
                     self.lay_out_field(f, count, Some(item_idx) == last_stored);
+                    self.note_item(item_idx);
                 }
-                PacketItem::Bitfield(b) => self.lay_out_bitfield(b),
+                PacketItem::Bitfield(b) => {
+                    self.lay_out_bitfield(b);
+                    self.note_item(item_idx);
+                }
             }
             self.schedule_calcs();
         }
@@ -193,6 +213,14 @@ impl<'a> PacketBuilder<'a> {
         // C-style tail padding: the size is a multiple of the packet's alignment.
         if p.align.is_some() && !self.open_ended {
             self.cursor.pad_to(self.alignment, &mut self.steps);
+        }
+    }
+
+    /// Record where the field just laid out ended up.
+    fn note_item(&mut self, item: usize) {
+        if let Some(step) = self.steps.iter().rposition(|s| matches!(s, Step::Field { .. } | Step::Bitfield { .. })) {
+            let aligned_after = self.cursor.align.is_aligned();
+            self.item_steps.insert(item, ItemStep { step, aligned_before: self.aligned_before, aligned_after });
         }
     }
 
@@ -267,6 +295,7 @@ impl<'a> PacketBuilder<'a> {
         }
 
         let align = self.cursor.align;
+        self.aligned_before = align.is_aligned();
         let codec = if ty == ValueType::Str {
             self.ctx.string_codec(f, &self.default_endian, align)
         } else {
@@ -369,6 +398,7 @@ impl<'a> PacketBuilder<'a> {
             offset += m.width;
         }
         self.cursor.advance(cwidth as u64, Some(cwidth as u64), 1);
+        self.aligned_before = align.is_aligned();
         self.steps.push(Step::Bitfield { name: b.id.clone(), container: codec, container_width: cwidth, parts });
     }
 
@@ -416,7 +446,7 @@ impl<'a> PacketBuilder<'a> {
             }
         }
 
-        let encode_calcs = self.encode_calcs();
+        let plan = self.finish_derived();
         if !self.ctx.diags.is_empty() {
             return Err(self.ctx.diags);
         }
@@ -425,40 +455,15 @@ impl<'a> PacketBuilder<'a> {
             name: p.name.clone(),
             members: self.ctx.members,
             steps: self.steps,
-            encode_calcs,
+            encode_calcs: plan.encode_calcs,
             min_bits: self.cursor.min_bits,
             open_ended: self.open_ended,
             fixed_bits,
             alignment: if p.align.is_some() { self.alignment } else { 1 },
             asserts: self.asserts.into_iter().map(|(a, _)| a).collect(),
+            derived: plan.derived,
+            patches: plan.patches,
+            wire_dependent: plan.wire_dependent,
         })
-    }
-
-    /// Calculated members needed by encode (lengths depend on them), in decode order.
-    fn encode_calcs(&self) -> Vec<usize> {
-        let mut needed = HashSet::<usize>::new();
-        let mut stack = Vec::new();
-        for m in &self.ctx.members {
-            if let Some(Count::Expr(e)) = &m.array {
-                e.deps(&mut stack);
-            }
-        }
-        for (a, _) in &self.asserts {
-            a.cond.deps(&mut stack);
-        }
-        while let Some(m) = stack.pop() {
-            if let MemberKind::Calculated(e) = &self.ctx.members[m].kind
-                && needed.insert(m)
-            {
-                e.deps(&mut stack);
-            }
-        }
-        self.steps
-            .iter()
-            .filter_map(|s| match s {
-                Step::Calc { member } if needed.contains(member) => Some(*member),
-                _ => None,
-            })
-            .collect()
     }
 }

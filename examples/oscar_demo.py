@@ -6,10 +6,8 @@ Generate the parser first:
     PYTHONPATH=examples/out python3 examples/oscar_demo.py
 """
 
-import struct
-
 from packets import (
-    FLAP_START, Channel, Charset, Flap, FlapSignon, FragmentId, IcbmChannel,
+    Channel, Charset, Flap, FlapSignon, FragmentId, IcbmChannel, IcbmFragment,
     IcbmMessage, IcbmReceive, IcbmSend, IcbmSubtype, IcbmTlv, MessageText,
     PbReader, ServerReady, ServiceSubtype, SnacFamily, SnacHeader, Tlv,
 )
@@ -61,22 +59,23 @@ def main():
                   % (sender, im.warning_percent, message_text(im.tlvs)))
             reply = (frame.sequence, im.cookie, sender)
 
-    # Answer with SNAC(04,06) inside a FLAP frame.
+    # Answer with SNAC(04,06) inside a FLAP frame. Every length is derived
+    # (`length uint16 = len(payload)`), so the encoders fill them in, and
+    # FLAP's start byte defaults to FLAP_START.
     seq, cookie, sender = reply
     text = b"Hi from packet-builder!"
-    fragments = (struct.pack(">BBHB", FragmentId.CAPABILITIES, 0x01, 1, 0x01)
-                 + struct.pack(">BBHHH", FragmentId.TEXT, 0x01, 4 + len(text), Charset.ASCII, 0) + text)
+    fragments = IcbmMessage(fragments=[
+        IcbmFragment(id=FragmentId.CAPABILITIES, version=1, data=b"\x01"),
+        IcbmFragment(id=FragmentId.TEXT, version=1, data=MessageText(charset=Charset.ASCII, text=text).encode()),
+    ]).encode()
     send = IcbmSend(
         header=SnacHeader(family=SnacFamily.ICBM, subtype=IcbmSubtype.SEND, request_id=0x30),
         cookie=cookie,
         channel=IcbmChannel.PLAIN_TEXT,
         screen_name=sender,
-        tlvs=[Tlv(type=IcbmTlv.MESSAGE_DATA, length=len(fragments), value=fragments),
-              Tlv(type=IcbmTlv.STORE_OFFLINE, length=0, value=b"")],
+        tlvs=[Tlv(type=IcbmTlv.MESSAGE_DATA, value=fragments), Tlv(type=IcbmTlv.STORE_OFFLINE)],
     )
-    payload = send.encode()
-    out = Flap(start=FLAP_START, channel=Channel.SNAC, sequence=(seq + 1) & 0xFFFF,
-               length=len(payload), payload=payload)
+    out = Flap(channel=Channel.SNAC, sequence=(seq + 1) & 0xFFFF, payload=send.encode())
     wire = out.encode()
     print("reply frame:", wire.hex())
 

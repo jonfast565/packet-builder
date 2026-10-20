@@ -30,7 +30,7 @@ const IpProtocol uint8 {
 // IPv4 header (RFC 791). Sub-byte fields live directly in the bit stream.
 packet Ipv4 be {
   version u4 == IPV4_VERSION,
-  ihl u4 in 5..15,          // header length in WORD_BYTES units
+  ihl u4 = (IPV4_MIN_HEADER + len(options)) / WORD_BYTES,  // header length in WORD_BYTES units
   dscp u6,
   ecn u2,
   total_length uint16,
@@ -41,7 +41,7 @@ packet Ipv4 be {
   fragment_offset u13,      // in 8-byte units
   ttl uint8,
   protocol uint8 : IpProtocol,
-  checksum uint16,
+  checksum uint16 = internet(self),  // over the header, this field counted as zero
   source uint8[4],
   destination uint8[4],
   options bytes[ihl * WORD_BYTES - IPV4_MIN_HEADER],
@@ -58,13 +58,13 @@ packet Tcp be {
   destination_port uint16,
   sequence uint32,
   acknowledgment uint32,
-  data_offset u4 in 5..15,  // header length in WORD_BYTES units
+  data_offset u4 = (TCP_MIN_HEADER + len(options)) / WORD_BYTES,  // header length in WORD_BYTES units
   _ u3,
   flags bitfield u9 {
     ns u1, cwr u1, ece u1, urg u1, ack u1, psh u1, rst u1, syn u1, fin u1
   },
   window uint16,
-  checksum uint16,
+  checksum uint16,          // covers an IPv4/IPv6 pseudo-header, so it is not derived here
   urgent_pointer uint16,
   options bytes[data_offset * WORD_BYTES - TCP_MIN_HEADER]
 }
@@ -75,8 +75,8 @@ const UDP_HEADER uint16 = 8 "UDP header bytes"
 packet Udp be {
   source_port uint16,
   destination_port uint16,
-  length uint16,            // UDP_HEADER + payload
-  checksum uint16,
+  length uint16 = sizeof(self),  // UDP_HEADER + payload
+  checksum uint16,          // covers a pseudo-header, like TCP's
   payload bytes[length - UDP_HEADER]
 }
 

@@ -1,7 +1,9 @@
 //! Expression evaluation with the semantics documented on [`TExpr`].
 
+use std::collections::HashMap;
+
 use super::value::Value;
-use crate::ir::{AggOp, ArithOp, CmpOp, Func, LogicOp, TExpr, Ty, UnaryOp, ValueType};
+use crate::ir::{AggOp, ArithOp, CmpOp, Func, LogicOp, Mark, TExpr, Ty, UnaryOp, ValueType};
 
 /// An evaluated expression.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -37,9 +39,25 @@ impl Ev {
     }
 }
 
-/// The current values of a packet's members (index-aligned with them).
+/// A checksum over recorded bit positions: (algorithm, from, to, hole from, hole to).
+pub type ChecksumFn<'a> = &'a dyn Fn(u32, usize, usize, usize, usize) -> u64;
+
+/// The current values of a packet's members (index-aligned with them), and
+/// for derived fields the recorded positions and a way to compute checksums.
 pub struct Env<'a> {
     pub values: &'a [Value],
+    pub marks: Option<&'a HashMap<Mark, usize>>,
+    pub checksum: Option<ChecksumFn<'a>>,
+}
+
+impl<'a> Env<'a> {
+    pub fn new(values: &'a [Value]) -> Self {
+        Env { values, marks: None, checksum: None }
+    }
+
+    fn mark(&self, m: Mark) -> usize {
+        self.marks.and_then(|ms| ms.get(&m).copied()).unwrap_or(0)
+    }
 }
 
 fn scalar(v: &Value, ty: Ty) -> Ev {
@@ -159,6 +177,18 @@ pub fn eval(e: &TExpr, env: &Env) -> Ev {
                 Ty::Float => Ev::F(v.float()),
                 Ty::Bool => Ev::B(v.bool()),
             }
+        }
+        TExpr::Len { member } => Ev::I(match &env.values[*member] {
+            Value::List(items) => items.len(),
+            Value::Bytes(b) => b.len(),
+            Value::Str(s) => s.len(),
+            _ => 0,
+        } as i64),
+        TExpr::Size { from, to } => Ev::I((env.mark(*to).saturating_sub(env.mark(*from)) / 8) as i64),
+        TExpr::Checksum { algo, from, to, hole } => {
+            let (hf, ht) = hole.map(|(a, b)| (env.mark(a), env.mark(b))).unwrap_or((0, 0));
+            let sum = env.checksum.map(|f| f(algo.id(), env.mark(*from), env.mark(*to), hf, ht)).unwrap_or(0);
+            Ev::I(sum as i64)
         }
         TExpr::Unary { op, e, ty } => {
             let v = eval(e, env);

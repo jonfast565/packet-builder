@@ -48,7 +48,7 @@ impl<'a, D: Dialect> Scope<'a, D> {
     /// (`pbc_<name>`) while encoding, since they are not stored.
     pub fn place(&self, member: usize) -> String {
         let m = self.member(member);
-        if self.mode == Mode::Encode && m.is_calculated() {
+        if self.mode == Mode::Encode && (m.is_calculated() || m.is_derived()) {
             format!("pbc_{}", m.name)
         } else {
             D::field(self.packet, m)

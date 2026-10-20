@@ -1,9 +1,10 @@
 //! Zig encoder statements. Range checks are not needed: exact-width fields
 //! cannot hold out-of-range values.
 
-use super::naming::{Zig, ident};
-use crate::generators::common::{Dialect, Mode, Out, Scope, StepEmitter, mask};
-use crate::ir::{BitPart, Codec, Count, Member, Packet, StrMode, TExpr, ValueType};
+use super::expr::store_value;
+use super::naming::{Zig, ident, scalar_type};
+use crate::generators::common::{Dialect, Mode, Out, Scope, StepEmitter, mark_var, mask};
+use crate::ir::{BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, ValueType};
 
 fn write_elem(out: &mut Out, codec: &Codec, v: &str) {
     match codec {
@@ -50,6 +51,45 @@ impl StepEmitter for Encoder<'_> {
         out.line(format!("pb_w.at(\"{}\");", field));
     }
 
+    fn mark(&self, out: &mut Out, mark: Mark) {
+        out.line(format!("const {} = pb_w.positionBits();", mark_var(mark)));
+    }
+
+    fn define_local(&self, out: &mut Out, m: &Member, value: &TExpr) {
+        if m.is_derived() {
+            out.line(format!("const pbc_{}: i64 = {};", m.name, self.scope.expr(value)));
+        } else {
+            out.line(format!(
+                "const pbc_{}: {} = {};",
+                m.name,
+                scalar_type(&m.ty),
+                store_value(self.scope.expr(value), &m.ty)
+            ));
+        }
+    }
+
+    fn write_derived(&self, out: &mut Out, m: &Member, codec: &Codec, at: Option<Mark>) {
+        let v = format!("pbc_{}", m.name);
+        if let ValueType::Int { width, signed } = &m.ty {
+            let f = if *signed { "checkI" } else { "checkU" };
+            out.line(format!("try pb_w.{}({}, {});", f, v, width));
+        }
+        let bits = format!("@as(u64, @bitCast({}))", v);
+        match (codec, at) {
+            (Codec::Bytes { nbytes, endian }, None) => {
+                out.line(format!("try pb_w.writeUint({}, {}, {});", bits, nbytes, Zig::little(endian)))
+            }
+            (Codec::Bytes { nbytes, endian }, Some(at)) => {
+                out.line(format!("pb_w.patchUint({}, {}, {}, {});", mark_var(at), bits, nbytes, Zig::little(endian)))
+            }
+            (Codec::Bits { width }, None) => out.line(format!("try pb_w.writeBits({}, {});", bits, width)),
+            (Codec::Bits { width }, Some(at)) => {
+                out.line(format!("pb_w.patchBits({}, {}, {});", mark_var(at), bits, width))
+            }
+            _ => unreachable!("derived fields are integers"),
+        }
+    }
+
     fn align(&self, out: &mut Out, bytes: u64) {
         out.line(format!("try pb_w.writeZeroBits(@intCast(pbPad(pb_w.positionBits() - pb_start, {})));", bytes * 8))
     }
@@ -75,7 +115,7 @@ impl StepEmitter for Encoder<'_> {
                 out.line(format!("try pb_w.writeZeroBits((pb_n - @as(i64, @intCast({}.len))) * 8);", s));
                 out.close("}");
             }
-            (_, Some(Count::Expr(e))) => {
+            (_, Some(Count::Expr(e))) if !self.packet().depends_on_wire(e) => {
                 out.line(format!("try pb_w.checkLen({}.len, {});", s, self.scope.expr(e)));
                 out.line(format!("try pb_w.writeBytes({});", s));
             }
@@ -100,7 +140,9 @@ impl StepEmitter for Encoder<'_> {
 
     fn array(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec, count: &Count) {
         let place = format!("p.{}", ident(&m.name));
-        if let Count::Expr(e) = count {
+        if let Count::Expr(e) = count
+            && !self.packet().depends_on_wire(e)
+        {
             out.line(format!("try pb_w.checkLen({}.len, {});", place, self.scope.expr(e)));
         }
         if ty.is_byte() {

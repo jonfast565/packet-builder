@@ -264,6 +264,56 @@ Calculated fields are computed after decoding and stored in the struct. They
 are not written when encoding. They may be used in array lengths (also before
 their own declaration), and are evaluated as soon as their inputs are known.
 
+### Derived fields and checksums
+
+A field can say how its value follows from the rest of the packet. Encoding
+computes it (ignoring whatever the struct holds), and decoding checks it,
+failing with a `mismatch` error when it disagrees:
+
+```
+packet Frame be {
+  crc uint16 = crc16_arc(length..payload),  // a checksum over a range of fields
+  length uint16 = len(payload),             // element count (bytes of a string)
+  total uint16 = sizeof(self),              // encoded size of the whole packet
+  payload bytes[length],
+}
+
+packet Ipv4Header be {
+  version u4 == 4,
+  ihl u4 = (20 + len(options)) / 4,
+  ...
+  checksum uint16 = internet(self),         // the field's own bytes count as zero
+  options bytes[ihl * 4 - 20]
+}
+```
+
+| function | value |
+|----------|-------|
+| `len(f)` | elements of array `f`, or bytes of string `f` |
+| `sizeof(f)`, `sizeof(a..b)`, `sizeof(self)` | encoded bytes of a field, of the fields `a` through `b`, or of the packet |
+| `offsetof(f)` | bytes from the start of the packet to field `f` |
+| `crc8`, `crc16_arc`, `crc16_ccitt_false`, `crc16_xmodem`, `crc16_kermit`, `crc16_modbus`, `crc32`, `crc32c` | CRCs from the catalogue of parametrised CRC algorithms (`crc8` is CRC-8/SMBUS, `crc16_ccitt_false` is CRC-16/IBM-3740, `crc32` is the zlib/Ethernet CRC, `crc32c` is Castagnoli) |
+| `internet` | the RFC 1071 ones' complement checksum (IPv4, TCP, UDP, ICMP) |
+| `fletcher16`, `sum8`, `xor8` | Fletcher-16, byte sum and byte XOR |
+
+Checksums take a field, a range `a..b` or `self`. When the range includes
+the checksum field itself, its bytes count as zero, which is what IPv4 and
+UDP expect.
+
+* Derived fields are single integers (bit-stream `uN` fields included).
+* `len()` works anywhere in an expression. `sizeof`, `offsetof` and the
+  checksums measure the encoded bytes, so they may only derive a field, and
+  their ranges must start and end on byte boundaries.
+* Encoding computes values that only depend on other fields (such as
+  `len()`) before writing anything, so lengths built from them are checked
+  as usual. Values that depend on the encoded bytes are written as zeros and
+  patched at the end, in dependency order: a CRC over a length is computed
+  after the length is patched. A length check that depends on such a value
+  is skipped when encoding, since the value is computed from the data.
+* A value that does not fit its field is a `range` error when encoding.
+* `lenient` turns off the check when decoding; encoding still computes the
+  value.
+
 ### Constants
 
 Name a protocol's magic numbers instead of leaving them in comments. A
@@ -340,7 +390,8 @@ packet Flap be {
 
 * literals: `42`, `0x2a`, `0b1010`, `1.5`
 * named constants `FLAP_START`, `Channel.snac`
-* field references `x`, array elements `x[i]`, `sumof x`, `productof x`
+* field references `x`, array elements `x[i]`, `sumof x`, `productof x`,
+  `len(x)` (and, in derived fields, `sizeof`, `offsetof` and checksums)
 * arithmetic `+ - * / % ^` (power), unary `-`
 * bitwise `&`, `|`, `xor`, `~`, shifts `<<` `>>`
 * comparisons `== != <> < <= > >=` (not chained), `and`, `or`, `not`
