@@ -284,9 +284,14 @@
         }
 
         /// <summary>One variable-length integer (kind: 0 uleb128, 1 sleb128,
-        /// 2 zigzag, 3 vlq, 4 quic); signed kinds return the two's complement bits.</summary>
+        /// 2 zigzag, 3 vlq, 4 quic, 5 varint15); signed kinds return the two's complement bits.</summary>
         public ulong ReadVarint(int kind)
         {
+            if (kind == 5)
+            {
+                ulong first = ReadUint(1, false);
+                return (first & 0x80) == 0 ? first : ((first & 0x7f) << 8) | ReadUint(1, false);
+            }
             if (kind == 4)
             {
                 ulong first = ReadUint(1, false);
@@ -503,6 +508,11 @@
         {
             switch (kind)
             {
+                case 5:
+                    if (v < 0x80) WriteUint(v, 1, false);
+                    else if (v <= 0x7fff) WriteUint(v | 0x8000, 2, false);
+                    else throw Error(PbErrorKind.Range, $"{v} does not fit in a varint15");
+                    return;
                 case 4:
                     if (v <= 0x3f) WriteUint(v, 1, false);
                     else if (v <= 0x3fff) WriteUint(v | (1UL << 14), 2, false);

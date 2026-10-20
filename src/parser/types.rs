@@ -47,6 +47,7 @@ pub(super) fn type_from_name(type_name: &str, word: u32) -> TypeNode {
         "zigzag" => TypeNode::Varint(VarintKind::Zigzag),
         "vlq" => TypeNode::Varint(VarintKind::Vlq),
         "quic_varint" => TypeNode::Varint(VarintKind::Quic),
+        "varint15" => TypeNode::Varint(VarintKind::Varint15),
         other => {
             // bit_type: validated by check_literals
             let signed = other.starts_with('i');

@@ -131,6 +131,9 @@ pub enum VarintKind {
     Vlq,
     /// QUIC (RFC 9000): a 2-bit length (1, 2, 4 or 8 bytes) and 6 to 62 bits.
     Quic,
+    /// One byte below 0x80, otherwise two big-endian bytes with the top bit
+    /// set: 15 bits (AOL's FDO argument lengths).
+    Varint15,
 }
 
 impl VarintKind {
@@ -150,6 +153,7 @@ impl VarintKind {
             VarintKind::Zigzag => "zigzag",
             VarintKind::Vlq => "vlq",
             VarintKind::Quic => "quic_varint",
+            VarintKind::Varint15 => "varint15",
         }
     }
 }

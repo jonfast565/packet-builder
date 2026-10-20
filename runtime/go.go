@@ -421,8 +421,15 @@ func (r *PbReader) TextEnc(raw []byte, enc int, padded bool) string {
 }
 
 // ReadVarint reads one variable-length integer (kind: 0 uleb128, 1 sleb128,
-// 2 zigzag, 3 vlq, 4 quic); signed kinds return the two's complement bits.
+// 2 zigzag, 3 vlq, 4 quic, 5 varint15); signed kinds return the two's complement bits.
 func (r *PbReader) ReadVarint(kind int) uint64 {
+	if kind == 5 {
+		first := r.ReadUint(1, false)
+		if first&0x80 == 0 {
+			return first
+		}
+		return (first&0x7f)<<8 | r.ReadUint(1, false)
+	}
 	if kind == 4 {
 		first := r.ReadUint(1, false)
 		n := 1 << (first >> 6)
@@ -689,6 +696,15 @@ func (w *PbWriter) EncodeText(s string, enc int) []byte {
 // WriteVarint writes one variable-length integer (see PbReader.ReadVarint).
 func (w *PbWriter) WriteVarint(kind int, v uint64) {
 	switch kind {
+	case 5:
+		switch {
+		case v < 0x80:
+			w.WriteUint(v, 1, false)
+		case v <= 0x7fff:
+			w.WriteUint(v|0x8000, 2, false)
+		default:
+			w.Fail(PbRange, "%d does not fit in a varint15", v)
+		}
 	case 4:
 		switch {
 		case v <= 0x3f:

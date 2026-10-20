@@ -68,3 +68,15 @@ packet Counted be {
   n varint = len(items),
   items uint16[n]
 }
+
+// One byte below 0x80, else two with the top bit set (AOL FDO lengths).
+packet Short15 be {
+  a varint15,
+  b varint15,
+  c varint15
+}
+
+packet Arg15 be {
+  n varint15 = len(arg),
+  arg bytes[n]
+}

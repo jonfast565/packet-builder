@@ -298,10 +298,21 @@ PB_FN int pb_read_ctext(pb_reader *r, char **out, size_t *out_len) {
 }
 
 /* One variable-length integer (kind: 0 uleb128, 1 sleb128, 2 zigzag, 3 vlq,
- * 4 quic); signed kinds give the two's complement bits. */
+ * 4 quic, 5 varint15); signed kinds give the two's complement bits. */
 PB_FN int pb_read_varint(pb_reader *r, unsigned kind, uint64_t *out) {
     uint64_t v = 0, b;
     unsigned shift = 0;
+    if (kind == 5) {
+        PB_PASS(pb_read_uint(r, 1, 0, &b));
+        if (b & 0x80) {
+            PB_PASS(pb_read_uint(r, 1, 0, &v));
+            v |= (b & 0x7f) << 8;
+        } else {
+            v = b;
+        }
+        *out = v;
+        return PB_OK;
+    }
     if (kind == 4) {
         unsigned n;
         PB_PASS(pb_read_uint(r, 1, 0, &b));
@@ -811,6 +822,10 @@ PB_FN uint64_t pb_writer_checksum(const pb_writer *w, unsigned algo, size_t from
 
 /* One variable-length integer (see pb_read_varint). */
 PB_FN int pb_write_varint(pb_writer *w, unsigned kind, uint64_t v) {
+    if (kind == 5) {
+        if (v > 0x7fff) return PB_ERR_RANGE;
+        return v < 0x80 ? pb_write_uint(w, v, 1, 0) : pb_write_uint(w, v | 0x8000, 2, 0);
+    }
     if (kind == 4) {
         unsigned n = v <= 0x3f ? 1 : v <= 0x3fff ? 2 : v <= 0x3fffffffu ? 4 : 8, code = n == 1 ? 0 : n == 2 ? 1 : n == 4 ? 2 : 3;
         if (v > 0x3fffffffffffffffULL) return PB_ERR_RANGE;

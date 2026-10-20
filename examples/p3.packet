@@ -131,7 +131,9 @@ packet P3Init be {
 // ---------------------------------------------------------------------
 // Each atom starts with a byte holding a 3-bit compression style and a
 // 5-bit value. Style 0, the form clients send, is uncompressed:
-// protocol, atom number, argument length, argument. The compressed styles
+// protocol, atom number, argument length, argument. The length takes one
+// byte below 0x80 and two (0x80 | n >> 8, n & 0xff) above, as the host's
+// long alerts and Welcome streams need (`varint15`). The compressed styles
 // 1-7 change the layout and are not modelled here; `uncompressed` flags
 // them so a caller can stop.
 const FdoStyle u3 {
@@ -150,7 +152,7 @@ packet FdoAtom be {
     protocol u5 : FdoProtocol
   },
   atom uint8,               // atom number within the protocol
-  arg_length uint8 = len(arg),
+  arg_length varint15 = len(arg),  // 1 byte below 0x80, else 2 with the top bit set
   arg bytes[arg_length],
   calc uncompressed uint8 = style == FdoStyle.full
 }

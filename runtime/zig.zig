@@ -336,8 +336,13 @@ pub const PbReader = struct {
     }
 
     /// One variable-length integer (`kind`: 0 uleb128, 1 sleb128, 2 zigzag,
-    /// 3 vlq, 4 quic); signed kinds return the two's complement bits.
+    /// 3 vlq, 4 quic, 5 varint15); signed kinds return the two's complement bits.
     pub fn readVarint(self: *PbReader, kind: u32) PbError!u64 {
+        if (kind == 5) {
+            const first = try self.readUint(1, false);
+            if (first & 0x80 == 0) return first;
+            return ((first & 0x7f) << 8) | try self.readUint(1, false);
+        }
         if (kind == 4) {
             const first = try self.readUint(1, false);
             const n: u4 = @as(u4, 1) << @intCast(first >> 6);
@@ -534,6 +539,11 @@ pub const PbWriter = struct {
     pub fn writeVarint(self: *PbWriter, kind: u32, value: u64) PbError!void {
         var v = value;
         switch (kind) {
+            5 => {
+                if (v < 0x80) return self.writeUint(v, 1, false);
+                if (v <= 0x7fff) return self.writeUint(v | 0x8000, 2, false);
+                return self.fail(PbError.Range);
+            },
             4 => {
                 if (v <= 0x3f) return self.writeUint(v, 1, false);
                 if (v <= 0x3fff) return self.writeUint(v | 1 << 14, 2, false);

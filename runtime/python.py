@@ -212,7 +212,12 @@ class PbReader(_PbTrace):
 
     def read_varint(self, kind):
         """One variable-length integer (`kind`: 0 uleb128, 1 sleb128,
-        2 zigzag, 3 vlq, 4 quic); signed kinds return the two's complement bits."""
+        2 zigzag, 3 vlq, 4 quic, 5 varint15); signed kinds return the two's complement bits."""
+        if kind == 5:
+            first = self.read_uint(1, False)
+            if first & 0x80 == 0:
+                return first
+            return ((first & 0x7F) << 8) | self.read_uint(1, False)
         if kind == 4:
             first = self.read_uint(1, False)
             n = 1 << (first >> 6)
@@ -400,6 +405,14 @@ class PbWriter(_PbTrace):
     def write_varint(self, kind, v):
         """One variable-length integer (see PbReader.read_varint)."""
         v &= (1 << 64) - 1
+        if kind == 5:
+            if v < 0x80:
+                self.write_uint(v, 1, False)
+            elif v <= 0x7FFF:
+                self.write_uint(v | 0x8000, 2, False)
+            else:
+                raise self.error(PbError.RANGE, "%d does not fit in a varint15" % v)
+            return
         if kind == 4:
             for n, code in ((1, 0), (2, 1), (4, 2), (8, 3)):
                 if v < 1 << (8 * n - 2):

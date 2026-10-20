@@ -382,9 +382,16 @@ impl<'a> PbReader<'a> {
     }
 
     /// One variable-length integer (`kind`: 0 uleb128, 1 sleb128, 2 zigzag,
-    /// 3 vlq, 4 quic); signed kinds return the two's complement bits.
+    /// 3 vlq, 4 quic, 5 varint15); signed kinds return the two's complement bits.
     pub fn read_varint(&mut self, kind: u32) -> Result<u64, PbError> {
         let too_long = |r: &Self| r.error(PbErrorKind::Invalid, "the varint does not fit in 64 bits".into());
+        if kind == 5 {
+            let first = self.read_uint(1, false)?;
+            if first & 0x80 == 0 {
+                return Ok(first);
+            }
+            return Ok(((first & 0x7f) << 8) | self.read_uint(1, false)?);
+        }
         if kind == 4 {
             let first = self.read_uint(1, false)?;
             let n = 1u32 << (first >> 6);
@@ -634,6 +641,16 @@ impl PbWriter {
     /// One variable-length integer (see `PbReader::read_varint`).
     pub fn write_varint(&mut self, kind: u32, value: u64) -> Result<(), PbError> {
         match kind {
+            5 => {
+                if value > 0x7fff {
+                    return Err(self.error(PbErrorKind::Range, format!("{} does not fit in a varint15", value)));
+                }
+                if value < 0x80 {
+                    self.write_uint(value, 1, false);
+                } else {
+                    self.write_uint(value | 0x8000, 2, false);
+                }
+            }
             4 => {
                 let n: u32 = match value {
                     0..=0x3f => 1,

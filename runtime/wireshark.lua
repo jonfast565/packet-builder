@@ -165,8 +165,13 @@ function Reader:read_until(term, optional)
   return self.data:sub(start, last)
 end
 
--- kind: 0 uleb128, 1 sleb128, 2 zigzag, 3 vlq, 4 quic
+-- kind: 0 uleb128, 1 sleb128, 2 zigzag, 3 vlq, 4 quic, 5 varint15
 function Reader:read_varint(kind)
+  if kind == 5 then
+    local first = self:read_uint(1, false)
+    if first & 0x80 == 0 then return first end
+    return ((first & 0x7f) << 8) | self:read_uint(1, false)
+  end
   if kind == 4 then
     local first = self:read_uint(1, false)
     local n = 1 << (first >> 6)

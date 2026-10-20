@@ -138,7 +138,7 @@ fields. `//` starts a comment.
 | `uint8` `uint16` `uint32` `uint64`, `int8` ... `int64` | byte-aligned integers in the packet's (or field's) byte order |
 | `u1` ... `u64`, `i2` ... `i64` | **integers of any bit width**, read most-significant-bit first from the bit stream, with no alignment requirement |
 | `float32` `float64` | IEEE 754, byte aligned |
-| `uleb128` (alias `varint`), `sleb128`, `zigzag`, `vlq`, `quic_varint` | **variable-length integers**, see [Variable-length integers](#variable-length-integers) |
+| `uleb128` (alias `varint`), `sleb128`, `zigzag`, `vlq`, `quic_varint`, `varint15` | **variable-length integers**, see [Variable-length integers](#variable-length-integers) |
 | `macaddress` | 6 bytes |
 | `datetime` | 64-bit signed integer |
 | `bytes` | a byte buffer (always used with a length, or as the last field) |
@@ -221,10 +221,12 @@ byte aligned, hold up to 64 bits, and take no byte order.
 | `zigzag` | `uleb128` of the zigzag mapping (0, -1, 1, -2, ... to 0, 1, 2, 3, ...) | Protocol Buffers `sint64` |
 | `vlq` | unsigned, 7 bits per byte, most significant group first | MIDI, Git packfiles |
 | `quic_varint` | the top two bits of the first byte give the length (1, 2, 4 or 8 bytes) | QUIC (RFC 9000) |
+| `varint15` | one byte below 0x80; otherwise two big-endian bytes with the top bit set, 15 bits | AOL FDO argument lengths |
 
 Decoding accepts non-minimal encodings and rejects values wider than 64
 bits (`invalid`); encoding always writes the shortest form, and a value
-above 2^62 - 1 in a `quic_varint` is a `range` error. A varint can be a
+above 2^62 - 1 in a `quic_varint`, or above 0x7fff in a `varint15`, is a
+`range` error. A varint can be a
 derived field computed from values (`count varint = len(items)`), but not
 from the encoded bytes (`sizeof`, `offsetof`, checksums), because its own
 size would depend on the result.
