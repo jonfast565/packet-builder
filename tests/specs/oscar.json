@@ -210,7 +210,7 @@
       "error": true
     },
     {
-      "name": "SNAC(01,07) rate limit info (dispatched by Snac)",
+      "name": "SNAC(01,07) rate limit info, v2 classes (dispatched by Snac)",
       "packet": "Snac",
       "hex": "000100070000000000020001000100000050000009c4000007d0000005dc0000032000000d6900001770000000000000010003000100030004000600130002",
       "expect": {
@@ -224,6 +224,7 @@
           "kind": "rate_info",
           "value": {
             "class_count": 1,
+            "version": 2,
             "classes": [
               {
                 "id": 1,
@@ -234,8 +235,12 @@
                 "disconnect_level": 800,
                 "current_level": 3433,
                 "max_level": 6000,
-                "last_time": 0,
-                "state": 0
+                "v2": [
+                  {
+                    "last_time": 0,
+                    "state": 0
+                  }
+                ]
               }
             ],
             "groups": [
@@ -263,11 +268,12 @@
       }
     },
     {
-      "name": "SNAC(01,07) rate limit info",
+      "name": "SNAC(01,07) rate limit info, v2 classes",
       "packet": "RateInfo",
       "hex": "0001000100000050000009c4000007d0000005dc0000032000000d6900001770000000000000010003000100030004000600130002",
       "expect": {
         "class_count": 1,
+        "version": 2,
         "classes": [
           {
             "id": 1,
@@ -278,8 +284,12 @@
             "disconnect_level": 800,
             "current_level": 3433,
             "max_level": 6000,
-            "last_time": 0,
-            "state": 0
+            "v2": [
+              {
+                "last_time": 0,
+                "state": 0
+              }
+            ]
           }
         ],
         "groups": [
@@ -303,6 +313,173 @@
           }
         ]
       }
+    },
+    {
+      "name": "SNAC(01,07) rate limit info, v1 classes (AIM 1.x, dispatched by Snac)",
+      "packet": "Snac",
+      "hex": "000100070000000000030001000100000050000009c4000007d0000005dc0000032000000d690000177000010003000100030004000600130002",
+      "expect": {
+        "family": 1,
+        "subtype": 7,
+        "has_version_info": 0,
+        "more_replies": 0,
+        "request_id": 3,
+        "version_info": [],
+        "body": {
+          "kind": "rate_info",
+          "value": {
+            "class_count": 1,
+            "version": 1,
+            "classes": [
+              {
+                "id": 1,
+                "window_size": 80,
+                "clear_level": 2500,
+                "alert_level": 2000,
+                "limit_level": 1500,
+                "disconnect_level": 800,
+                "current_level": 3433,
+                "max_level": 6000,
+                "v2": []
+              }
+            ],
+            "groups": [
+              {
+                "class_id": 1,
+                "pair_count": 3,
+                "pairs": [
+                  {
+                    "family": 1,
+                    "subtype": 3
+                  },
+                  {
+                    "family": 4,
+                    "subtype": 6
+                  },
+                  {
+                    "family": 19,
+                    "subtype": 2
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "SNAC(01,07) rate limit info, v1 classes",
+      "packet": "RateInfo",
+      "hex": "0001000100000050000009c4000007d0000005dc0000032000000d690000177000010003000100030004000600130002",
+      "expect": {
+        "class_count": 1,
+        "version": 1,
+        "classes": [
+          {
+            "id": 1,
+            "window_size": 80,
+            "clear_level": 2500,
+            "alert_level": 2000,
+            "limit_level": 1500,
+            "disconnect_level": 800,
+            "current_level": 3433,
+            "max_level": 6000,
+            "v2": []
+          }
+        ],
+        "groups": [
+          {
+            "class_id": 1,
+            "pair_count": 3,
+            "pairs": [
+              {
+                "family": 1,
+                "subtype": 3
+              },
+              {
+                "family": 4,
+                "subtype": 6
+              },
+              {
+                "family": 19,
+                "subtype": 2
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "SNAC(01,07) v1 rate info inside its FLAP frame",
+      "packet": "Flap",
+      "hex": "2a020009003a000100070000000000030001000100000050000009c4000007d0000005dc0000032000000d690000177000010003000100030004000600130002",
+      "expect": {
+        "start": 42,
+        "channel": 2,
+        "sequence": 9,
+        "length": 58,
+        "payload": {
+          "kind": "snac",
+          "value": {
+            "family": 1,
+            "subtype": 7,
+            "has_version_info": 0,
+            "more_replies": 0,
+            "request_id": 3,
+            "version_info": [],
+            "body": {
+              "kind": "rate_info",
+              "value": {
+                "class_count": 1,
+                "version": 1,
+                "classes": [
+                  {
+                    "id": 1,
+                    "window_size": 80,
+                    "clear_level": 2500,
+                    "alert_level": 2000,
+                    "limit_level": 1500,
+                    "disconnect_level": 800,
+                    "current_level": 3433,
+                    "max_level": 6000,
+                    "v2": []
+                  }
+                ],
+                "groups": [
+                  {
+                    "class_id": 1,
+                    "pair_count": 3,
+                    "pairs": [
+                      {
+                        "family": 1,
+                        "subtype": 3
+                      },
+                      {
+                        "family": 4,
+                        "subtype": 6
+                      },
+                      {
+                        "family": 19,
+                        "subtype": 2
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "SNAC(01,07) a v2 reply encoded as v1 when version is set to 1",
+      "packet": "RateInfo",
+      "hex": "0001000100000050000009c4000007d0000005dc0000032000000d6900001770000000000000010003000100030004000600130002",
+      "set": {
+        "version": 1
+      },
+      "encode_error": true,
+      "encode_error_kind": "mismatch"
     },
     {
       "name": "SNAC(01,07) class count larger than the data",
@@ -633,6 +810,234 @@
       "packet": "IcbmSend",
       "hex": "31323334353637380001406578616d",
       "error": true
+    },
+    {
+      "name": "SNAC(17,02) MD5 login request (dispatched by Snac)",
+      "packet": "Snac",
+      "hex": "0017000200000000000300010005616c6963650003000741494d20352e39002500100f1e2d3c4b5a69788796a5b4c3d2e1f0004c0000",
+      "expect": {
+        "family": 23,
+        "subtype": 2,
+        "has_version_info": 0,
+        "more_replies": 0,
+        "request_id": 3,
+        "version_info": [],
+        "body": {
+          "kind": "login_request",
+          "value": {
+            "tlvs": [
+              {
+                "type": 1,
+                "length": 5,
+                "value": "616c696365"
+              },
+              {
+                "type": 3,
+                "length": 7,
+                "value": "41494d20352e39"
+              },
+              {
+                "type": 37,
+                "length": 16,
+                "value": "0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+              },
+              {
+                "type": 76,
+                "length": 0,
+                "value": ""
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "SNAC(17,03) login response with BOS address and cookie (dispatched by Snac)",
+      "packet": "Snac",
+      "hex": "0017000300000000000300010005616c6963650005000e3132372e302e302e313a3531393100060003c00c1e",
+      "expect": {
+        "family": 23,
+        "subtype": 3,
+        "has_version_info": 0,
+        "more_replies": 0,
+        "request_id": 3,
+        "version_info": [],
+        "body": {
+          "kind": "login_response",
+          "value": {
+            "tlvs": [
+              {
+                "type": 1,
+                "length": 5,
+                "value": "616c696365"
+              },
+              {
+                "type": 5,
+                "length": 14,
+                "value": "3132372e302e302e313a35313931"
+              },
+              {
+                "type": 6,
+                "length": 3,
+                "value": "c00c1e"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "SNAC(17,03) login response with an error subcode",
+      "packet": "LoginResponse",
+      "hex": "00010005616c696365000800020005",
+      "expect": {
+        "tlvs": [
+          {
+            "type": 1,
+            "length": 5,
+            "value": "616c696365"
+          },
+          {
+            "type": 8,
+            "length": 2,
+            "value": "0005"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SNAC(01,02) client online (dispatched by Snac)",
+      "packet": "Snac",
+      "hex": "0001000200000000000700010004011008f100040001011008f1",
+      "expect": {
+        "family": 1,
+        "subtype": 2,
+        "has_version_info": 0,
+        "more_replies": 0,
+        "request_id": 7,
+        "version_info": [],
+        "body": {
+          "kind": "client_online",
+          "value": {
+            "families": [
+              {
+                "family": 1,
+                "version": 4,
+                "tool_id": 272,
+                "tool_version": 2289
+              },
+              {
+                "family": 4,
+                "version": 1,
+                "tool_id": 272,
+                "tool_version": 2289
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "SNAC(01,02) trailing partial entry is an error",
+      "packet": "ClientOnline",
+      "hex": "000100040110",
+      "error": true
+    },
+    {
+      "name": "SNAC(01,06) rate request has no body (dispatched by Snac)",
+      "packet": "Snac",
+      "hex": "00010006000000000004",
+      "expect": {
+        "family": 1,
+        "subtype": 6,
+        "has_version_info": 0,
+        "more_replies": 0,
+        "request_id": 4,
+        "version_info": [],
+        "body": {
+          "kind": "rate_request",
+          "value": null
+        }
+      }
+    },
+    {
+      "name": "SNAC(01,08) rate ack (dispatched by Snac)",
+      "packet": "Snac",
+      "hex": "00010008000000000005000100020003",
+      "expect": {
+        "family": 1,
+        "subtype": 8,
+        "has_version_info": 0,
+        "more_replies": 0,
+        "request_id": 5,
+        "version_info": [],
+        "body": {
+          "kind": "rate_ack",
+          "value": {
+            "class_ids": [
+              1,
+              2,
+              3
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "SNAC(04,01) ICBM error: recipient not logged on (dispatched by Snac)",
+      "packet": "Snac",
+      "hex": "000400010000000000090004",
+      "expect": {
+        "family": 4,
+        "subtype": 1,
+        "has_version_info": 0,
+        "more_replies": 0,
+        "request_id": 9,
+        "version_info": [],
+        "body": {
+          "kind": "icbm_error",
+          "value": {
+            "code": 4,
+            "tlvs": []
+          }
+        }
+      }
+    },
+    {
+      "name": "SNAC(04,01) ICBM error with an error-subcode TLV",
+      "packet": "SnacError",
+      "hex": "0010000800020001",
+      "expect": {
+        "code": 16,
+        "tlvs": [
+          {
+            "type": 8,
+            "length": 2,
+            "value": "0001"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SNAC(04,0C) host ack (dispatched by Snac)",
+      "packet": "Snac",
+      "hex": "0004000c0000000000090102030405060708000103626f62",
+      "expect": {
+        "family": 4,
+        "subtype": 12,
+        "has_version_info": 0,
+        "more_replies": 0,
+        "request_id": 9,
+        "version_info": [],
+        "body": {
+          "kind": "host_ack",
+          "value": {
+            "cookie": "0102030405060708",
+            "channel": 1,
+            "screen_name": "bob"
+          }
+        }
+      }
     },
     {
       "name": "SNAC more-replies flag (0x0001)",

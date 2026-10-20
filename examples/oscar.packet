@@ -42,10 +42,17 @@ packet Flap be {
 
 const FLAP_VERSION uint32 = 1 "FlapSignon.version is always 1"
 
-// TLV types of the sign-on and authorization exchange.
+// TLV types of the sign-on and authorization exchange (FlapSignon,
+// AuthKeyRequest, LoginRequest, LoginResponse).
 const LoginTlv uint16 {
-  screen_name = 0x0001  "the screen name (AuthKeyRequest)",
-  auth_cookie = 0x0006  "authorization cookie handed out by the login server",
+  screen_name = 0x0001       "the screen name",
+  roasted_password = 0x0002  "XOR-roasted password (AIM 1.x-3.x FLAP sign-on)",
+  client_id = 0x0003         "client identity string",
+  reconnect_here = 0x0005    "BOS address to connect to, \"host:port\" (LoginResponse)",
+  auth_cookie = 0x0006       "authorization cookie handed out by the login server",
+  error_subcode = 0x0008     "why the login failed, a uint16 (LoginResponse)",
+  password_hash = 0x0025     "MD5 hash of the password and the AuthKeyResponse key (LoginRequest)",
+  use_strong_hash = 0x004c   "the hash is the strong one: MD5 of the password's MD5 (empty)",
 }
 
 // Channel 1 payload (sign-on): protocol version, then TLVs such as
@@ -92,14 +99,21 @@ packet Snac be {
   version_info SnacVersionInfo[has_version_info],
   // The selector combines family and subtype into one 32-bit number.
   body switch family << 16 | subtype {
+    SnacFamily.service << 16 | ServiceSubtype.client_online => client_online ClientOnline,
     SnacFamily.service << 16 | ServiceSubtype.server_ready => server_ready ServerReady,
+    SnacFamily.service << 16 | ServiceSubtype.rate_request => rate_request,
     SnacFamily.service << 16 | ServiceSubtype.rate_info => rate_info RateInfo,
+    SnacFamily.service << 16 | ServiceSubtype.rate_ack => rate_ack RateAck,
     SnacFamily.service << 16 | ServiceSubtype.client_versions,
     SnacFamily.service << 16 | ServiceSubtype.server_versions => family_versions FamilyVersions,
+    SnacFamily.auth << 16 | AuthSubtype.login_request => login_request LoginRequest,
+    SnacFamily.auth << 16 | AuthSubtype.login_response => login_response LoginResponse,
     SnacFamily.auth << 16 | AuthSubtype.key_request => key_request AuthKeyRequest,
     SnacFamily.auth << 16 | AuthSubtype.key_response => key_response AuthKeyResponse,
+    SnacFamily.icbm << 16 | IcbmSubtype.error => icbm_error SnacError,
     SnacFamily.icbm << 16 | IcbmSubtype.send => send IcbmSend,
     SnacFamily.icbm << 16 | IcbmSubtype.receive => receive IcbmReceive,
+    SnacFamily.icbm << 16 | IcbmSubtype.host_ack => host_ack IcbmHostAck,
     _ => other bytes[]
   }
 }
@@ -109,14 +123,53 @@ packet SnacVersionInfo be {
   tlvs bytes[length]
 }
 
+// Error codes of the error SNACs (subtype 0x01 of every family).
+const SnacErrorCode uint16 {
+  invalid_snac = 0x01             "invalid SNAC header",
+  rate_to_host = 0x02             "server rate limit exceeded",
+  rate_to_client = 0x03           "client rate limit exceeded",
+  not_logged_on = 0x04            "recipient is not logged in",
+  service_unavailable = 0x05      "requested service unavailable",
+  service_not_defined = 0x06      "requested service not defined",
+  obsolete_snac = 0x07            "obsolete SNAC",
+  not_supported_by_host = 0x08    "not supported by the server",
+  not_supported_by_client = 0x09  "not supported by the client",
+  refused_by_client = 0x0a        "refused by the client",
+  in_local_permit_deny = 0x10     "blocked by the recipient's permit/deny list",
+  too_evil_sender = 0x11          "sender's warning level too high",
+  too_evil_receiver = 0x12        "recipient's warning level too high",
+  user_temp_unavail = 0x13        "recipient temporarily unavailable",
+}
+
+// An error SNAC: a code, then optional TLVs (such as an error subcode).
+packet SnacError be {
+  code uint16 : SnacErrorCode,
+  tlvs Tlv[]
+}
+
 // ---------------------------------------------------------------------
 // Family 0x0001 (SnacFamily.service): generic service controls
 // ---------------------------------------------------------------------
 const ServiceSubtype uint16 {
+  client_online = 0x02    "ClientOnline",
   server_ready = 0x03     "ServerReady",
+  rate_request = 0x06     "rate information request (no body)",
   rate_info = 0x07        "RateInfo",
+  rate_ack = 0x08         "RateAck",
   client_versions = 0x17  "FamilyVersions sent by the client",
   server_versions = 0x18  "FamilyVersions sent by the server",
+}
+
+// SNAC(01,02) client online: sent once sign-on is done, one entry per family.
+packet ClientFamily be {
+  family uint16,
+  version uint16,
+  tool_id uint16,
+  tool_version uint16
+}
+
+packet ClientOnline be {
+  families ClientFamily[]
 }
 
 // SNAC(01,03) server ready: the families this connection serves.
@@ -134,8 +187,19 @@ packet FamilyVersions be {
   versions FamilyVersion[]
 }
 
-// SNAC(01,07) rate limit information.
-packet RateClass be {
+// SNAC(01,07) rate limit information. Servers send two layouts:
+// AIM 1.x clients get 30-byte classes (v1), everyone else 35 bytes (v2:
+// last_time and state follow). Nothing in the SNAC says which; a server
+// picks by the client id sent at login (Retro AIM Server: rateLimitSNACV1/V2
+// in foodgroup/oservice.go). RateInfo tells them apart by size, with
+// `remaining` (the bytes left in the FLAP payload): the groups after the
+// classes take a multiple of 4 bytes, so `remaining - 35 * class_count` is
+// a multiple of 4 (`& 3 == 0`) for v2, and `remaining - 30 * class_count`
+// for v1. The two agree only when class_count is a multiple of 4; such
+// replies are taken as v2 (a v1 reply with 4, 8, ... classes would decode
+// wrongly). Retro AIM Server sends one class to either kind of client.
+// Encoding writes the layout `version` says (1 or 2), not recomputing it.
+packet RateClass(version uint8) be {
   id uint16,
   window_size uint32,
   clear_level uint32,
@@ -144,6 +208,10 @@ packet RateClass be {
   disconnect_level uint32,
   current_level uint32,
   max_level uint32,
+  v2 RateClassV2[version >= 2]    // present in v2 replies only
+}
+
+packet RateClassV2 be {
   last_time uint32,
   state uint8
 }
@@ -161,16 +229,24 @@ packet RateGroup be {
 
 packet RateInfo be {
   class_count uint16 = len(classes),
-  classes RateClass[class_count],
+  calc version uint8 = when (remaining - 35 * class_count) & 3 == 0 then 2 otherwise 1,
+  classes RateClass(version)[class_count],
   groups RateGroup[]
+}
+
+// SNAC(01,08) the client accepts these rate classes (RateClass.id).
+packet RateAck be {
+  class_ids uint16[]
 }
 
 // ---------------------------------------------------------------------
 // Family 0x0017 (SnacFamily.auth): authorization (MD5 login)
 // ---------------------------------------------------------------------
 const AuthSubtype uint16 {
-  key_request = 0x06   "AuthKeyRequest",
-  key_response = 0x07  "AuthKeyResponse",
+  login_request = 0x02   "LoginRequest",
+  login_response = 0x03  "LoginResponse",
+  key_request = 0x06     "AuthKeyRequest",
+  key_response = 0x07    "AuthKeyResponse",
 }
 
 // SNAC(17,06) request an MD5 salt; LoginTlv.screen_name carries the screen name.
@@ -184,12 +260,27 @@ packet AuthKeyResponse be {
   key bytes[key_length]
 }
 
+// SNAC(17,02) log in: LoginTlv.screen_name, client_id, password_hash and
+// use_strong_hash (plus client version TLVs).
+packet LoginRequest be {
+  tlvs Tlv[]
+}
+
+// SNAC(17,03) the answer: LoginTlv.reconnect_here and auth_cookie on
+// success, LoginTlv.error_subcode on failure. Unknown screen names get it in
+// place of an AuthKeyResponse.
+packet LoginResponse be {
+  tlvs Tlv[]
+}
+
 // ---------------------------------------------------------------------
 // Family 0x0004 (SnacFamily.icbm): ICBM (instant messages)
 // ---------------------------------------------------------------------
 const IcbmSubtype uint16 {
-  send = 0x06     "IcbmSend",
-  receive = 0x07  "IcbmReceive",
+  error = 0x01     "SnacError, e.g. SnacErrorCode.not_logged_on",
+  send = 0x06      "IcbmSend",
+  receive = 0x07   "IcbmReceive",
+  host_ack = 0x0c  "IcbmHostAck",
 }
 
 const IcbmChannel uint16 {
@@ -199,8 +290,9 @@ const IcbmChannel uint16 {
 }
 
 const IcbmTlv uint16 {
-  message_data = 0x0002   "an IcbmMessage",
-  store_offline = 0x0006  "store the message if the recipient is offline (empty)",
+  message_data = 0x0002      "an IcbmMessage",
+  request_host_ack = 0x0003  "answer with an IcbmHostAck (empty)",
+  store_offline = 0x0006     "store the message if the recipient is offline (empty)",
 }
 
 // SNAC(04,06) send a message (client to server).
@@ -221,6 +313,13 @@ packet IcbmReceive be {
   user_tlvs Tlv[user_tlv_count],
   tlvs Tlv[],
   calc warning_percent float64 = warning_level / 10.0
+}
+
+// SNAC(04,0C) the server took a message sent with IcbmTlv.request_host_ack.
+packet IcbmHostAck be {
+  cookie bytes[8],          // the IcbmSend's cookie
+  channel uint16 : IcbmChannel,
+  screen_name string(uint8)  // the recipient
 }
 
 // Value of IcbmTlv.message_data in an IcbmChannel.plain_text message: a
