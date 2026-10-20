@@ -150,7 +150,7 @@ packet FdoAtom be {
     protocol u5 : FdoProtocol
   },
   atom uint8,               // atom number within the protocol
-  arg_length uint8,
+  arg_length uint8 = len(arg),
   arg bytes[arg_length],
   calc uncompressed uint8 = style == FdoStyle.full
 }
