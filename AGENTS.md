@@ -22,6 +22,8 @@ source ──parser──▶ PacketExprList ──ir::analyze──▶ ir::Modul
 | `src/pcap.rs` | pcap/pcapng reading and pcap writing (no dependencies). |
 | `src/generators/common/` | code shared by every backend (see below). |
 | `src/generators/<lang>/` | one backend per language, always split the same way: `mod.rs` (file preamble, `Backend` impl), `naming.rs` (identifiers, types, `Dialect` marker), `expr.rs` (`ExprLang` impl, `store_value`), `decode.rs` / `encode.rs` (`StepEmitter` impls), `packet.rs` (struct + method wrappers). |
+| `src/generators/wireshark/` | the Wireshark Lua dissector generator (`dissector` command; not a `Language`): `naming.rs` (`Lua` dialect, field keys), `expr.rs`, `fields.rs` (ProtoFields, value strings), `dissect.rs` (a decode `StepEmitter` that also fills the tree; failed checks become expert warnings), `mod.rs` (file layout, frame-length functions, registration). Runtime in `runtime/wireshark.lua`. |
+| `src/ir/frame.rs` | `Module::frame_length`: a packet's size from fixed-offset header fields, for TCP reassembly and stream framing. |
 | `runtime/` | hand-written runtime support pasted into each generated file. |
 | `src/sources.rs`, `src/imports.rs` | `SourceMap` (every file gets a base offset, so a `Span` also says which file it is in; the parser adds the base) and the loader behind `compile_file`, which follows `import`s and merges the files' packets and constants. |
 | `src/language.rs`, `src/lib.rs`, `src/main.rs` | `Language` enum, library entry points (`compile` for one source, `compile_file` with imports), CLI. |
@@ -105,6 +107,12 @@ cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test                # PB_REQUIRE_ALL=1 fails instead of skipping missing toolchains
 ```
+
+`tests/wireshark.rs` runs every spec vector through tshark with the
+generated dissector (skipped without tshark). Wireshark 4.6 crashes when a
+Lua script rethrows an error raised by its API, so the Lua runtime never
+rethrows: unexpected errors become "packet-builder internal error" expert
+items, which the test treats as failures.
 
 The codegen tests compile and run the generated code with each language's
 toolchain (skipped when it is not installed). For refactors that should not

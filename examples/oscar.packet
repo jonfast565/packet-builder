@@ -256,3 +256,8 @@ packet MessageText be {
   charsubset uint16,
   text bytes[]
 }
+
+// A Wireshark dissector: `packet_builder dissector examples/oscar.packet -o out`
+// writes oscar.lua. TCP port 5190 is AIM's; frames split across segments are
+// reassembled, since a FLAP's length is in its header.
+dissector Flap { name "AIM OSCAR", abbrev "oscar", tcp.port 5190 }

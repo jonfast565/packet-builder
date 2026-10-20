@@ -15,6 +15,47 @@ pub struct Module {
     pub categories: Vec<Category>,
     /// Tagged unions (`body switch kind { ... }`), in packet order.
     pub unions: Vec<Union>,
+    /// Wireshark dissectors to generate (`dissector` declarations).
+    pub dissectors: Vec<Dissector>,
+}
+
+/// A Wireshark dissector for a packet.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Dissector {
+    pub packet: String,
+    /// The protocol's long name (`AIM OSCAR`).
+    pub name: String,
+    /// The filter name and field prefix (`oscar`).
+    pub abbrev: String,
+    /// Dissector tables to register in: (`tcp.port`, 5190).
+    pub tables: Vec<(String, u64)>,
+    /// Also try the dissector on TCP/UDP payloads (`heuristic`).
+    pub heuristic: bool,
+}
+
+impl Dissector {
+    /// Defaults: the packet's name, and its lowercase as the abbreviation.
+    pub fn new(packet: &str) -> Self {
+        Dissector {
+            packet: packet.to_string(),
+            name: packet.to_string(),
+            abbrev: packet.to_ascii_lowercase(),
+            tables: Vec::new(),
+            heuristic: false,
+        }
+    }
+
+    /// Wireshark protocol filter names: a lowercase letter, then lowercase
+    /// letters, digits, `_`, `-` and `.`.
+    pub fn check_abbrev(abbrev: &str) -> Result<(), String> {
+        let ok = abbrev.starts_with(|c: char| c.is_ascii_lowercase())
+            && abbrev.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "_-.".contains(c));
+        if ok {
+            Ok(())
+        } else {
+            Err(format!("`{}` is not a protocol abbreviation (lowercase letters, digits, _ - and .)", abbrev))
+        }
+    }
 }
 
 /// A tagged union: the type of a `switch` member.

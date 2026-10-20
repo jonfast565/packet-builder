@@ -69,8 +69,36 @@ fn parse_inner(input: &str) -> Result<PacketExprList, Error<Rule>> {
             d.into_inner().find(|p| p.as_rule() == Rule::string).map(|s| (expr::parse_string_constant(s), span))
         })
         .collect();
+    let dissectors = root.clone().into_inner().filter(|p| p.as_rule() == Rule::dissector_decl).map(dissector).collect();
     let packets = builder.packets(root);
-    Ok(PacketExprList { packets, constants, word_size, imports })
+    Ok(PacketExprList { packets, constants, word_size, imports, dissectors })
+}
+
+fn dissector(pair: Pair<Rule>) -> crate::ast::DissectorExpr {
+    let mut d = crate::ast::DissectorExpr { span: span_of(&pair), ..Default::default() };
+    for part in pair.into_inner() {
+        match part.as_rule() {
+            Rule::identifier => d.packet = part.as_str().to_string(),
+            Rule::dissector_option => {
+                let span = span_of(&part);
+                let mut inner = part.into_inner();
+                let Some(first) = inner.next() else { continue };
+                match first.as_rule() {
+                    Rule::heuristic_kw => d.heuristic = true,
+                    Rule::table_name => {
+                        let value = inner.next().map(|v| int_literal(v.as_str())).unwrap_or(0);
+                        d.tables.push((first.as_str().to_string(), value));
+                    }
+                    _ => {
+                        let value = inner.next().map(expr::parse_string_constant).unwrap_or_default();
+                        d.strings.push((first.as_str().to_string(), value, span));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    d
 }
 
 /// Parse an integer literal already validated by check_literals.

@@ -7,6 +7,7 @@ pub mod csharp;
 pub mod go;
 pub mod python;
 pub mod rust;
+pub mod wireshark;
 pub mod zig;
 
 use crate::Language;

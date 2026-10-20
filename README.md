@@ -50,6 +50,12 @@ Real protocol descriptions live in [`examples/`](examples):
   fields, and DNS messages with compressed names (parameters, `at root` and
   recursion).
 
+The same descriptions generate **Wireshark dissectors**:
+`dissector Flap { name "AIM OSCAR", abbrev "oscar", tcp.port 5190 }` in
+`oscar.packet` becomes a Lua plugin that shows every field with a filter
+name, reassembles FLAPs split across TCP segments and flags bad lengths and
+checksums as expert info. See [`docs/wireshark.md`](docs/wireshark.md).
+
 ## Usage
 
 ```sh
@@ -62,6 +68,7 @@ cargo run -- layout tests/specs/types.packet -k CStruct
 cargo run -- decode examples/oscar.packet -k Flap --hex "2a01 1f3a 0004 00000001"
 cargo run -- decode examples/oscar.packet -k Flap --all --hex "..."   # frames back to back
 cargo run -- decode examples/oscar.packet -k Flap --pcap capture.pcapng --offset 54 --json
+cargo run -- dissector examples/oscar.packet -o out          # Wireshark Lua dissector, out/oscar.lua
 cargo run -- languages
 cargo run -- --help
 ```

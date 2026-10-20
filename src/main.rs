@@ -35,6 +35,9 @@ enum Command {
     },
     /// Decode bytes with a packet description and print the fields.
     Decode(DecodeArgs),
+    /// Generate a Wireshark Lua dissector from the file's `dissector`
+    /// declarations (or from --packet and the other options).
+    Dissector(DissectorArgs),
     /// List the supported target languages.
     Languages,
 }
@@ -75,6 +78,46 @@ struct DecodeArgs {
 }
 
 #[derive(Args)]
+struct DissectorArgs {
+    /// Packet description file.
+    input: PathBuf,
+
+    /// Output directory (required unless --stdout); writes <package>.lua.
+    #[arg(short, long, required_unless_present = "stdout", conflicts_with = "stdout")]
+    out: Option<PathBuf>,
+
+    /// Print the dissector to stdout.
+    #[arg(long)]
+    stdout: bool,
+
+    /// Only this packet's dissector; declared on the command line if the
+    /// file has none for it.
+    #[arg(short = 'k', long = "packet")]
+    packet: Option<String>,
+
+    /// The protocol's name (with --packet).
+    #[arg(long, requires = "packet")]
+    name: Option<String>,
+
+    /// The protocol's filter name and field prefix (with --packet).
+    #[arg(long, requires = "packet")]
+    abbrev: Option<String>,
+
+    /// Register in a dissector table, e.g. --table tcp.port=5190 (with --packet; repeatable).
+    #[arg(long = "table", requires = "packet")]
+    tables: Vec<String>,
+
+    /// Also try the dissector on any TCP/UDP payload (with --packet).
+    #[arg(long, requires = "packet")]
+    heuristic: bool,
+
+    /// The global table the file exports (packet_builder_<package>); taken
+    /// from the input file name when omitted.
+    #[arg(short, long)]
+    package: Option<String>,
+}
+
+#[derive(Args)]
 struct GenerateArgs {
     /// Packet description file.
     input: PathBuf,
@@ -111,6 +154,7 @@ fn main() -> ExitCode {
         Command::Check { inputs } => check(&inputs),
         Command::Layout { input, packets } => layout(&input, &packets),
         Command::Decode(args) => decode(args),
+        Command::Dissector(args) => dissector(args),
         Command::Languages => {
             for l in Language::ALL {
                 println!("{:<8} .{}", l.name(), l.extension());
@@ -143,6 +187,63 @@ fn package_from(input: &Path) -> String {
 /// Read and compile a file; errors are rendered with source snippets.
 fn load(input: &Path) -> Result<Module, String> {
     compile_file(input).map_err(|e| e.render())
+}
+
+fn dissector(args: DissectorArgs) -> Result<(), String> {
+    use packet_builder::ir::Dissector;
+    let module = load(&args.input)?;
+    let mut list = module.dissectors.clone();
+    if let Some(packet) = &args.packet {
+        let p = module
+            .packets
+            .iter()
+            .find(|p| &p.name == packet)
+            .ok_or_else(|| format!("no packet named `{}` in {}", packet, args.input.display()))?;
+        if !p.params.is_empty() {
+            return Err(format!("packet `{}` takes parameters, so it cannot have a dissector of its own", packet));
+        }
+        let mut d = list.iter().find(|d| &d.packet == packet).cloned().unwrap_or_else(|| Dissector::new(packet));
+        if let Some(name) = args.name {
+            d.name = name;
+        }
+        if let Some(abbrev) = args.abbrev {
+            Dissector::check_abbrev(&abbrev)?;
+            d.abbrev = abbrev;
+        }
+        for t in &args.tables {
+            let (table, value) = t.split_once('=').ok_or_else(|| format!("--table {}: expected TABLE=VALUE", t))?;
+            let value = parse_number(value).ok_or_else(|| format!("--table {}: bad value", t))?;
+            d.tables.push((table.to_string(), value));
+        }
+        d.heuristic |= args.heuristic;
+        list = vec![d];
+    }
+    if list.is_empty() {
+        return Err(format!(
+            "{} declares no dissector; add one (dissector Packet {{ abbrev \"proto\" }}) or pass --packet",
+            args.input.display()
+        ));
+    }
+    let package = args.package.unwrap_or_else(|| package_from(&args.input));
+    let lua = packet_builder::generate_dissector(&module, &list, &package);
+    if args.stdout {
+        print!("{}", lua);
+        return Ok(());
+    }
+    let out = args.out.expect("clap requires --out unless --stdout");
+    fs::create_dir_all(&out).map_err(|e| format!("cannot create {}: {}", out.display(), e))?;
+    let path = out.join(format!("{}.lua", package));
+    fs::write(&path, lua).map_err(|e| format!("cannot write {}: {}", path.display(), e))?;
+    println!("wrote {}", path.display());
+    Ok(())
+}
+
+/// A decimal or 0x-prefixed hex number.
+fn parse_number(s: &str) -> Option<u64> {
+    match s.strip_prefix("0x") {
+        Some(hex) => u64::from_str_radix(hex, 16).ok(),
+        None => s.parse().ok(),
+    }
 }
 
 fn generate(args: GenerateArgs) -> Result<(), String> {

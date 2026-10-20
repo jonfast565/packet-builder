@@ -46,6 +46,13 @@ pub fn generate_module(module: &ir::Module, lang: Language, opts: &GenOptions) -
     generators::backend(lang).generate(module, opts)
 }
 
+/// A Wireshark Lua dissector registering a protocol for each of
+/// `dissectors` (usually `module.dissectors`); `package` names the global
+/// table the file exports.
+pub fn generate_dissector(module: &ir::Module, dissectors: &[ir::Dissector], package: &str) -> String {
+    generators::wireshark::generate(module, dissectors, package)
+}
+
 /// Parse, validate and generate in one call.
 pub fn generate(source: &str, lang: Language, opts: &GenOptions) -> Result<String, CompileError> {
     let module = compile(source)?;

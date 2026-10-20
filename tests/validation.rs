@@ -530,3 +530,22 @@ fn recursion_needs_an_array_or_at() {
     compile("packet A { o uint8, next A at root o }").expect("at recursion");
     compile("packet A { b B } packet B { n uint8, a A[n] }").expect("mutual recursion");
 }
+
+#[test]
+fn dissector_declarations_are_checked() {
+    assert_error("packet P { a uint8 } dissector Q { }", "dissector for unknown packet `Q`");
+    assert_error("packet P { a uint8 } dissector P { abbrev \"Bad Name\" }", "is not a protocol abbreviation");
+    assert_error("packet P { a uint8 } dissector P { colour \"red\" }", "unknown dissector option `colour`");
+    assert_error(
+        "packet P(n uint8) { a uint8 } dissector P { }",
+        "packet `P` takes parameters, so it cannot have a dissector of its own",
+    );
+    assert_error(
+        "packet P { a uint8 } packet Q { b uint8 } dissector P { abbrev \"x\" } dissector Q { abbrev \"x\" }",
+        "two dissectors are called `x`",
+    );
+    let m = compile("packet P { a uint8 } dissector P { name \"Pee\", udp.port 4000, heuristic }").unwrap();
+    assert_eq!(m.dissectors[0].abbrev, "p");
+    assert_eq!(m.dissectors[0].tables, [("udp.port".to_string(), 4000)]);
+    assert!(m.dissectors[0].heuristic);
+}

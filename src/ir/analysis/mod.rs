@@ -8,6 +8,7 @@
 //! - `derive`: derived fields, their marks and the encode order.
 //! - `union`: tagged unions (`switch`) and windows (`size n`).
 //! - `repeat`: `until` and `term`, and string encodings.
+//! - `dissector`: `dissector` declarations.
 //! - `params`: packet parameters, arguments, `at` fields and the order
 //!   packets are analyzed in (recursion through arrays and `at`).
 //! - `context`: the member table and diagnostics shared by those passes.
@@ -22,6 +23,7 @@ mod consts;
 mod context;
 mod cursor;
 mod derive;
+mod dissector;
 mod packet;
 mod params;
 mod repeat;
@@ -135,5 +137,9 @@ pub fn analyze(list: &PacketExprList) -> Result<Module, Vec<Diagnostic>> {
     if !diags.is_empty() {
         return Err(diags);
     }
-    Ok(Module { packets, constants: consts.constants, categories: consts.categories, unions })
+    let dissectors = dissector::dissectors(list, &packets, &mut diags);
+    if !diags.is_empty() {
+        return Err(diags);
+    }
+    Ok(Module { packets, constants: consts.constants, categories: consts.categories, unions, dissectors })
 }

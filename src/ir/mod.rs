@@ -10,11 +10,13 @@
 //!   type-checks expressions and decides when each calculated field can be
 //!   evaluated while decoding.
 //! - [`layout`] — the field-by-field layout report.
+//! - [`frame`] — a packet's size from its header (stream framing).
 //! - [`interp`] — a reference interpreter that decodes and encodes with a
 //!   module directly.
 
 mod analysis;
 pub mod expr;
+pub mod frame;
 pub mod interp;
 pub mod layout;
 pub mod model;

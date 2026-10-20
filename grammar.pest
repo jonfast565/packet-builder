@@ -61,6 +61,8 @@ otherwise_kw  = @{ "otherwise" }
 // Packet keywords
 packet_kw     = @{ "packet" }
 import_kw     = @{ "import" }
+dissector_kw  = @{ "dissector" }
+heuristic_kw  = @{ "heuristic" ~ !(alnum | underscore) }
 calc_kw       = @{ "calc" }
 const_kw      = @{ "const" }
 
@@ -109,7 +111,7 @@ default_arm = @{ "_" ~ !(alnum | underscore) }
 // Keyword reservation
 // ===============================
 keyword = _{
-    packet_kw | calc_kw | const_kw | import_kw
+    packet_kw | calc_kw | const_kw | import_kw | dissector_kw
   | when_kw | then_kw | otherwise_kw
   | sumof_kw | productof_kw
   | and_kw | or_kw | not_kw | xor_kw
@@ -337,7 +339,16 @@ const_member = { identifier ~ assign ~ expr ~ string? }
 // ===============================
 // Packets
 // ===============================
-packets = { SOI ~ wordsize_directive? ~ import_decl* ~ (const_decl | packet)* ~ EOI }
+packets = { SOI ~ wordsize_directive? ~ import_decl* ~ (const_decl | packet | dissector_decl)* ~ EOI }
+
+// A Wireshark dissector for a packet (`packet_builder dissector`):
+//   dissector Flap { name "AIM OSCAR", abbrev "oscar", tcp.port 5190, heuristic }
+// `name` and `abbrev` set the protocol's names; `table value` registers it
+// in a dissector table (tcp.port, udp.port, ethertype, ip.proto, ...);
+// `heuristic` also tries it on any TCP/UDP payload.
+dissector_decl   = { dissector_kw ~ identifier ~ lbracket ~ (dissector_option ~ (comma ~ dissector_option)* ~ comma?)? ~ rbracket }
+dissector_option = { heuristic_kw | (identifier ~ string) | (table_name ~ numeric_constant) }
+table_name       = @{ identifier ~ ("." ~ identifier)* }
 
 // `import "common.packet"`: the packets and constants of another file,
 // relative to this one.

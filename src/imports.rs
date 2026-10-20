@@ -25,7 +25,13 @@ impl Loader {
     pub fn new() -> Self {
         Loader {
             sources: SourceMap::default(),
-            merged: PacketExprList { packets: Vec::new(), constants: Vec::new(), word_size: 16, imports: Vec::new() },
+            merged: PacketExprList {
+                packets: Vec::new(),
+                constants: Vec::new(),
+                word_size: 16,
+                imports: Vec::new(),
+                dissectors: Vec::new(),
+            },
             diags: Vec::new(),
             stack: Vec::new(),
             done: HashSet::new(),
@@ -77,6 +83,7 @@ impl Loader {
         self.done.insert(key);
         self.merged.packets.extend(list.packets);
         self.merged.constants.extend(list.constants);
+        self.merged.dissectors.extend(list.dissectors);
         Ok(())
     }
 }

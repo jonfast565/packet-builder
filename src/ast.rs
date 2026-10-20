@@ -421,6 +421,7 @@ pub struct PacketExprList {
     pub word_size: u32,
     /// `import "file"` declarations: the path as written, and where.
     pub imports: Vec<(String, Span)>,
+    pub dissectors: Vec<DissectorExpr>,
 }
 
 impl TypeNode {
@@ -455,4 +456,16 @@ impl TypeNode {
             _ => return None,
         })
     }
+}
+
+/// `dissector Packet { name "...", abbrev "...", tcp.port 5190, heuristic }`.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct DissectorExpr {
+    pub packet: String,
+    /// `name "..."`, `abbrev "..."` and any other quoted option.
+    pub strings: Vec<(String, String, Span)>,
+    /// `table value` registrations.
+    pub tables: Vec<(String, u64)>,
+    pub heuristic: bool,
+    pub span: Span,
 }

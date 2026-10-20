@@ -148,3 +148,8 @@ packet FdoStream be {
   stream_id uint16,
   atoms FdoAtom[]
 }
+
+// A Wireshark dissector (`packet_builder dissector examples/p3.packet -o out`).
+// P3 has no port of its own, so Wireshark tries it on TCP and UDP payloads and
+// keeps it when the sync byte, type bit and type check out.
+dissector P3Packet { name "AOL P3", abbrev "aolp3", heuristic }

@@ -7,11 +7,13 @@
 mod decode;
 mod encode;
 mod eval;
+mod frame;
 mod show;
 mod value;
 
 pub use decode::{decode, decode_from};
 pub use encode::encode;
+pub use frame::frame_length;
 pub use rt::{PbError as Error, PbErrorKind as ErrorKind, PbReader as Reader};
 pub use show::render;
 pub use value::{Struct, Value};
