@@ -214,6 +214,86 @@
             catch (ArgumentException) { throw Error(PbErrorKind.Text, "invalid UTF-8"); }
         }
 
+        /// <summary>Text in encoding enc (see Pb.Encodings); padded cuts it at the
+        /// first NUL character.</summary>
+        public string Text(byte[] raw, int enc, bool padded)
+        {
+            int n = raw.Length, unit = enc >= 3 ? 2 : 1;
+            if (n % unit != 0) throw Error(PbErrorKind.Text, "invalid UTF-16 (an odd number of bytes)");
+            if (padded)
+            {
+                for (int i = 0; i < n; i += unit)
+                {
+                    if (raw[i] == 0 && raw[i + unit - 1] == 0) { n = i; break; }
+                }
+            }
+            try { return Pb.Encodings[enc].GetString(raw, 0, n); }
+            catch (ArgumentException) { throw Error(PbErrorKind.Text, $"invalid {Pb.EncodingNames[enc]}"); }
+        }
+
+        /// <summary>One variable-length integer (kind: 0 uleb128, 1 sleb128,
+        /// 2 zigzag, 3 vlq, 4 quic); signed kinds return the two's complement bits.</summary>
+        public ulong ReadVarint(int kind)
+        {
+            if (kind == 4)
+            {
+                ulong first = ReadUint(1, false);
+                int n = 1 << (int)(first >> 6);
+                ulong q = first & 0x3f;
+                if (n > 1) q = (q << (8 * (n - 1))) | ReadUint(n - 1, false);
+                return q;
+            }
+            ulong v = 0;
+            int shift = 0;
+            while (true)
+            {
+                ulong b = ReadUint(1, false);
+                if (kind == 3)
+                {
+                    if (v >> 57 != 0) throw Error(PbErrorKind.Invalid, "the varint does not fit in 64 bits");
+                    v = (v << 7) | (b & 0x7f);
+                }
+                else
+                {
+                    // The 10th byte holds bit 63 only (and, for sleb128, its sign).
+                    bool lastOk = kind == 1 ? (b & 0x7f) == 0 || (b & 0x7f) == 0x7f : (b & 0x7e) == 0;
+                    if (shift >= 64 || (shift == 63 && ((b & 0x80) != 0 || !lastOk)))
+                        throw Error(PbErrorKind.Invalid, "the varint does not fit in 64 bits");
+                    v |= (b & 0x7f) << shift;
+                }
+                shift += 7;
+                if ((b & 0x80) == 0)
+                {
+                    if (kind == 1 && shift < 64 && (b & 0x40) != 0) v |= ulong.MaxValue << shift;
+                    break;
+                }
+            }
+            if (kind == 2) v = (v >> 1) ^ unchecked(0UL - (v & 1));
+            return v;
+        }
+
+        /// <summary>The bytes before term, consuming both. Without the terminator:
+        /// the rest of the input when optional, otherwise an error.</summary>
+        public byte[] ReadUntil(byte[] term, bool optional)
+        {
+            long start = pos >> 3, end = limit >> 3;
+            for (long i = start; i + term.Length <= end; i++)
+            {
+                bool hit = true;
+                for (int k = 0; k < term.Length && hit; k++) hit = data[i + k] == term[k];
+                if (!hit) continue;
+                var found = new byte[i - start];
+                Array.Copy(data, start, found, 0, found.Length);
+                pos = (i + term.Length) * 8;
+                return found;
+            }
+            if (!optional) throw Short(RemainingBits + 8, "the terminated field");
+            var rest = new byte[end - start];
+            Array.Copy(data, start, rest, 0, rest.Length);
+            pos = limit;
+            return rest;
+        }
+
         /// <summary>Checksum algo of the input between two bit positions (whole
         /// bytes); the bytes between holeFrom and holeTo count as zero.</summary>
         public ulong Checksum(int algo, long from, long to, long holeFrom, long holeTo) =>
@@ -308,6 +388,66 @@
             catch (ArgumentException) { throw Error(PbErrorKind.Text, "the string is not valid Unicode (unpaired surrogate)"); }
         }
 
+        /// <summary>s in encoding enc (see Pb.Encodings).</summary>
+        public byte[] TextBytes(string s, int enc)
+        {
+            try { return Pb.Encodings[enc].GetBytes(s); }
+            catch (ArgumentException) { throw Error(PbErrorKind.Text, $"the string is not valid {Pb.EncodingNames[enc]}"); }
+        }
+
+        /// <summary>One variable-length integer (see PbReader.ReadVarint).</summary>
+        public void WriteVarint(int kind, ulong v)
+        {
+            switch (kind)
+            {
+                case 4:
+                    if (v <= 0x3f) WriteUint(v, 1, false);
+                    else if (v <= 0x3fff) WriteUint(v | (1UL << 14), 2, false);
+                    else if (v <= 0x3fffffff) WriteUint(v | (2UL << 30), 4, false);
+                    else if (v <= 0x3fffffffffffffff) WriteUint(v | (3UL << 62), 8, false);
+                    else throw Error(PbErrorKind.Range, $"{v} does not fit in a QUIC varint");
+                    return;
+                case 1:
+                {
+                    long x = unchecked((long)v);
+                    while (true)
+                    {
+                        ulong b = (ulong)(x & 0x7f);
+                        x >>= 7;
+                        bool done = (x == 0 && (b & 0x40) == 0) || (x == -1 && (b & 0x40) != 0);
+                        WriteUint(done ? b : b | 0x80, 1, false);
+                        if (done) return;
+                    }
+                }
+                case 3:
+                {
+                    var groups = new List<ulong> { v & 0x7f };
+                    for (v >>= 7; v != 0; v >>= 7) groups.Add((v & 0x7f) | 0x80);
+                    for (int i = groups.Count - 1; i >= 0; i--) WriteUint(groups[i], 1, false);
+                    return;
+                }
+                default:
+                    if (kind == 2) v = (v << 1) ^ unchecked((ulong)((long)v >> 63));
+                    while (true)
+                    {
+                        ulong b = v & 0x7f;
+                        v >>= 7;
+                        WriteUint(v != 0 ? b | 0x80 : b, 1, false);
+                        if (v == 0) return;
+                    }
+            }
+        }
+
+        public void CheckNoTerm(byte[] data, byte[] term)
+        {
+            for (int i = 0; i + term.Length <= data.Length; i++)
+            {
+                bool hit = true;
+                for (int k = 0; k < term.Length && hit; k++) hit = data[i + k] == term[k];
+                if (hit) throw Error(PbErrorKind.Invalid, "the value contains its terminator");
+            }
+        }
+
         public void CheckFits(long length, long size)
         {
             if (length > size) throw Error(PbErrorKind.Range, $"{length} byte(s) do not fit in {size}");
@@ -340,6 +480,18 @@
     internal static class Pb
     {
         internal static readonly System.Text.UTF8Encoding StrictUtf8 = new System.Text.UTF8Encoding(false, true);
+
+        /// <summary>Strict text encodings by id: UTF-8, ASCII, Latin-1, UTF-16LE, UTF-16BE.</summary>
+        internal static readonly System.Text.Encoding[] Encodings =
+        {
+            StrictUtf8,
+            System.Text.Encoding.GetEncoding(20127, System.Text.EncoderFallback.ExceptionFallback, System.Text.DecoderFallback.ExceptionFallback),
+            System.Text.Encoding.GetEncoding(28591, System.Text.EncoderFallback.ExceptionFallback, System.Text.DecoderFallback.ExceptionFallback),
+            new System.Text.UnicodeEncoding(false, false, true),
+            new System.Text.UnicodeEncoding(true, false, true),
+        };
+
+        internal static readonly string[] EncodingNames = { "UTF-8", "ASCII", "Latin-1", "UTF-16", "UTF-16" };
 
         // CRC parameters by algorithm number: width, polynomial (reflected for
         // reflected CRCs), initial value, reflected, final XOR.

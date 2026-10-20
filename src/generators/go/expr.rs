@@ -85,6 +85,14 @@ impl ExprLang for Scope<'_, Go> {
         format!("int64({}.Checksum({}, {}, {}, {}, {}))", rw, algo.id(), from, to, hf, ht)
     }
 
+    fn last(&self, field: Option<(&str, &str)>, ty: Ty) -> String {
+        let t = if ty == Ty::Float { "float64" } else { "int64" };
+        match field {
+            Some((_, f)) => format!("{}(pbLast.{})", t, super::naming::field_name(f)),
+            None => format!("{}(pbLast)", t),
+        }
+    }
+
     fn convert(&self, e: String, from: Ty, to: Ty) -> String {
         match (from, to) {
             (Ty::Bool, Ty::Int) => format!("pbB2I({})", e),

@@ -116,6 +116,13 @@ impl ExprLang for Scope<'_, Python> {
         format!("{}.checksum({}, {}, {}, {}, {})", rw, algo.id(), from, to, hf, ht)
     }
 
+    fn last(&self, field: Option<(&str, &str)>, _ty: Ty) -> String {
+        match field {
+            Some((_, f)) => format!("pb_last.{}", super::naming::ident(f)),
+            None => "pb_last".into(),
+        }
+    }
+
     fn convert(&self, e: String, from: Ty, to: Ty) -> String {
         match (from, to) {
             (Ty::Bool, Ty::Int) => format!("int({})", e),

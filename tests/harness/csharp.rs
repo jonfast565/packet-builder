@@ -3,8 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use packet_builder::generators::common::union::variant_name;
-use packet_builder::generators::csharp::{namespace, prop_name};
+use packet_builder::generators::csharp::{arm_class, namespace, prop_name};
 use packet_builder::ir::{Member, Module, ValueType};
 use packet_builder::{GenOptions, Language};
 
@@ -80,7 +79,7 @@ impl Target for CSharpTarget {
             let _ =
                 writeln!(s, "    static string Dump{}({} v)\n    {{\n        switch (v)\n        {{", u.name, u.name);
             for arm in &u.arms {
-                let class = format!("{}.{}", u.name, variant_name(arm));
+                let class = format!("{}.{}", u.name, arm_class(&u.name, arm));
                 let (bind, value) = match (&arm.ty, arm.is_bytes()) {
                     (None, _) => ("_", "\"null\"".to_string()),
                     (Some(_), true) => ("a", "Hx(a.Value)".to_string()),

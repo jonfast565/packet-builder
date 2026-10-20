@@ -18,11 +18,22 @@ pub(super) struct Ctx<'a> {
     /// While type-checking a derived field: `sizeof`, `offsetof` and
     /// checksums are allowed.
     pub allow_wire: bool,
+    /// While type-checking an `until` condition: the element type `last` has.
+    pub last: Option<ValueType>,
 }
 
 impl<'a> Ctx<'a> {
     pub fn new(packet: &'a PacketExpr, done: &'a HashMap<String, Packet>, consts: &'a ConstTable) -> Self {
-        Ctx { packet, done, consts, members: Vec::new(), names: HashMap::new(), diags: Vec::new(), allow_wire: false }
+        Ctx {
+            packet,
+            done,
+            consts,
+            members: Vec::new(),
+            names: HashMap::new(),
+            diags: Vec::new(),
+            allow_wire: false,
+            last: None,
+        }
     }
 
     pub fn declare(&mut self, name: &str, ty: ValueType, kind: MemberKind, span: Span) {
@@ -54,6 +65,7 @@ impl<'a> Ctx<'a> {
             category: None,
             checks: Vec::new(),
             lenient: false,
+            encoding: Default::default(),
         });
     }
 

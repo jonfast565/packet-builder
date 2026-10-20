@@ -1,11 +1,12 @@
 //! C encoder statements. `PB_CHECK` returns the error code on failure.
 
+use super::decode::term_args;
 use super::expr::store_value;
 use super::naming::{C, ident, len_ident, scalar_type};
 use super::packet::arm_kind;
 use crate::generators::common::union::{C_LOGIC, arm_test, uses_selector};
 use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mark_var, mask};
-use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, ValueType};
+use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, TextEncoding, ValueType};
 
 fn write_elem(out: &mut Out, codec: &Codec, ty: &ValueType, v: &str) {
     if let ValueType::Int { width, signed } = ty
@@ -30,6 +31,7 @@ fn write_elem(out: &mut Out, codec: &Codec, ty: &ValueType, v: &str) {
             C::little(endian)
         )),
         Codec::Mac => out.line(format!("PB_CHECK(pb_write_bytes(pb_w, {}, 6));", v)),
+        Codec::Varint(k) => out.line(format!("PB_CHECK(pb_write_varint(pb_w, {}, (uint64_t){}));", k.id(), v)),
         Codec::Packet(n) => out.line(format!("PB_CHECK({}_encode_to(&{}, pb_w));", n, v)),
         Codec::Str(_) => unreachable!("strings are handled by Encoder::string"),
     }
@@ -46,6 +48,47 @@ impl<'a> Encoder<'a> {
 
     fn len(&self, m: &Member) -> String {
         format!("p->{}", len_ident(self.scope.packet, m))
+    }
+}
+
+impl Encoder<'_> {
+    /// A string in an encoding other than UTF-8: `pb_sz` is its encoded size.
+    fn encoded_string(&self, out: &mut Out, m: &Member, mode: &StrMode, array: Option<&Count>) {
+        let s = format!("p->{}", ident(&m.name));
+        let len = self.len(m);
+        let write = format!("PB_CHECK(pb_write_text(pb_w, {}, {}, {}));", s, len, m.encoding.id());
+        out.open("{");
+        out.line("size_t pb_sz;");
+        out.line(format!("PB_CHECK(pb_text_size({}, {}, {}, &pb_sz));", s, len, m.encoding.id()));
+        match (mode, array) {
+            (StrMode::CString | StrMode::Terminated { .. }, _) => {
+                let term = match mode {
+                    StrMode::Terminated { term, .. } => term.clone(),
+                    _ => vec![0],
+                };
+                out.line("size_t pb_from = pb_writer_position(pb_w);");
+                out.line(write);
+                out.line(format!("PB_CHECK(pb_check_no_term(pb_w, pb_from, {}));", term_args(&term)));
+                out.line(format!("PB_CHECK(pb_write_bytes(pb_w, {}));", term_args(&term)));
+            }
+            (StrMode::Prefixed { prefix, width }, _) => {
+                out.line(format!("PB_CHECK(pb_check_u((uint64_t)pb_sz, {}));", width));
+                write_elem(out, prefix, &PREFIX_LEN, "pb_sz");
+                out.line(write);
+            }
+            (StrMode::Padded, Some(Count::Expr(e))) => {
+                out.line(format!("int64_t pb_n = {};", self.scope.expr(e)));
+                out.line("PB_CHECK(pb_check_fits(pb_sz, pb_n));");
+                out.line(write);
+                out.line("PB_CHECK(pb_write_zero_bits(pb_w, (pb_n - (int64_t)pb_sz) * 8));");
+            }
+            (_, Some(Count::Expr(e))) if !self.packet().depends_on_wire(e) => {
+                out.line(format!("PB_CHECK(pb_check_len(pb_sz, {}));", self.scope.expr(e)));
+                out.line(write);
+            }
+            _ => out.line(write),
+        }
+        out.close("}");
     }
 }
 
@@ -162,6 +205,10 @@ impl StepEmitter for Encoder<'_> {
             (Codec::Bits { width }, Some(at)) => {
                 out.line(format!("pb_patch_bits(pb_w, {}, (uint64_t){}, {});", mark_var(at), v, width))
             }
+            // Varints are never patched (rejected by the analysis).
+            (Codec::Varint(k), None) => {
+                out.line(format!("PB_CHECK(pb_write_varint(pb_w, {}, (uint64_t){}));", k.id(), v))
+            }
             _ => unreachable!("derived fields are integers"),
         }
     }
@@ -178,10 +225,22 @@ impl StepEmitter for Encoder<'_> {
         let len = self.len(m);
         let allow_nul = if matches!(mode, StrMode::CString) { 0 } else { 1 };
         out.line(format!("PB_CHECK(pb_check_text({}, {}, {}));", s, len, allow_nul));
+        if m.encoding != TextEncoding::Utf8 {
+            self.encoded_string(out, m, mode, array);
+            return;
+        }
         match (mode, array) {
             (StrMode::CString, _) => {
                 out.line(format!("PB_CHECK(pb_write_bytes(pb_w, (const uint8_t *){}, {}));", s, len));
                 out.line("PB_CHECK(pb_write_bits(pb_w, 0, 8));");
+            }
+            (StrMode::Terminated { term, .. }, _) => {
+                out.open("{");
+                out.line("size_t pb_from = pb_writer_position(pb_w);");
+                out.line(format!("PB_CHECK(pb_write_bytes(pb_w, (const uint8_t *){}, {}));", s, len));
+                out.line(format!("PB_CHECK(pb_check_no_term(pb_w, pb_from, {}));", term_args(term)));
+                out.line(format!("PB_CHECK(pb_write_bytes(pb_w, {}));", term_args(term)));
+                out.close("}");
             }
             (StrMode::Prefixed { prefix, width }, _) => {
                 out.line(format!("PB_CHECK(pb_check_u((uint64_t){}, {}));", len, width));
@@ -213,7 +272,7 @@ impl StepEmitter for Encoder<'_> {
                 self.scope.expr(e),
                 bits
             )),
-            Some(Count::Remaining) => {}
+            Some(Count::Remaining | Count::Until(_) | Count::Terminated { .. }) => {}
         }
     }
 
@@ -229,7 +288,14 @@ impl StepEmitter for Encoder<'_> {
         {
             out.line(format!("PB_CHECK(pb_check_len({}, {}));", len, self.scope.expr(e)));
         }
-        if ty.is_byte() {
+        if let Count::Terminated { term, .. } = count {
+            out.open("{");
+            out.line("size_t pb_from = pb_writer_position(pb_w);");
+            out.line(format!("PB_CHECK(pb_write_bytes(pb_w, {}, {}));", place, len));
+            out.line(format!("PB_CHECK(pb_check_no_term(pb_w, pb_from, {}));", term_args(term)));
+            out.line(format!("PB_CHECK(pb_write_bytes(pb_w, {}));", term_args(term)));
+            out.close("}");
+        } else if ty.is_byte() {
             out.line(format!("PB_CHECK(pb_write_bytes(pb_w, {}, {}));", place, len));
         } else {
             out.open("{");

@@ -4,7 +4,7 @@ use std::collections::HashSet;
 
 use super::expr::{Mark, TExpr};
 use crate::ast::Endianness;
-pub use crate::ast::Radix;
+pub use crate::ast::{Radix, TextEncoding, VarintKind};
 
 #[derive(Debug, Clone)]
 pub struct Module {
@@ -261,6 +261,8 @@ pub struct Member {
     pub checks: Vec<Check>,
     /// `lenient`: generated codecs do not enforce `checks`.
     pub lenient: bool,
+    /// For strings: how characters become bytes.
+    pub encoding: TextEncoding,
 }
 
 /// A declared check on a member's value. Decoding fails with a `constraint`
@@ -393,6 +395,15 @@ pub enum Count {
     Expr(TExpr),
     /// Repeat until the input is exhausted.
     Remaining,
+    /// Repeat until the expression (over `last`, the element just read)
+    /// holds, or the input ends; the element that ends it is kept.
+    Until(TExpr),
+    /// Bytes up to this sequence, which is consumed; `optional`: or up to
+    /// the end of the input.
+    Terminated {
+        term: Vec<u8>,
+        optional: bool,
+    },
 }
 
 /// How a single element travels on the wire.
@@ -414,6 +425,8 @@ pub enum Codec {
     Mac,
     Packet(String),
     Str(StrMode),
+    /// A variable-length integer.
+    Varint(VarintKind),
 }
 
 /// How a string's length is determined. For `Padded` and `Exact` the byte
@@ -428,6 +441,9 @@ pub enum StrMode {
     Prefixed { prefix: Box<Codec>, width: u32 },
     /// `cstring`: bytes up to a terminating NUL.
     CString,
+    /// `string term 0x0d 0x0a`: bytes up to a terminator, which is consumed;
+    /// `optional`: or up to the end of the input.
+    Terminated { term: Vec<u8>, optional: bool },
 }
 
 impl Codec {
@@ -437,7 +453,7 @@ impl Codec {
             Codec::Bits { width } => *width,
             Codec::Float { width, .. } => *width,
             Codec::Mac => 48,
-            Codec::Packet(_) | Codec::Str(_) => 0,
+            Codec::Packet(_) | Codec::Str(_) | Codec::Varint(_) => 0,
         }
     }
 
@@ -446,7 +462,7 @@ impl Codec {
     /// arrays are at least one byte (enforced by the analysis).
     pub fn min_elem_bits(&self) -> u64 {
         match self {
-            Codec::Packet(_) | Codec::Str(_) => 8,
+            Codec::Packet(_) | Codec::Str(_) | Codec::Varint(_) => 8,
             c => c.bits() as u64,
         }
     }

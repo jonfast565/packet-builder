@@ -125,10 +125,11 @@ fields. `//` starts a comment.
 | `uint8` `uint16` `uint32` `uint64`, `int8` ... `int64` | byte-aligned integers in the packet's (or field's) byte order |
 | `u1` ... `u64`, `i2` ... `i64` | **integers of any bit width**, read most-significant-bit first from the bit stream, with no alignment requirement |
 | `float32` `float64` | IEEE 754, byte aligned |
+| `uleb128` (alias `varint`), `sleb128`, `zigzag`, `vlq`, `quic_varint` | **variable-length integers**, see [Variable-length integers](#variable-length-integers) |
 | `macaddress` | 6 bytes |
 | `datetime` | 64-bit signed integer |
 | `bytes` | a byte buffer (always used with a length, or as the last field) |
-| `char[n]`, `string[n]`, `string(uint8)`, `cstring` | text, see [Strings](#strings) |
+| `char[n]`, `string[n]`, `string(uint8)`, `cstring`, `string term ...` | text, see [Strings](#strings) |
 | `OtherPacket` | another packet from the same file, decoded in place |
 
 C and assembly-style names are aliases for the types above:
@@ -195,11 +196,31 @@ boundary, and every packet must be a whole number of bytes. The checker tracks
 variable-length arrays too: `u12[n * 2]` is always a whole number of bytes,
 while `u12[n]` might not be.
 
+### Variable-length integers
+
+Variable-length integers take as many bytes as their value needs. They are
+byte aligned, hold up to 64 bits, and take no byte order.
+
+| type | encoding | used by |
+|------|----------|---------|
+| `uleb128`, `varint` | unsigned, 7 bits per byte, least significant group first, high bit = more | Protocol Buffers, DWARF, WebAssembly |
+| `sleb128` | the same, two's complement (sign taken from bit 6 of the last byte) | DWARF, WebAssembly |
+| `zigzag` | `uleb128` of the zigzag mapping (0, -1, 1, -2, ... to 0, 1, 2, 3, ...) | Protocol Buffers `sint64` |
+| `vlq` | unsigned, 7 bits per byte, most significant group first | MIDI, Git packfiles |
+| `quic_varint` | the top two bits of the first byte give the length (1, 2, 4 or 8 bytes) | QUIC (RFC 9000) |
+
+Decoding accepts non-minimal encodings and rejects values wider than 64
+bits (`invalid`); encoding always writes the shortest form, and a value
+above 2^62 - 1 in a `quic_varint` is a `range` error. A varint can be a
+derived field computed from values (`count varint = len(items)`), but not
+from the encoded bytes (`sizeof`, `offsetof`, checksums), because its own
+size would depend on the result.
+
 ### Strings
 
-Strings hold UTF-8 text. Invalid UTF-8 (including overlong forms and
-surrogates) is a decode error in every language, and strings that don't fit
-are encode errors.
+Strings hold Unicode text, UTF-8 unless the field names another encoding.
+Invalid text (including overlong forms and unpaired surrogates) is a decode
+error in every language, and strings that don't fit are encode errors.
 
 | syntax | on the wire | decode | encode |
 |--------|-------------|--------|--------|
@@ -207,6 +228,8 @@ are encode errors.
 | `name string[len]` | exactly `len` bytes | all of them | length must equal `len` |
 | `name string(uint8)` | a length (any unsigned integer type, e.g. `string(uint16 le)`), then the bytes | | the length is written from the string; error if it doesn't fit |
 | `name cstring` | bytes up to a NUL terminator | error if there's no terminator | NUL appended; error if the text contains NUL |
+| `name string term 0x0d 0x0a` | bytes up to a terminator of one or more bytes | error if there's no terminator | terminator appended; `invalid` error if the text contains it |
+| `name string term 0x00 optional` | the same, but the end of the input (or window) may stand in for the terminator | | terminator always appended |
 | `name string`, `name string[]` | the rest of the input (last field only) | | |
 
 ```
@@ -218,6 +241,28 @@ packet Login be {
   motd cstring
 }
 ```
+
+A text encoding after the length (or terminator) changes how the characters
+are stored; the value is still a native string in every language:
+
+| encoding | characters | on the wire |
+|----------|------------|-------------|
+| `utf8` | all (the default) | 1 to 4 bytes each |
+| `ascii` | U+0000 to U+007F | 1 byte each; a byte above 0x7F is a `text` error |
+| `latin1` | U+0000 to U+00FF | 1 byte each (ISO 8859-1) |
+| `utf16le`, `utf16be` | all | 2 bytes each, 4 for characters outside the BMP (surrogate pairs) |
+
+```
+packet Smb be {
+  share char[32] utf16le,        // 32 bytes, NUL-padded UTF-16
+  name string(uint8) latin1,     // the length counts bytes, not characters
+  banner string term 0x0d 0x0a ascii
+}
+```
+
+Lengths always count bytes. A character the encoding cannot hold is a
+`text` error when encoding. UTF-16 strings cannot use `cstring` or `term`,
+since their characters contain zero bytes.
 
 ### Alignment
 
@@ -244,6 +289,36 @@ Without any `align`, nothing is padded and fields follow each other exactly
 | `x uint16[count]`, `x bytes[length - 10]` | count from any integer expression over earlier fields |
 | `x Tlv[]`, `x bytes[]`, `x bytes` | repeat until the input ends (last field only); a trailing partial element is an error |
 | `x Opt[flag]` | an optional field: a count of 0 or 1 taken from a flag |
+| `x Opt[] until last.kind == 0` | repeat until a condition on the element just decoded holds (the element is kept), or the input or window ends |
+| `x uint8[] until last == 0` | the same for integer elements: `last` is the element itself |
+| `x bytes term 0xff` | bytes up to a terminator, like `string term` (also with `optional`) |
+
+`until` conditions are any boolean expression; `last` names the element
+just decoded, and earlier fields may be used too
+(`codes uint16[] until last == stop`). Encoding writes the elements as they
+are, so the last one should satisfy the condition. If the input (or the
+field's window) ends before the condition holds, the list ends there; TCP and
+IPv4 option lists end with END or with the space the header leaves them:
+
+```
+packet TcpOption be {
+  kind uint8 : TcpOptionKind,
+  body switch kind {
+    TcpOptionKind.end => end,
+    TcpOptionKind.nop => nop,
+    _ => data OptionData
+  }
+}
+
+packet Tcp be {
+  ...
+  data_offset u4 = offsetof(payload) / 4,
+  ...
+  options TcpOption[] until last.kind == TcpOptionKind.end size data_offset * 4 - 20,
+  align 4,
+  payload bytes[]
+}
+```
 
 `uint8` arrays and `bytes` are byte buffers in every language. Strings are
 native strings (`String`, `string`, `str`; `[]const u8` in Zig; in C a

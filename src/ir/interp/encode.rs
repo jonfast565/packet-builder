@@ -7,7 +7,7 @@ use super::{check, checked_members, intern, pad};
 use crate::ast::Endianness;
 use std::collections::HashMap;
 
-use crate::ir::{BitPart, Codec, Count, Mark, Module, Packet, Step, StrMode, ValueType};
+use crate::ir::{BitPart, Codec, Count, Mark, Module, Packet, Step, StrMode, TextEncoding, ValueType};
 
 /// Encode `value`, a packet named `name`. Members missing from the value
 /// count as zero.
@@ -96,7 +96,7 @@ impl Encoder<'_> {
             let v = {
                 let wr: &PbWriter = w;
                 let sum = |a, f, t, hf, ht| wr.checksum(a, f, t, hf, ht);
-                eval(e, &Env { values: &values, marks: Some(&marks), checksum: Some(&sum) }).int()
+                eval(e, &Env { values: &values, marks: Some(&marks), checksum: Some(&sum), last: None }).int()
             };
             values[mi] = Value::Int(v as i128);
             for c in m.enforced_checks() {
@@ -148,13 +148,16 @@ impl Encoder<'_> {
                     a => a.clone(),
                 };
                 match (member, codec) {
-                    (Some(mi), Codec::Str(mode)) => self.string(values, &values[*mi], mode, array.as_ref(), w),
+                    (Some(mi), Codec::Str(mode)) => {
+                        let enc = p.members[*mi].encoding;
+                        self.string(values, &values[*mi], mode, array.as_ref(), enc, w)
+                    }
                     (None, codec) => {
                         let bits = codec.bits() as usize;
                         match array {
                             None => w.write_zero_bits(bits),
                             Some(Count::Expr(e)) => w.write_zero_bits(self.expr(values, e).max(0) as usize * bits),
-                            Some(Count::Remaining) => {}
+                            Some(Count::Remaining | Count::Until(_) | Count::Terminated { .. }) => {}
                         }
                         Ok(())
                     }
@@ -235,6 +238,10 @@ impl Encoder<'_> {
                     w.write_uint(f.to_bits(), 8, little(endian));
                 }
             }
+            Codec::Varint(kind) => {
+                let raw = int_bits(ty, v, w)?;
+                w.write_varint(kind.id(), raw)?;
+            }
             Codec::Mac => match v {
                 Value::Bytes(b) if b.len() == 6 => w.write_bytes(b),
                 _ => return Err(w.error(PbErrorKind::Range, "a MAC address needs 6 bytes".into())),
@@ -270,6 +277,13 @@ impl Encoder<'_> {
         if let Count::Expr(e) = count {
             w.check_len(items.len(), self.expr(values, e))?;
         }
+        if let Count::Terminated { term, .. } = count {
+            let b: Vec<u8> = items.iter().map(|x| if let Value::Int(i) = x { *i as u8 } else { 0 }).collect();
+            w.check_no_term(&b, term)?;
+            w.write_bytes(&b);
+            w.write_bytes(term);
+            return Ok(());
+        }
         for (i, item) in items.iter().enumerate() {
             w.at_index(i);
             self.elem(codec, ty, item, w)?;
@@ -277,24 +291,32 @@ impl Encoder<'_> {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn string(
         &self,
         values: &[Value],
         v: &Value,
         mode: &StrMode,
         array: Option<&Count>,
+        enc: TextEncoding,
         w: &mut PbWriter,
     ) -> Result<(), PbError> {
         let text = match v {
             Value::Str(s) => s.clone(),
             _ => String::new(),
         };
-        let b = text.as_bytes();
+        let encoded = w.text(&text, enc.id())?;
+        let b = encoded.as_slice();
         match (mode, array) {
             (StrMode::CString, _) => {
                 w.check_no_nul(b)?;
                 w.write_bytes(b);
                 w.write_bytes(&[0]);
+            }
+            (StrMode::Terminated { term, .. }, _) => {
+                w.check_no_term(b, term)?;
+                w.write_bytes(b);
+                w.write_bytes(term);
             }
             (StrMode::Prefixed { prefix, width }, _) => {
                 w.check_u(b.len() as u64, *width)?;

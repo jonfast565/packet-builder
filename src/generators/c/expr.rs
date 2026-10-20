@@ -115,6 +115,14 @@ impl ExprLang for Scope<'_, C> {
         format!("((int64_t){}({}, {}, {}, {}, {}, {}))", f, rw, algo.id(), from, to, hf, ht)
     }
 
+    fn last(&self, field: Option<(&str, &str)>, ty: Ty) -> String {
+        let t = if ty == Ty::Float { "double" } else { "int64_t" };
+        match field {
+            Some((_, f)) => format!("(({})pb_last->{})", t, super::naming::ident(f)),
+            None => format!("(({})*pb_last)", t),
+        }
+    }
+
     fn convert(&self, e: String, from: Ty, to: Ty) -> String {
         match (from, to) {
             (Ty::Bool, Ty::Int) => format!("((int64_t)({}))", e),

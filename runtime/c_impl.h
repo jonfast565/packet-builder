@@ -266,6 +266,148 @@ PB_FN int pb_read_ctext(pb_reader *r, char **out, size_t *out_len) {
     return rc;
 }
 
+/* One variable-length integer (kind: 0 uleb128, 1 sleb128, 2 zigzag, 3 vlq,
+ * 4 quic); signed kinds give the two's complement bits. */
+PB_FN int pb_read_varint(pb_reader *r, unsigned kind, uint64_t *out) {
+    uint64_t v = 0, b;
+    unsigned shift = 0;
+    if (kind == 4) {
+        unsigned n;
+        PB_PASS(pb_read_uint(r, 1, 0, &b));
+        n = 1u << (b >> 6);
+        v = b & 0x3f;
+        if (n > 1) {
+            uint64_t rest;
+            PB_PASS(pb_read_uint(r, n - 1, 0, &rest));
+            v = (v << (8 * (n - 1))) | rest;
+        }
+        *out = v;
+        return PB_OK;
+    }
+    for (;;) {
+        PB_PASS(pb_read_uint(r, 1, 0, &b));
+        if (kind == 3) {
+            if (v >> 57) return PB_ERR_INVALID;
+            v = (v << 7) | (b & 0x7f);
+        } else {
+            /* The 10th byte holds bit 63 only (and, for sleb128, its sign). */
+            int last_ok = kind == 1 ? ((b & 0x7f) == 0 || (b & 0x7f) == 0x7f) : (b & 0x7e) == 0;
+            if (shift >= 64 || (shift == 63 && ((b & 0x80) || !last_ok))) return PB_ERR_INVALID;
+            v |= (b & 0x7f) << shift;
+        }
+        shift += 7;
+        if (!(b & 0x80)) {
+            if (kind == 1 && shift < 64 && (b & 0x40)) v |= ~(uint64_t)0 << shift;
+            break;
+        }
+    }
+    if (kind == 2) v = (v >> 1) ^ (0 - (v & 1));
+    *out = v;
+    return PB_OK;
+}
+
+/* Bytes up to `term` (consumed) into a new allocation. Without it: the rest
+ * of the input when `optional`, otherwise an error. */
+PB_FN int pb_read_until(pb_reader *r, const uint8_t *term, size_t tlen, int optional, uint8_t **out, size_t *out_len) {
+    size_t start = r->pos >> 3, end = r->limit >> 3, i, n = 0;
+    int found = 0;
+    for (i = start; i + tlen <= end; i++) {
+        if (memcmp(r->data + i, term, tlen) == 0) {
+            found = 1;
+            n = i - start;
+            break;
+        }
+    }
+    if (!found) {
+        if (!optional) return pb_short(r, pb_remaining_bits(r) + 8);
+        n = end - start;
+    }
+    *out = (uint8_t *)malloc(n ? n : 1);
+    if (!*out) return PB_ERR_NOMEM;
+    if (n) memcpy(*out, r->data + start, n);
+    *out_len = n;
+    r->pos = (start + n + (found ? tlen : 0)) * 8;
+    return PB_OK;
+}
+
+/* Append code point `cp` to a UTF-8 buffer. */
+static size_t pb_put_utf8(uint8_t *o, uint32_t cp) {
+    if (cp < 0x80) { o[0] = (uint8_t)cp; return 1; }
+    if (cp < 0x800) { o[0] = (uint8_t)(0xC0 | (cp >> 6)); o[1] = (uint8_t)(0x80 | (cp & 0x3F)); return 2; }
+    if (cp < 0x10000) {
+        o[0] = (uint8_t)(0xE0 | (cp >> 12)); o[1] = (uint8_t)(0x80 | ((cp >> 6) & 0x3F)); o[2] = (uint8_t)(0x80 | (cp & 0x3F));
+        return 3;
+    }
+    o[0] = (uint8_t)(0xF0 | (cp >> 18)); o[1] = (uint8_t)(0x80 | ((cp >> 12) & 0x3F));
+    o[2] = (uint8_t)(0x80 | ((cp >> 6) & 0x3F)); o[3] = (uint8_t)(0x80 | (cp & 0x3F));
+    return 4;
+}
+
+/* Text in encoding `enc` (0 UTF-8, 1 ASCII, 2 Latin-1, 3 UTF-16LE,
+ * 4 UTF-16BE) as a new NUL-terminated UTF-8 string; with `padded`, the text
+ * ends at the first NUL character. */
+PB_FN int pb_convert_text(const uint8_t *src, size_t n, unsigned enc, int padded, char **out, size_t *out_len) {
+    uint8_t *o;
+    size_t i, k = 0;
+    if (enc <= 2) {
+        if (padded) {
+            const uint8_t *nul = n ? (const uint8_t *)memchr(src, 0, n) : NULL;
+            if (nul) n = (size_t)(nul - src);
+        }
+        if (enc == 0) return pb_text(src, n, 0, out, out_len);
+        o = (uint8_t *)malloc(n * 2 + 1);
+        if (!o) return PB_ERR_NOMEM;
+        for (i = 0; i < n; i++) {
+            if (enc == 1 && src[i] >= 0x80) { free(o); return PB_ERR_TEXT; }
+            k += pb_put_utf8(o + k, src[i]);
+        }
+    } else {
+        if (n % 2) return PB_ERR_TEXT;
+        o = (uint8_t *)malloc(n * 2 + 1);
+        if (!o) return PB_ERR_NOMEM;
+        for (i = 0; i + 1 < n; i += 2) {
+            uint32_t u = enc == 3 ? (uint32_t)(src[i] | (src[i + 1] << 8)) : (uint32_t)((src[i] << 8) | src[i + 1]);
+            if (u == 0 && padded) break;
+            if (u >= 0xD800 && u <= 0xDBFF) {
+                uint32_t lo;
+                if (i + 3 >= n) { free(o); return PB_ERR_TEXT; }
+                lo = enc == 3 ? (uint32_t)(src[i + 2] | (src[i + 3] << 8)) : (uint32_t)((src[i + 2] << 8) | src[i + 3]);
+                if (lo < 0xDC00 || lo > 0xDFFF) { free(o); return PB_ERR_TEXT; }
+                u = 0x10000 + ((u - 0xD800) << 10) + (lo - 0xDC00);
+                i += 2;
+            } else if (u >= 0xDC00 && u <= 0xDFFF) {
+                free(o);
+                return PB_ERR_TEXT;
+            }
+            k += pb_put_utf8(o + k, u);
+        }
+    }
+    o[k] = 0;
+    *out = (char *)o;
+    *out_len = k;
+    return PB_OK;
+}
+
+/* n bytes of text in encoding `enc` (see pb_convert_text). */
+PB_FN int pb_read_text_enc(pb_reader *r, size_t n, int padded, unsigned enc, char **out, size_t *out_len) {
+    int rc;
+    if (n > pb_remaining_bits(r) / 8) return pb_short(r, n * 8);
+    rc = pb_convert_text(r->data + (r->pos >> 3), n, enc, padded, out, out_len);
+    if (rc == PB_OK) r->pos += n * 8;
+    return rc;
+}
+
+/* Text up to `term` in encoding `enc`. */
+PB_FN int pb_read_text_until(pb_reader *r, const uint8_t *term, size_t tlen, int optional, unsigned enc, char **out, size_t *out_len) {
+    uint8_t *raw;
+    size_t n;
+    int rc = pb_read_until(r, term, tlen, optional, &raw, &n);
+    if (rc != PB_OK) return rc;
+    rc = pb_convert_text(raw, n, enc, 0, out, out_len);
+    free(raw);
+    return rc;
+}
+
 /* Validate a decoded element count against the data that is left. */
 PB_FN int pb_count(pb_reader *r, int64_t n, uint64_t elem_bits, size_t *out) {
     if (n < 0) return PB_ERR_INVALID;
@@ -448,6 +590,99 @@ PB_FN uint64_t pb_reader_checksum(const pb_reader *r, unsigned algo, size_t from
 
 PB_FN uint64_t pb_writer_checksum(const pb_writer *w, unsigned algo, size_t from, size_t to, size_t hole_from, size_t hole_to) {
     return pb_checksum(algo, w->buf, from / 8, to / 8, hole_from / 8, hole_to / 8);
+}
+
+/* One variable-length integer (see pb_read_varint). */
+PB_FN int pb_write_varint(pb_writer *w, unsigned kind, uint64_t v) {
+    if (kind == 4) {
+        unsigned n = v <= 0x3f ? 1 : v <= 0x3fff ? 2 : v <= 0x3fffffffu ? 4 : 8, code = n == 1 ? 0 : n == 2 ? 1 : n == 4 ? 2 : 3;
+        if (v > 0x3fffffffffffffffULL) return PB_ERR_RANGE;
+        return pb_write_uint(w, v | ((uint64_t)code << (8 * n - 2)), n, 0);
+    }
+    if (kind == 1) {
+        int64_t x = (int64_t)v;
+        for (;;) {
+            uint64_t b = (uint64_t)x & 0x7f;
+            int done;
+            x = x < 0 ? (int64_t)~(~(uint64_t)x >> 7) : (int64_t)((uint64_t)x >> 7);
+            done = (x == 0 && !(b & 0x40)) || (x == -1 && (b & 0x40));
+            PB_PASS(pb_write_uint(w, done ? b : b | 0x80, 1, 0));
+            if (done) return PB_OK;
+        }
+    }
+    if (kind == 3) {
+        uint8_t g[10];
+        int k = 0;
+        g[k++] = (uint8_t)(v & 0x7f);
+        for (v >>= 7; v; v >>= 7) g[k++] = (uint8_t)((v & 0x7f) | 0x80);
+        while (k > 0) PB_PASS(pb_write_uint(w, g[--k], 1, 0));
+        return PB_OK;
+    }
+    if (kind == 2) v = (v << 1) ^ (0 - (v >> 63));
+    do {
+        uint64_t b = v & 0x7f;
+        v >>= 7;
+        PB_PASS(pb_write_uint(w, v ? b | 0x80 : b, 1, 0));
+    } while (v);
+    return PB_OK;
+}
+
+/* Decode one UTF-8 code point at s[*i] (the text is validated first). */
+static uint32_t pb_next_utf8(const uint8_t *s, size_t *i) {
+    uint8_t c = s[*i];
+    uint32_t cp;
+    size_t len, k;
+    if (c < 0x80) { (*i)++; return c; }
+    len = c >= 0xF0 ? 4 : c >= 0xE0 ? 3 : 2;
+    cp = c & (len == 2 ? 0x1F : len == 3 ? 0x0F : 0x07);
+    for (k = 1; k < len; k++) cp = (cp << 6) | (s[*i + k] & 0x3F);
+    *i += len;
+    return cp;
+}
+
+/* The size in bytes of UTF-8 text `s` in encoding `enc`; an error if a
+ * character has no encoding there. */
+PB_FN int pb_text_size(const char *s, size_t len, unsigned enc, size_t *size) {
+    size_t i = 0, n = 0;
+    if (len && !s) return PB_ERR_TEXT;
+    if (!pb_utf8_valid((const uint8_t *)s, len)) return PB_ERR_TEXT;
+    if (enc == 0) { *size = len; return PB_OK; }
+    while (i < len) {
+        uint32_t cp = pb_next_utf8((const uint8_t *)s, &i);
+        if (enc == 1 && cp > 0x7f) return PB_ERR_TEXT;
+        if (enc == 2 && cp > 0xff) return PB_ERR_TEXT;
+        n += enc <= 2 ? 1 : cp >= 0x10000 ? 4 : 2;
+    }
+    *size = n;
+    return PB_OK;
+}
+
+/* Write UTF-8 text `s` in encoding `enc` (validated by pb_text_size). */
+PB_FN int pb_write_text(pb_writer *w, const char *s, size_t len, unsigned enc) {
+    size_t i = 0;
+    if (enc == 0) return pb_write_bytes(w, (const uint8_t *)s, len);
+    while (i < len) {
+        uint32_t cp = pb_next_utf8((const uint8_t *)s, &i);
+        if (enc <= 2) {
+            PB_PASS(pb_write_uint(w, cp, 1, 0));
+        } else if (cp >= 0x10000) {
+            cp -= 0x10000;
+            PB_PASS(pb_write_uint(w, 0xD800 + (cp >> 10), 2, enc == 3));
+            PB_PASS(pb_write_uint(w, 0xDC00 + (cp & 0x3FF), 2, enc == 3));
+        } else {
+            PB_PASS(pb_write_uint(w, cp, 2, enc == 3));
+        }
+    }
+    return PB_OK;
+}
+
+/* The bytes written since bit `from` must not contain the terminator. */
+PB_FN int pb_check_no_term(const pb_writer *w, size_t from, const uint8_t *term, size_t tlen) {
+    size_t i, end = w->pos >> 3;
+    for (i = from >> 3; i + tlen <= end; i++) {
+        if (memcmp(w->buf + i, term, tlen) == 0) return PB_ERR_INVALID;
+    }
+    return PB_OK;
 }
 
 PB_FN int pb_check_fits(size_t len, int64_t size) {

@@ -1,11 +1,12 @@
 //! Go encoder statements. Like decoding, the writer records the first error.
 
+use super::decode::byte_list;
 use super::expr::store_value;
 use super::naming::{Go, field_name};
 use super::packet::arm_kind;
 use crate::generators::common::union::{C_LOGIC, arm_test, mismatch_message, uses_selector, variant_name};
 use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mark_var, mask, string_literal};
-use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, ValueType};
+use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, TextEncoding, ValueType};
 
 fn write_elem(out: &mut Out, codec: &Codec, ty: &ValueType, v: &str) {
     if let ValueType::Int { width, signed } = ty
@@ -29,6 +30,7 @@ fn write_elem(out: &mut Out, codec: &Codec, ty: &ValueType, v: &str) {
             out.line(format!("pbW.WriteUint(math.Float64bits({}), 8, {})", v, Go::little(endian)))
         }
         Codec::Mac => out.line(format!("pbW.WriteBytes({}[:])", v)),
+        Codec::Varint(k) => out.line(format!("pbW.WriteVarint({}, uint64({}))", k.id(), v)),
         Codec::Packet(_) => out.line(format!("{}.EncodeTo(pbW)", v)),
         Codec::Str(_) => unreachable!("strings are handled by Encoder::string"),
     }
@@ -155,6 +157,8 @@ impl StepEmitter for Encoder<'_> {
             (Codec::Bits { width }, Some(at)) => {
                 out.line(format!("pbW.PatchBits({}, uint64({}), {})", mark_var(at), v, width))
             }
+            // Varints are never patched (rejected by the analysis).
+            (Codec::Varint(k), None) => out.line(format!("pbW.WriteVarint({}, uint64({}))", k.id(), v)),
             _ => unreachable!("derived fields are integers"),
         }
     }
@@ -166,12 +170,21 @@ impl StepEmitter for Encoder<'_> {
     fn string(&self, out: &mut Out, m: &Member, mode: &StrMode, array: Option<&Count>) {
         out.open("{");
         out.line(format!("pbW.CheckUTF8(p.{})", field_name(&m.name)));
-        out.line(format!("pbB := []byte(p.{})", field_name(&m.name)));
+        if m.encoding == TextEncoding::Utf8 {
+            out.line(format!("pbB := []byte(p.{})", field_name(&m.name)));
+        } else {
+            out.line(format!("pbB := pbW.EncodeText(p.{}, {})", field_name(&m.name), m.encoding.id()));
+        }
         match (mode, array) {
             (StrMode::CString, _) => {
                 out.line("pbW.CheckNoNul(pbB)");
                 out.line("pbW.WriteBytes(pbB)");
                 out.line("pbW.WriteBytes([]byte{0})");
+            }
+            (StrMode::Terminated { term, .. }, _) => {
+                out.line(format!("pbW.CheckNoTerm(pbB, {})", byte_list(term)));
+                out.line("pbW.WriteBytes(pbB)");
+                out.line(format!("pbW.WriteBytes({})", byte_list(term)));
             }
             (StrMode::Prefixed { prefix, width }, _) => {
                 out.line(format!("pbW.CheckU(uint64(len(pbB)), {})", width));
@@ -198,7 +211,7 @@ impl StepEmitter for Encoder<'_> {
         match array {
             None => out.line(format!("pbW.WriteZeroBits({})", bits)),
             Some(Count::Expr(e)) => out.line(format!("pbW.WriteZeroBits(pbMax({}, 0) * {})", self.scope.expr(e), bits)),
-            Some(Count::Remaining) => {}
+            Some(Count::Remaining | Count::Until(_) | Count::Terminated { .. }) => {}
         }
     }
 
@@ -213,7 +226,11 @@ impl StepEmitter for Encoder<'_> {
         {
             out.line(format!("pbW.CheckLen(len({}), {})", place, self.scope.expr(e)));
         }
-        if ty.is_byte() {
+        if let Count::Terminated { term, .. } = count {
+            out.line(format!("pbW.CheckNoTerm({}, {})", place, byte_list(term)));
+            out.line(format!("pbW.WriteBytes({})", place));
+            out.line(format!("pbW.WriteBytes({})", byte_list(term)));
+        } else if ty.is_byte() {
             out.line(format!("pbW.WriteBytes({})", place));
         } else {
             out.open(format!("for pbI := range {} {{", place));

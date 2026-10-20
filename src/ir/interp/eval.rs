@@ -48,11 +48,13 @@ pub struct Env<'a> {
     pub values: &'a [Value],
     pub marks: Option<&'a HashMap<Mark, usize>>,
     pub checksum: Option<ChecksumFn<'a>>,
+    /// In an `until` condition: the element just read.
+    pub last: Option<&'a Value>,
 }
 
 impl<'a> Env<'a> {
     pub fn new(values: &'a [Value]) -> Self {
-        Env { values, marks: None, checksum: None }
+        Env { values, marks: None, checksum: None, last: None }
     }
 
     fn mark(&self, m: Mark) -> usize {
@@ -177,6 +179,14 @@ pub fn eval(e: &TExpr, env: &Env) -> Ev {
                 Ty::Float => Ev::F(v.float()),
                 Ty::Bool => Ev::B(v.bool()),
             }
+        }
+        TExpr::Last { field, ty } => {
+            let v = match (env.last, field) {
+                (Some(Value::Struct(s)), Some((_, name))) => s.get(name),
+                (v, None) => v,
+                _ => None,
+            };
+            v.map(|v| scalar(v, *ty)).unwrap_or(if *ty == Ty::Float { Ev::F(0.0) } else { Ev::I(0) })
         }
         TExpr::Len { member } => Ev::I(match &env.values[*member] {
             Value::List(items) => items.len(),

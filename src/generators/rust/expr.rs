@@ -86,6 +86,14 @@ impl ExprLang for Scope<'_, Rust> {
         }
     }
 
+    fn last(&self, field: Option<(&str, &str)>, ty: Ty) -> String {
+        let t = if ty == Ty::Float { "f64" } else { "i64" };
+        match field {
+            Some((_, f)) => format!("(pb_last.{} as {})", super::naming::ident(f), t),
+            None => format!("(pb_last as {})", t),
+        }
+    }
+
     fn len(&self, member: usize) -> String {
         format!("({}.len() as i64)", self.place(member))
     }

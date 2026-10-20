@@ -57,6 +57,15 @@ impl<'a> Ctx<'a> {
                 self.diags.push(Diagnostic::new(format!("`{}` cannot have a string type here", name), span));
                 Codec::Bytes { nbytes: 1, endian }
             }
+            TypeNode::Varint(kind) => {
+                if !aligned {
+                    misaligned(self, "variable-length integers");
+                }
+                if explicit {
+                    self.diags.push(Diagnostic::new(format!("varint `{}` cannot have a byte order", name), span));
+                }
+                Codec::Varint(*kind)
+            }
             TypeNode::Bits { width, .. } => {
                 if aligned && width % 8 == 0 {
                     Codec::Bytes { nbytes: width / 8, endian }
@@ -100,6 +109,14 @@ impl<'a> Ctx<'a> {
             self.diags.push(Diagnostic::new(format!("string `{}` cannot have a byte order", f.id), f.span));
         }
         match &f.expr {
+            TypeNode::CStr | TypeNode::Str if f.term.is_some() => {
+                let (bytes, optional) = f.term.clone().unwrap_or_default();
+                let term: Vec<u8> = bytes.iter().filter(|b| **b <= 255).map(|b| *b as u8).collect();
+                if term.is_empty() {
+                    self.diags.push(Diagnostic::new(format!("the terminator of `{}` is empty", f.id), f.span));
+                }
+                Codec::Str(StrMode::Terminated { term, optional })
+            }
             TypeNode::Char => Codec::Str(StrMode::Padded),
             TypeNode::Str => Codec::Str(StrMode::Exact),
             TypeNode::CStr | TypeNode::PrefixedStr { .. } if f.array.is_some() => {

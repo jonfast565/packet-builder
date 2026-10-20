@@ -90,6 +90,14 @@ impl ExprLang for Scope<'_, CSharp> {
         format!("unchecked((long){}.Checksum({}, {}, {}, {}, {}))", rw, algo.id(), from, to, hf, ht)
     }
 
+    fn last(&self, field: Option<(&str, &str)>, ty: Ty) -> String {
+        let t = if ty == Ty::Float { "double" } else { "long" };
+        match field {
+            Some((packet, f)) => format!("(({})pbLast.{})", t, super::naming::prop_name(packet, f)),
+            None => format!("(({})pbLast)", t),
+        }
+    }
+
     fn convert(&self, e: String, from: Ty, to: Ty) -> String {
         match (from, to) {
             (Ty::Bool, Ty::Int) => format!("({} ? 1L : 0L)", e),

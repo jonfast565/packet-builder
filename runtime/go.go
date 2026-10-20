@@ -301,6 +301,126 @@ func (r *PbReader) Text(raw []byte, untilNul bool) string {
 	return string(raw)
 }
 
+// TextEnc decodes raw in encoding enc (0 UTF-8, 1 ASCII, 2 Latin-1,
+// 3 UTF-16LE, 4 UTF-16BE); padded cuts it at the first NUL character.
+func (r *PbReader) TextEnc(raw []byte, enc int, padded bool) string {
+	if enc == 0 {
+		return r.Text(raw, padded)
+	}
+	var sb strings.Builder
+	if enc <= 2 {
+		for _, b := range raw {
+			if b == 0 && padded {
+				break
+			}
+			if enc == 1 && b >= 0x80 {
+				r.Fail(PbText, "invalid ASCII")
+				return ""
+			}
+			sb.WriteRune(rune(b))
+		}
+		return sb.String()
+	}
+	if len(raw)%2 != 0 {
+		r.Fail(PbText, "invalid UTF-16 (an odd number of bytes)")
+		return ""
+	}
+	unit := func(i int) rune {
+		if enc == 3 {
+			return rune(raw[i]) | rune(raw[i+1])<<8
+		}
+		return rune(raw[i])<<8 | rune(raw[i+1])
+	}
+	for i := 0; i < len(raw); i += 2 {
+		u := unit(i)
+		if u == 0 && padded {
+			break
+		}
+		if u >= 0xD800 && u <= 0xDBFF && i+3 < len(raw) {
+			if lo := unit(i + 2); lo >= 0xDC00 && lo <= 0xDFFF {
+				sb.WriteRune(0x10000 + (u-0xD800)<<10 + (lo - 0xDC00))
+				i += 2
+				continue
+			}
+		}
+		if u >= 0xD800 && u <= 0xDFFF {
+			r.Fail(PbText, "invalid UTF-16")
+			return ""
+		}
+		sb.WriteRune(u)
+	}
+	return sb.String()
+}
+
+// ReadVarint reads one variable-length integer (kind: 0 uleb128, 1 sleb128,
+// 2 zigzag, 3 vlq, 4 quic); signed kinds return the two's complement bits.
+func (r *PbReader) ReadVarint(kind int) uint64 {
+	if kind == 4 {
+		first := r.ReadUint(1, false)
+		n := 1 << (first >> 6)
+		v := first & 0x3f
+		if n > 1 {
+			v = v<<(8*uint(n-1)) | r.ReadUint(n-1, false)
+		}
+		return v
+	}
+	var v uint64
+	shift := 0
+	for r.err == nil {
+		b := r.ReadUint(1, false)
+		if kind == 3 {
+			if v>>57 != 0 {
+				r.Fail(PbInvalid, "the varint does not fit in 64 bits")
+				return 0
+			}
+			v = v<<7 | b&0x7f
+		} else {
+			// The 10th byte holds bit 63 only (and, for sleb128, its sign).
+			lastOK := b&0x7e == 0
+			if kind == 1 {
+				lastOK = b&0x7f == 0 || b&0x7f == 0x7f
+			}
+			if shift >= 64 || (shift == 63 && (b&0x80 != 0 || !lastOK)) {
+				r.Fail(PbInvalid, "the varint does not fit in 64 bits")
+				return 0
+			}
+			v |= (b & 0x7f) << uint(shift)
+		}
+		shift += 7
+		if b&0x80 == 0 {
+			if kind == 1 && shift < 64 && b&0x40 != 0 {
+				v |= ^uint64(0) << uint(shift)
+			}
+			break
+		}
+	}
+	if kind == 2 {
+		v = v>>1 ^ -(v & 1)
+	}
+	return v
+}
+
+// ReadUntil returns the bytes before term and consumes both. Without the
+// terminator it returns the rest of the input when optional, else fails.
+func (r *PbReader) ReadUntil(term []byte, optional bool) []byte {
+	if r.err != nil {
+		return []byte{}
+	}
+	start, end := r.pos>>3, r.limit>>3
+	for i := start; i+len(term) <= end; i++ {
+		if string(r.data[i:i+len(term)]) == string(term) {
+			r.pos = (i + len(term)) * 8
+			return append([]byte{}, r.data[start:i]...)
+		}
+	}
+	if !optional {
+		r.short(r.RemainingBits()+8, "the terminated field")
+		return []byte{}
+	}
+	r.pos = r.limit
+	return append([]byte{}, r.data[start:end]...)
+}
+
 // Count validates a decoded element count against the data that is left.
 func (r *PbReader) Count(n int64, elemBits int) int {
 	if r.err != nil {
@@ -378,6 +498,102 @@ func (w *PbWriter) CheckNoNul(data []byte) {
 		if b == 0 {
 			w.Fail(PbText, "the string contains a NUL byte")
 			return
+		}
+	}
+}
+
+// CheckNoTerm fails if a terminated value contains its terminator.
+func (w *PbWriter) CheckNoTerm(data, term []byte) {
+	for i := 0; i+len(term) <= len(data); i++ {
+		if string(data[i:i+len(term)]) == string(term) {
+			w.Fail(PbInvalid, "the value contains its terminator")
+			return
+		}
+	}
+}
+
+// EncodeText encodes s in encoding enc (see PbReader.TextEnc).
+func (w *PbWriter) EncodeText(s string, enc int) []byte {
+	if enc == 0 {
+		return []byte(s)
+	}
+	out := []byte{}
+	for _, c := range s {
+		switch {
+		case enc == 1 && c > 0x7f:
+			w.Fail(PbText, "%q is not ASCII", c)
+			return out
+		case enc == 2 && c > 0xff:
+			w.Fail(PbText, "%q is not Latin-1", c)
+			return out
+		case enc <= 2:
+			out = append(out, byte(c))
+		default:
+			units := []rune{c}
+			if c >= 0x10000 {
+				c -= 0x10000
+				units = []rune{0xD800 + c>>10, 0xDC00 + c&0x3FF}
+			}
+			for _, u := range units {
+				if enc == 3 {
+					out = append(out, byte(u), byte(u>>8))
+				} else {
+					out = append(out, byte(u>>8), byte(u))
+				}
+			}
+		}
+	}
+	return out
+}
+
+// WriteVarint writes one variable-length integer (see PbReader.ReadVarint).
+func (w *PbWriter) WriteVarint(kind int, v uint64) {
+	switch kind {
+	case 4:
+		switch {
+		case v <= 0x3f:
+			w.WriteUint(v, 1, false)
+		case v <= 0x3fff:
+			w.WriteUint(v|1<<14, 2, false)
+		case v <= 0x3fffffff:
+			w.WriteUint(v|2<<30, 4, false)
+		case v <= 0x3fffffffffffffff:
+			w.WriteUint(v|3<<62, 8, false)
+		default:
+			w.Fail(PbRange, "%d does not fit in a QUIC varint", v)
+		}
+	case 1:
+		x := int64(v)
+		for {
+			b := uint64(x & 0x7f)
+			x >>= 7
+			done := (x == 0 && b&0x40 == 0) || (x == -1 && b&0x40 != 0)
+			if done {
+				w.WriteUint(b, 1, false)
+				return
+			}
+			w.WriteUint(b|0x80, 1, false)
+		}
+	case 3:
+		groups := []uint64{v & 0x7f}
+		for v >>= 7; v != 0; v >>= 7 {
+			groups = append(groups, v&0x7f|0x80)
+		}
+		for i := len(groups) - 1; i >= 0; i-- {
+			w.WriteUint(groups[i], 1, false)
+		}
+	default:
+		if kind == 2 {
+			v = v<<1 ^ uint64(int64(v)>>63)
+		}
+		for {
+			b := v & 0x7f
+			v >>= 7
+			if v == 0 {
+				w.WriteUint(b, 1, false)
+				return
+			}
+			w.WriteUint(b|0x80, 1, false)
 		}
 	}
 }

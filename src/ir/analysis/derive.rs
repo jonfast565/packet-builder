@@ -223,6 +223,20 @@ impl PacketBuilder<'_> {
             }
         };
 
+        // A varint's size depends on its value, so it cannot be patched.
+        for &m in &patched {
+            if steps
+                .iter()
+                .any(|s| matches!(s, Step::Field { member: Some(x), codec: Codec::Varint(_), .. } if *x == m))
+            {
+                let name = members[m].name.clone();
+                self.ctx.diags.push(
+                    Diagnostic::new(format!("varint `{}` cannot be derived from the encoded bytes", name), span)
+                        .with_note("its size depends on its value; use a fixed-size integer"),
+                );
+            }
+        }
+
         // Values encoding computes up front: calculated members something
         // needs, and derived members that only depend on values.
         let wire_dep = |e: &TExpr| {

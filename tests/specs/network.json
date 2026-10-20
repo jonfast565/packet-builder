@@ -20,7 +20,7 @@
         "checksum": 47276,
         "source": "c0a80001",
         "destination": "c0a800c7",
-        "options": "",
+        "options": [],
         "payload": {
           "kind": "udp",
           "value": {
@@ -54,7 +54,7 @@
         "checksum": 47283,
         "source": "c0a80001",
         "destination": "c0a800c7",
-        "options": "",
+        "options": [],
         "payload": {
           "kind": "tcp",
           "value": {
@@ -75,7 +75,18 @@
             "window": 64240,
             "checksum": 7238,
             "urgent_pointer": 0,
-            "options": "020405b4",
+            "options": [
+              {
+                "kind": 2,
+                "body": {
+                  "kind": "data",
+                  "value": {
+                    "length": 4,
+                    "data": "05b4"
+                  }
+                }
+              }
+            ],
             "payload": ""
           }
         },
@@ -102,7 +113,18 @@
         "checksum": 11888,
         "source": "0a000001",
         "destination": "0a000002",
-        "options": "94040000",
+        "options": [
+          {
+            "kind": 148,
+            "body": {
+              "kind": "data",
+              "value": {
+                "length": 4,
+                "data": "0000"
+              }
+            }
+          }
+        ],
         "payload": {
           "kind": "other",
           "value": "0102030405060708"
@@ -157,8 +179,54 @@
         "window": 64240,
         "checksum": 7238,
         "urgent_pointer": 0,
-        "options": "020405b4",
+        "options": [
+          {
+            "kind": 2,
+            "body": {
+              "kind": "data",
+              "value": {
+                "length": 4,
+                "data": "05b4"
+              }
+            }
+          }
+        ],
         "payload": ""
+      }
+    },
+    {
+      "name": "TCP options end with END, then padding",
+      "packet": "Tcp",
+      "hex": "c001005012345678000000007002faf01c460000020405b401000000aabb",
+      "expect": {
+        "data_offset": 7,
+        "options": [
+          {
+            "kind": 2,
+            "body": {
+              "kind": "data",
+              "value": {
+                "length": 4,
+                "data": "05b4"
+              }
+            }
+          },
+          {
+            "kind": 1,
+            "body": {
+              "kind": "nop",
+              "value": null
+            }
+          },
+          {
+            "kind": 0,
+            "body": {
+              "kind": "end",
+              "value": null
+            }
+          }
+        ],
+        "payload": "aabb"
       }
     },
     {
@@ -183,7 +251,7 @@
         "window": 65535,
         "checksum": 0,
         "urgent_pointer": 0,
-        "options": "",
+        "options": [],
         "payload": ""
       }
     },
@@ -283,7 +351,7 @@
             "checksum": 47276,
             "source": "c0a80001",
             "destination": "c0a800c7",
-            "options": "",
+            "options": [],
             "payload": {
               "kind": "udp",
               "value": {

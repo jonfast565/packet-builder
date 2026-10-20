@@ -285,6 +285,12 @@ pub enum TExpr {
         from: Mark,
         to: Mark,
     },
+    /// In an `until` condition: the element just read, or its field `field`
+    /// (packet name, member name) when the elements are packets.
+    Last {
+        field: Option<(String, String)>,
+        ty: Ty,
+    },
     /// A checksum of the bytes between two marks; the bytes of `hole` (the
     /// checksum field itself, when it is inside the range) count as zero.
     Checksum {
@@ -306,7 +312,8 @@ impl TExpr {
             | TExpr::Arith { ty, .. }
             | TExpr::Guard { ty, .. }
             | TExpr::Call { ty, .. }
-            | TExpr::Unary { ty, .. } => *ty,
+            | TExpr::Unary { ty, .. }
+            | TExpr::Last { ty, .. } => *ty,
             TExpr::Cmp { .. } | TExpr::Logic { .. } => Ty::Bool,
             TExpr::Convert { to, .. } => *to,
         }
@@ -315,7 +322,11 @@ impl TExpr {
     /// Members this expression reads.
     pub fn deps(&self, out: &mut Vec<usize>) {
         match self {
-            TExpr::IntLit(_) | TExpr::FloatLit(_) | TExpr::Size { .. } | TExpr::Checksum { .. } => {}
+            TExpr::IntLit(_)
+            | TExpr::FloatLit(_)
+            | TExpr::Size { .. }
+            | TExpr::Checksum { .. }
+            | TExpr::Last { .. } => {}
             TExpr::Ref { member, .. } | TExpr::Aggregate { member, .. } | TExpr::Len { member } => out.push(*member),
             TExpr::Index { member, index, .. } => {
                 out.push(*member);

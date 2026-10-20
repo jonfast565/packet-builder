@@ -1,0 +1,247 @@
+{
+  "spec": "sequences.packet",
+  "cases": [
+    {
+      "name": "varints",
+      "packet": "Varints",
+      "hex": "ac02 7e 05 8100 7bbd 01",
+      "expect": {
+        "a": 300,
+        "b": -2,
+        "c": -3,
+        "d": 128,
+        "e": 15293,
+        "f": 1
+      }
+    },
+    {
+      "name": "varint extremes",
+      "packet": "Varints",
+      "hex": "ffffffffffffffffff018080808080808080807ffeffffffffffffffff0181ffffffffffffffff7fffffffffffffffff00",
+      "expect": {
+        "a": 18446744073709551615,
+        "b": -9223372036854775808,
+        "c": 9223372036854775807,
+        "d": 18446744073709551615,
+        "e": 4611686018427387903,
+        "f": 0
+      }
+    },
+    {
+      "name": "varint longer than 64 bits",
+      "packet": "OneUleb",
+      "hex": "8080808080808080808000",
+      "error_kind": "invalid",
+      "error_path": "OneUleb.v"
+    },
+    {
+      "name": "truncated varint",
+      "packet": "OneUleb",
+      "hex": "ac",
+      "error_kind": "incomplete",
+      "error_path": "OneUleb.v"
+    },
+    {
+      "name": "non-canonical varint re-encodes canonically",
+      "packet": "OneUleb",
+      "hex": "8000",
+      "expect": {
+        "v": 0
+      },
+      "encoded": "00"
+    },
+    {
+      "name": "QUIC varint out of range",
+      "packet": "Varints",
+      "hex": "ac02 7e 05 8100 7bbd 01",
+      "set": {
+        "e": 4611686018427387904
+      },
+      "encode_error_kind": "range",
+      "encode_error_path": "Varints.e"
+    },
+    {
+      "name": "options end with END",
+      "packet": "Options",
+      "hex": "01 02 04 05b4 00 ff",
+      "expect": {
+        "opts": [
+          {
+            "kind": 1,
+            "body": {
+              "kind": "nop",
+              "value": null
+            }
+          },
+          {
+            "kind": 2,
+            "body": {
+              "kind": "value",
+              "value": {
+                "length": 4,
+                "data": "05b4"
+              }
+            }
+          },
+          {
+            "kind": 0,
+            "body": {
+              "kind": "end",
+              "value": null
+            }
+          }
+        ],
+        "tail": 255
+      }
+    },
+    {
+      "name": "options end with their window",
+      "packet": "OptionsHeader",
+      "hex": "03 01 01 01 ff",
+      "expect": {
+        "opts": [
+          {
+            "kind": 1
+          },
+          {
+            "kind": 1
+          },
+          {
+            "kind": 1
+          }
+        ],
+        "tail": 255
+      }
+    },
+    {
+      "name": "options without END run to the end of the input",
+      "packet": "Options",
+      "hex": "01 01",
+      "error_kind": "incomplete",
+      "error_path": "Options.tail"
+    },
+    {
+      "name": "scalar until",
+      "packet": "Labels",
+      "hex": "61 62 00 0005 0001 0005 07",
+      "expect": {
+        "name": "616200",
+        "stop": 5,
+        "codes": [
+          1,
+          5
+        ],
+        "after": 7
+      }
+    },
+    {
+      "name": "terminators",
+      "packet": "Lines",
+      "hex": "6869 0d0a 0102 ff 6f6b",
+      "expect": {
+        "first": "hi",
+        "data": "0102",
+        "last": "ok"
+      },
+      "encoded": "6869 0d0a 0102 ff 6f6b 00"
+    },
+    {
+      "name": "terminator present at the end",
+      "packet": "Lines",
+      "hex": "6869 0d0a ff 00",
+      "expect": {
+        "first": "hi",
+        "data": "",
+        "last": ""
+      }
+    },
+    {
+      "name": "missing terminator",
+      "packet": "Lines",
+      "hex": "6869 0d",
+      "error_kind": "incomplete",
+      "error_path": "Lines.first"
+    },
+    {
+      "name": "value containing its terminator",
+      "packet": "Csv",
+      "hex": "61 2c 62",
+      "set": {
+        "field": "a,b"
+      },
+      "encode_error_kind": "invalid",
+      "encode_error_path": "Csv.field"
+    },
+    {
+      "name": "text encodings",
+      "packet": "Texts",
+      "hex": "01e9 680069000000 0220ac 026f6b",
+      "expect": {
+        "a": "é",
+        "b": "hi",
+        "c": "€",
+        "d": "ok"
+      }
+    },
+    {
+      "name": "invalid ASCII",
+      "packet": "Texts",
+      "hex": "01e9 680069000000 0220ac 01ff",
+      "error_kind": "text",
+      "error_path": "Texts.d"
+    },
+    {
+      "name": "UTF-16 with an odd length",
+      "packet": "Texts",
+      "hex": "01e9 680069000000 0320ac00 026f6b",
+      "error_kind": "text",
+      "error_path": "Texts.c"
+    },
+    {
+      "name": "unpaired surrogate",
+      "packet": "Emoji",
+      "hex": "02 d83d",
+      "error_kind": "text",
+      "error_path": "Emoji.s"
+    },
+    {
+      "name": "surrogate pair",
+      "packet": "Emoji",
+      "hex": "04 d83dde00",
+      "expect": {
+        "s": "😀"
+      }
+    },
+    {
+      "name": "Latin-1 cannot hold every character",
+      "packet": "Texts",
+      "hex": "01e9 680069000000 0220ac 026f6b",
+      "set": {
+        "a": "€"
+      },
+      "encode_error_kind": "text",
+      "encode_error_path": "Texts.a"
+    },
+    {
+      "name": "derived varint count",
+      "packet": "Counted",
+      "hex": "02 0001 0002",
+      "expect": {
+        "n": 2,
+        "items": [
+          1,
+          2
+        ]
+      }
+    },
+    {
+      "name": "derived varint count recomputed",
+      "packet": "Counted",
+      "hex": "02 0001 0002",
+      "set": {
+        "n": 9
+      },
+      "encoded": "02 0001 0002"
+    }
+  ]
+}

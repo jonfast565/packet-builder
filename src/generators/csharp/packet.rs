@@ -2,8 +2,7 @@
 
 use super::decode::Decoder;
 use super::encode::Encoder;
-use super::naming::{default_value, member_type, prop_name, scalar_type};
-use crate::generators::common::union::variant_name;
+use super::naming::{arm_class, default_value, member_type, prop_name, scalar_type};
 use crate::generators::common::{Out, StepEmitter, member_category};
 use crate::ir::{Packet, Union, ValueType};
 
@@ -14,7 +13,7 @@ pub fn emit_union(out: &mut Out, u: &Union, ns: &str) {
     out.line("/// <summary>One arm of a union: the subclass says which.</summary>");
     out.line(format!("public abstract class {}", u.name));
     out.open("{");
-    out.line(format!("public static {} PbDefault() => new {}();", u.name, variant_name(&u.arms[0])));
+    out.line(format!("public static {} PbDefault() => new {}();", u.name, arm_class(&u.name, &u.arms[0])));
     for arm in &u.arms {
         out.line("");
         let doc = if arm.default {
@@ -24,7 +23,7 @@ pub fn emit_union(out: &mut Out, u: &Union, ns: &str) {
             format!("Selector {}.", v.join(", "))
         };
         out.line(format!("/// <summary>{}</summary>", doc));
-        let v = variant_name(arm);
+        let v = arm_class(&u.name, arm);
         match (&arm.ty, arm.is_bytes()) {
             (None, _) => out.line(format!("public sealed class {} : {} {{ }}", v, u.name)),
             (Some(_), true) => out.line(format!(

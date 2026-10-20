@@ -1,7 +1,15 @@
 //! C# identifiers and types.
 
+use crate::generators::common::union::variant_name;
 use crate::generators::common::{Dialect, GenOptions, magic_literal, pascal_case};
-use crate::ir::{Member, Packet, ValueType, storage_for};
+use crate::ir::{Arm, Member, Packet, ValueType, storage_for};
+
+/// The nested class for an arm of union `union`: it must differ from its
+/// `Value` property and from the union class.
+pub fn arm_class(union: &str, arm: &Arm) -> String {
+    let v = variant_name(arm);
+    if v == "Value" || v == union { format!("{}_", v) } else { v }
+}
 
 /// C# property name for a member of packet `packet`.
 pub fn prop_name(packet: &str, name: &str) -> String {

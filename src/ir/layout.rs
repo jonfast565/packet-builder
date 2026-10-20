@@ -1,6 +1,12 @@
 //! Field-by-field layout report (the `layout` command).
 
-use super::model::{CheckKind, Codec, Count, Member, Module, Packet, Step, StrMode, ValueType};
+use super::model::{CheckKind, Codec, Count, Member, Module, Packet, Step, StrMode, TextEncoding, ValueType};
+
+/// ` term 0x0d 0x0a optional`
+fn term_suffix(term: &[u8], optional: bool) -> String {
+    let t: Vec<String> = term.iter().map(|b| format!("0x{:02x}", b)).collect();
+    format!(" term {}{}", t.join(" "), if optional { " optional" } else { "" })
+}
 
 /// `u8` becomes `u8 : Channel strict == 0x2a lenient` with the member's
 /// category and checks.
@@ -102,7 +108,7 @@ impl Module {
                     let elem = match codec {
                         Codec::Packet(n) => self.packets.iter().find(|p| &p.name == n).and_then(|p| p.fixed_bits),
                         Codec::Str(StrMode::Padded | StrMode::Exact) => Some(8),
-                        Codec::Str(_) => None,
+                        Codec::Str(_) | Codec::Varint(_) => None,
                         c => Some(c.bits() as u64),
                     };
                     let (size, suffix) = match array {
@@ -112,11 +118,17 @@ impl Module {
                             _ => (None, "[n]".into()),
                         },
                         Some(Count::Remaining) => (None, "[]".into()),
+                        Some(Count::Until(_)) => (None, "[] until ...".into()),
+                        Some(Count::Terminated { term, optional }) => (None, term_suffix(term, *optional)),
                     };
                     let kind = match (ty, codec) {
                         (_, Codec::Str(StrMode::Padded)) => format!("char{}", suffix),
                         (_, Codec::Str(StrMode::Exact)) => format!("string{}", suffix),
                         (_, Codec::Str(StrMode::CString)) => "cstring".into(),
+                        (_, Codec::Str(StrMode::Terminated { term, optional })) => {
+                            format!("string{}", term_suffix(term, *optional))
+                        }
+                        (_, Codec::Varint(k)) => format!("{}{}", k.name(), suffix),
                         (_, Codec::Str(StrMode::Prefixed { width, .. })) => format!("string(u{} prefix)", width),
                         (ValueType::Int { width: 8, signed: false }, _) if array.is_some() => {
                             format!("bytes{}", suffix)
@@ -129,6 +141,10 @@ impl Module {
                         (ValueType::Packet(n), _) => format!("{}{}", n, suffix),
                         (ValueType::Str, _) => "string".into(),
                         (ValueType::Union(n), _) => n.clone(),
+                    };
+                    let kind = match member.map(|m| packet.members[m].encoding) {
+                        Some(enc) if enc != TextEncoding::Utf8 => format!("{} {}", kind, enc.name()),
+                        _ => kind,
                     };
                     let name = member.map(|m| packet.members[m].name.clone()).unwrap_or_else(|| "_".into());
                     let kind = with_category(kind, member.map(|m| &packet.members[m]));

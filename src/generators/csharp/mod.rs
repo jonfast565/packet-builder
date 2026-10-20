@@ -6,7 +6,7 @@ mod expr;
 mod naming;
 mod packet;
 
-pub use naming::{member_type, namespace, prop_name, scalar_type};
+pub use naming::{arm_class, member_type, namespace, prop_name, scalar_type};
 
 use crate::generators::Backend;
 use crate::generators::common::{ConstEmitter, GenOptions, Out, const_pascal};

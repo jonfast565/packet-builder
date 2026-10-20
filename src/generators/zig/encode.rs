@@ -1,11 +1,12 @@
 //! Zig encoder statements. Range checks are not needed: exact-width fields
 //! cannot hold out-of-range values.
 
+use super::decode::byte_list;
 use super::expr::store_value;
 use super::naming::{Zig, ident, scalar_type};
 use crate::generators::common::union::{ZIG_LOGIC, arm_test, uses_selector};
 use crate::generators::common::{Dialect, Mode, Out, Scope, StepEmitter, mark_var, mask};
-use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, ValueType};
+use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, TextEncoding, ValueType};
 
 fn write_elem(out: &mut Out, codec: &Codec, v: &str) {
     match codec {
@@ -20,6 +21,7 @@ fn write_elem(out: &mut Out, codec: &Codec, v: &str) {
             out.line(format!("try pb_w.writeUint(@as(u64, @bitCast({})), 8, {});", v, Zig::little(endian)))
         }
         Codec::Mac => out.line(format!("try pb_w.writeBytes(&{});", v)),
+        Codec::Varint(k) => out.line(format!("try pb_w.writeVarint({}, pbToBits({}));", k.id(), v)),
         Codec::Packet(_) => out.line(format!("try {}.encodeTo(pb_w);", v)),
         Codec::Str(_) => unreachable!("strings are handled by Encoder::string"),
     }
@@ -32,6 +34,50 @@ pub struct Encoder<'a> {
 impl<'a> Encoder<'a> {
     pub fn new(packet: &'a Packet) -> Self {
         Encoder { scope: Scope::new(packet, Mode::Encode) }
+    }
+}
+
+impl Encoder<'_> {
+    /// A terminated string, or one in an encoding other than UTF-8.
+    fn encoded_string(&self, out: &mut Out, m: &Member, mode: &StrMode, array: Option<&Count>) {
+        let s = format!("p.{}", ident(&m.name));
+        let enc = m.encoding.id();
+        let write = format!("try pb_w.writeText({}, {});", s, enc);
+        out.open("{");
+        out.line(format!("const pb_sz = try pb_w.textSize({}, {});", s, enc));
+        match (mode, array) {
+            (StrMode::CString | StrMode::Terminated { .. }, _) => {
+                let term = match mode {
+                    StrMode::Terminated { term, .. } => term.clone(),
+                    _ => vec![0],
+                };
+                out.line("_ = pb_sz;");
+                out.line("const pb_from = pb_w.positionBits();");
+                out.line(write);
+                out.line(format!("try pb_w.checkNoTerm(pb_from, {});", byte_list(&term)));
+                out.line(format!("try pb_w.writeBytes({});", byte_list(&term)));
+            }
+            (StrMode::Prefixed { prefix, width }, _) => {
+                out.line(format!("try pb_w.checkPrefix(pb_sz, {});", width));
+                write_elem(out, prefix, "@as(u64, pb_sz)");
+                out.line(write);
+            }
+            (StrMode::Padded, Some(Count::Expr(e))) => {
+                out.line(format!("const pb_n = {};", self.scope.expr(e)));
+                out.line("try pb_w.checkFits(pb_sz, pb_n);");
+                out.line(write);
+                out.line("try pb_w.writeZeroBits((pb_n - @as(i64, @intCast(pb_sz))) * 8);");
+            }
+            (_, Some(Count::Expr(e))) if !self.packet().depends_on_wire(e) => {
+                out.line(format!("try pb_w.checkLen(pb_sz, {});", self.scope.expr(e)));
+                out.line(write);
+            }
+            _ => {
+                out.line("_ = pb_sz;");
+                out.line(write);
+            }
+        }
+        out.close("}");
     }
 }
 
@@ -131,6 +177,8 @@ impl StepEmitter for Encoder<'_> {
             (Codec::Bits { width }, Some(at)) => {
                 out.line(format!("pb_w.patchBits({}, {}, {});", mark_var(at), bits, width))
             }
+            // Varints are never patched (rejected by the analysis).
+            (Codec::Varint(k), None) => out.line(format!("try pb_w.writeVarint({}, {});", k.id(), bits)),
             _ => unreachable!("derived fields are integers"),
         }
     }
@@ -142,6 +190,10 @@ impl StepEmitter for Encoder<'_> {
     fn string(&self, out: &mut Out, m: &Member, mode: &StrMode, array: Option<&Count>) {
         let s = format!("p.{}", ident(&m.name));
         out.line(format!("try pb_w.checkText({}, {});", s, !matches!(mode, StrMode::CString)));
+        if m.encoding != TextEncoding::Utf8 || matches!(mode, StrMode::Terminated { .. }) {
+            self.encoded_string(out, m, mode, array);
+            return;
+        }
         match (mode, array) {
             (StrMode::CString, _) => {
                 out.line(format!("try pb_w.writeBytes({});", s));
@@ -175,7 +227,7 @@ impl StepEmitter for Encoder<'_> {
             Some(Count::Expr(e)) => {
                 out.line(format!("try pb_w.writeZeroBits(@max({}, 0) *% {});", self.scope.expr(e), bits))
             }
-            Some(Count::Remaining) => {}
+            Some(Count::Remaining | Count::Until(_) | Count::Terminated { .. }) => {}
         }
     }
 
@@ -190,7 +242,14 @@ impl StepEmitter for Encoder<'_> {
         {
             out.line(format!("try pb_w.checkLen({}.len, {});", place, self.scope.expr(e)));
         }
-        if ty.is_byte() {
+        if let Count::Terminated { term, .. } = count {
+            out.open("{");
+            out.line("const pb_from = pb_w.positionBits();");
+            out.line(format!("try pb_w.writeBytes({});", place));
+            out.line(format!("try pb_w.checkNoTerm(pb_from, {});", byte_list(term)));
+            out.line(format!("try pb_w.writeBytes({});", byte_list(term)));
+            out.close("}");
+        } else if ty.is_byte() {
             out.line(format!("try pb_w.writeBytes({});", place));
         } else {
             out.open(format!("for ({}, 0..) |pb_v, pb_i| {{", place));

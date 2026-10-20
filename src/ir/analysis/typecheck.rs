@@ -48,6 +48,27 @@ impl<'a> Ctx<'a> {
             UnsignedInteger64Value(v) => TExpr::IntLit(*v as i64),
             Float64Value(v) => TExpr::FloatLit(*v),
             StringValue(_) => return Err("string literals are not supported in expressions".into()),
+            ValueReference(name, None) if name == "last" && self.last.is_some() => match &self.last {
+                Some(ValueType::Int { .. }) => TExpr::Last { field: None, ty: Ty::Int },
+                Some(ValueType::Float { .. }) => TExpr::Last { field: None, ty: Ty::Float },
+                Some(ValueType::Packet(n)) => {
+                    return Err(format!("`last` is a `{}`; name one of its fields, as in `last.kind`", n));
+                }
+                _ => return Err("`last` cannot be used in an expression here".into()),
+            },
+            QualifiedReference(group, field) if group == "last" && self.last.is_some() => {
+                let Some(ValueType::Packet(n)) = &self.last else {
+                    return Err("`last` is not a packet, so it has no fields".into());
+                };
+                let p = self.done.get(n).ok_or_else(|| format!("unknown packet `{}`", n))?;
+                let m = p
+                    .members
+                    .iter()
+                    .find(|m| &m.name == field && m.array.is_none())
+                    .ok_or_else(|| format!("`{}` has no single-valued field `{}`", n, field))?;
+                let ty = self.scalar_ty(&m.ty, field)?;
+                TExpr::Last { field: Some((n.clone(), field.clone())), ty }
+            }
             ValueReference(name, None) if !self.names.contains_key(name) && self.consts.single(name).is_some() => {
                 TExpr::IntLit(self.consts.single(name).expect("checked").value)
             }

@@ -41,6 +41,7 @@ pub(super) fn type_label(t: &TypeNode) -> String {
         TypeNode::Str => "string".into(),
         TypeNode::CStr => "cstring".into(),
         TypeNode::PrefixedStr { prefix, .. } => format!("string({})", type_label(prefix)),
+        TypeNode::Varint(k) => k.name().into(),
     }
 }
 
@@ -58,6 +59,7 @@ pub(super) fn natural_align(t: &TypeNode, done: &HashMap<String, Packet>) -> u64
             if width % 8 == 0 && bytes.is_power_of_two() { bytes } else { 1 }
         }
         TypeNode::MacAddress | TypeNode::Bytes | TypeNode::Char | TypeNode::Str | TypeNode::CStr => 1,
+        TypeNode::Varint(_) => 1,
         TypeNode::PrefixedStr { prefix, .. } => natural_align(prefix, done),
         other => other.bit_width().map(|b| (b / 8) as u64).unwrap_or(1),
     }

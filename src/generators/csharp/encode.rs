@@ -1,10 +1,11 @@
 //! C# encoder statements.
 
+use super::decode::byte_list;
 use super::expr::store_value;
-use super::naming::{CSharp, scalar_type};
-use crate::generators::common::union::{C_LOGIC, arm_test, mismatch_message, uses_selector, variant_name};
+use super::naming::{CSharp, arm_class, scalar_type};
+use crate::generators::common::union::{C_LOGIC, arm_test, mismatch_message, uses_selector};
 use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mark_var, mask, string_literal};
-use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, ValueType};
+use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, TextEncoding, ValueType};
 
 fn write_elem(out: &mut Out, codec: &Codec, ty: &ValueType, v: &str) {
     match ty {
@@ -34,6 +35,7 @@ fn write_elem(out: &mut Out, codec: &Codec, ty: &ValueType, v: &str) {
             CSharp::little(endian)
         )),
         Codec::Mac => out.line(format!("pbW.WriteBytes({});", v)),
+        Codec::Varint(k) => out.line(format!("pbW.WriteVarint({}, unchecked((ulong){}));", k.id(), v)),
         Codec::Packet(_) => out.line(format!("{}.EncodeTo(pbW);", v)),
         Codec::Str(_) => unreachable!("strings are handled by Encoder::string"),
     }
@@ -79,7 +81,7 @@ impl StepEmitter for Encoder<'_> {
         out.line(format!("switch ({})", self.scope.field(m)));
         out.open("{");
         for arm in arms {
-            let class = format!("{}.{}", u, variant_name(arm));
+            let class = format!("{}.{}", u, arm_class(u, arm));
             let bind = if arm.ty.is_some() { "pbV" } else { "_" };
             out.open(format!("case {} {}:", class, bind));
             if let Some(test) = arm_test(arm, arms, "pbSel", &C_LOGIC) {
@@ -168,6 +170,8 @@ impl StepEmitter for Encoder<'_> {
             (Codec::Bits { width }, Some(at)) => {
                 out.line(format!("pbW.PatchBits({}, unchecked((ulong){}), {});", mark_var(at), v, width))
             }
+            // Varints are never patched (rejected by the analysis).
+            (Codec::Varint(k), None) => out.line(format!("pbW.WriteVarint({}, unchecked((ulong){}));", k.id(), v)),
             _ => unreachable!("derived fields are integers"),
         }
     }
@@ -178,12 +182,21 @@ impl StepEmitter for Encoder<'_> {
 
     fn string(&self, out: &mut Out, m: &Member, mode: &StrMode, array: Option<&Count>) {
         out.open("{");
-        out.line(format!("var pbB = pbW.Utf8Bytes({});", self.scope.field(m)));
+        if m.encoding == TextEncoding::Utf8 {
+            out.line(format!("var pbB = pbW.Utf8Bytes({});", self.scope.field(m)));
+        } else {
+            out.line(format!("var pbB = pbW.TextBytes({}, {});", self.scope.field(m), m.encoding.id()));
+        }
         match (mode, array) {
             (StrMode::CString, _) => {
                 out.line("pbW.CheckNoNul(pbB);");
                 out.line("pbW.WriteBytes(pbB);");
                 out.line("pbW.WriteBytes(new byte[1]);");
+            }
+            (StrMode::Terminated { term, .. }, _) => {
+                out.line(format!("pbW.CheckNoTerm(pbB, {});", byte_list(term)));
+                out.line("pbW.WriteBytes(pbB);");
+                out.line(format!("pbW.WriteBytes({});", byte_list(term)));
             }
             (StrMode::Prefixed { prefix, width }, _) => {
                 out.line(format!("pbW.CheckU((ulong)pbB.Length, {});", width));
@@ -212,7 +225,7 @@ impl StepEmitter for Encoder<'_> {
             Some(Count::Expr(e)) => {
                 out.line(format!("pbW.WriteZeroBits(Math.Max({}, 0L) * {});", self.scope.expr(e), bits))
             }
-            Some(Count::Remaining) => {}
+            Some(Count::Remaining | Count::Until(_) | Count::Terminated { .. }) => {}
         }
     }
 
@@ -227,7 +240,11 @@ impl StepEmitter for Encoder<'_> {
         {
             out.line(format!("pbW.CheckLen({}.Length, {});", place, self.scope.expr(e)));
         }
-        if ty.is_byte() {
+        if let Count::Terminated { term, .. } = count {
+            out.line(format!("pbW.CheckNoTerm({}, {});", place, byte_list(term)));
+            out.line(format!("pbW.WriteBytes({});", place));
+            out.line(format!("pbW.WriteBytes({});", byte_list(term)));
+        } else if ty.is_byte() {
             out.line(format!("pbW.WriteBytes({});", place));
         } else {
             out.line(format!("for (int pbI = 0; pbI < {}.Length; pbI++)", place));

@@ -8,7 +8,7 @@ use super::types::{to_endianness, type_from_name};
 use super::{Rule, int_literal, span_of};
 use crate::ast::{
     ArmExpr, ArrayLength, AssertExpr, BitOrder, BitfieldExpr, BitfieldMember, CalculatedField, Constraint, Endianness,
-    ExprNode, FieldRules, PacketExpr, PacketItem, Span, SwitchExpr, TypeExpr, TypeNode, WindowExpr,
+    ExprNode, FieldRules, PacketExpr, PacketItem, Span, SwitchExpr, TextEncoding, TypeExpr, TypeNode, WindowExpr,
 };
 
 fn parse_alignment(pair: Pair<Rule>) -> u64 {
@@ -110,6 +110,9 @@ impl TreeBuilder {
         let mut rules = FieldRules::default();
         let mut derive = None;
         let mut window = None;
+        let mut until = None;
+        let mut term = None;
+        let mut encoding = None;
 
         for field in parser_rule.into_inner() {
             match field.as_rule() {
@@ -118,6 +121,17 @@ impl TreeBuilder {
                 Rule::alignment => align = Some(parse_alignment(field)),
                 Rule::array_specifier => array = Some(array_specifier(field)),
                 Rule::window => window = Some(window_clause(field)),
+                Rule::until_clause => until = field.into_inner().find(|p| p.as_rule() == Rule::expr).map(parse_expr),
+                Rule::term_clause => {
+                    let optional = field.clone().into_inner().any(|p| p.as_rule() == Rule::optional_kw);
+                    let bytes = field
+                        .into_inner()
+                        .filter(|p| p.as_rule() == Rule::numeric_constant)
+                        .map(|n| int_literal(n.as_str()))
+                        .collect();
+                    term = Some((bytes, optional));
+                }
+                Rule::text_encoding => encoding = TextEncoding::from_name(field.as_str()),
                 Rule::endianness => field_endianness = to_endianness(field.as_str()),
                 Rule::category_tag => category = category_tag(field, &mut rules),
                 Rule::constraint => rules.constraint = constraint(field),
@@ -128,7 +142,7 @@ impl TreeBuilder {
         }
 
         // A bare `bytes` or `string` field (no length) consumes the rest of the input.
-        if matches!(type_node, TypeNode::Bytes | TypeNode::Str) && array.is_none() {
+        if matches!(type_node, TypeNode::Bytes | TypeNode::Str) && array.is_none() && term.is_none() {
             array = Some(ArrayLength::Remaining);
         }
 
@@ -141,6 +155,9 @@ impl TreeBuilder {
             category,
             derive,
             window,
+            until,
+            term,
+            encoding,
             rules,
             span,
         }

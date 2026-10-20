@@ -3,7 +3,13 @@
 use super::expr::store_value;
 use super::naming::{Zig, ident, scalar_type};
 use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mark_var, mask};
-use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, ValueType};
+use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, TextEncoding, ValueType};
+
+/// `&[_]u8{ 0x0d, 0x0a }`
+pub fn byte_list(bytes: &[u8]) -> String {
+    let items: Vec<String> = bytes.iter().map(|b| format!("0x{:02x}", b)).collect();
+    format!("&[_]u8{{ {} }}", items.join(", "))
+}
 
 fn read_elem(codec: &Codec, ty: &ValueType) -> String {
     let st = scalar_type(ty);
@@ -17,6 +23,7 @@ fn read_elem(codec: &Codec, ty: &ValueType) -> String {
         }
         Codec::Float { endian, .. } => format!("@as(f64, @bitCast(try pb_r.readUint(8, {})))", Zig::little(endian)),
         Codec::Mac => "try pb_r.readMac()".into(),
+        Codec::Varint(k) => format!("pbFromBits({}, try pb_r.readVarint({}))", st, k.id()),
         Codec::Packet(n) => format!("try {}.decodeFrom(allocator, pb_r)", n),
         Codec::Str(_) => unreachable!("strings are handled by Decoder::string"),
     }
@@ -41,6 +48,9 @@ impl<'a> Decoder<'a> {
             }
             (Some(_), _, Some(Count::Remaining)) => "try pb_r.readBytes(allocator, pb_r.remainingBits() / 8)".into(),
             (Some(ty), Some(codec), None) => read_elem(codec, ty),
+            (_, _, Some(Count::Until(_) | Count::Terminated { .. })) => {
+                unreachable!("union arms have no until or term")
+            }
             _ => "{}".to_string(),
         };
         format!(".{{ .{} = {} }}", field, value)
@@ -109,6 +119,23 @@ impl StepEmitter for Decoder<'_> {
     fn string(&self, out: &mut Out, m: &Member, mode: &StrMode, array: Option<&Count>) {
         let target = format!("p.{}", ident(&m.name));
         let padded = *mode == StrMode::Padded;
+        if m.encoding != TextEncoding::Utf8 || matches!(mode, StrMode::Terminated { .. }) {
+            let raw = match (mode, array) {
+                (StrMode::CString, _) => format!("try pb_r.untilSlice({}, false)", byte_list(&[0])),
+                (StrMode::Terminated { term, optional }, _) => {
+                    format!("try pb_r.untilSlice({}, {})", byte_list(term), optional)
+                }
+                (StrMode::Prefixed { prefix, .. }, _) => {
+                    format!("try pb_r.bytesSlice(try pb_r.count(@bitCast({}), 8))", read_elem(prefix, &PREFIX_LEN))
+                }
+                (_, Some(Count::Expr(e))) => {
+                    format!("try pb_r.bytesSlice(try pb_r.count({}, 8))", self.scope.expr(e))
+                }
+                _ => "try pb_r.bytesSlice(pb_r.remainingBits() / 8)".to_string(),
+            };
+            out.line(format!("{} = try pb_r.text(allocator, {}, {}, {});", target, raw, m.encoding.id(), padded));
+            return;
+        }
         match (mode, array) {
             (StrMode::CString, _) => out.line(format!("{} = try pb_r.readCText(allocator);", target)),
             (StrMode::Prefixed { prefix, .. }, _) => {
@@ -138,6 +165,8 @@ impl StepEmitter for Decoder<'_> {
                 out.line(format!("try pb_r.skipBits((try pb_r.count({}, {})) * {});", self.scope.expr(e), bits, bits))
             }
             Some(Count::Remaining) => out.line("try pb_r.skipBits(pb_r.remainingBits());"),
+            // Padding cannot use `until` or `term` (rejected by the analysis).
+            Some(Count::Until(_) | Count::Terminated { .. }) => {}
         }
     }
 
@@ -168,8 +197,14 @@ impl StepEmitter for Decoder<'_> {
                     out.close("}");
                 }
             }
-            Count::Remaining => {
-                if ty.is_byte() {
+            Count::Terminated { term, optional } => out.line(format!(
+                "{} = try allocator.dupe(u8, try pb_r.untilSlice({}, {}));",
+                target,
+                byte_list(term),
+                optional
+            )),
+            Count::Remaining | Count::Until(_) => {
+                if ty.is_byte() && matches!(count, Count::Remaining) {
                     out.line(format!("{} = try pb_r.readBytes(allocator, pb_r.remainingBits() / 8);", target));
                 } else {
                     out.open("{");
@@ -185,6 +220,9 @@ impl StepEmitter for Decoder<'_> {
                     out.open("while (pb_r.remainingBits() > 0) {");
                     out.line("pb_r.atIndex(pb_l.items.len);");
                     out.line(format!("try pb_l.append({});", read_elem(codec, ty)));
+                    if let Count::Until(cond) = count {
+                        out.line(format!("if ({}) break;", self.scope.expr(cond)));
+                    }
                     out.close("}");
                     out.line(format!("{} = try pb_l.toOwnedSlice();", target));
                     out.close("}");

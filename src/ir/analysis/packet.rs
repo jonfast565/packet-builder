@@ -12,7 +12,7 @@ use super::consts::ConstTable;
 use super::context::Ctx;
 use super::cursor::{Cursor, const_factor};
 use super::types::{field_value_type, natural_align, value_type};
-use crate::ast::{ArrayLength, BitOrder, BitfieldExpr, Endianness, PacketExpr, PacketItem, Span, TypeExpr, TypeNode};
+use crate::ast::{BitOrder, BitfieldExpr, Endianness, PacketExpr, PacketItem, Span, TypeExpr, TypeNode};
 use crate::errors::Diagnostic;
 use crate::ir::expr::{TExpr, Ty, coerce};
 use crate::ir::model::{Assertion, BitPart, Codec, Count, MemberKind, Packet, Step, StrMode, ValueType};
@@ -94,6 +94,7 @@ impl<'a> PacketBuilder<'a> {
                     ctx.declare(&f.id, field_value_type(f), MemberKind::Stored, f.span);
                     ctx.tag(&f.id, &f.category);
                     ctx.rules(&f.id, &f.rules, f.array.is_some(), f.derive.is_some(), f.span);
+                    ctx.text_encoding(f);
                 }
                 PacketItem::Bitfield(b) => {
                     for m in &b.members {
@@ -143,11 +144,7 @@ impl<'a> PacketBuilder<'a> {
         let ctx = &mut self.ctx;
         for item in &self.p.items {
             if let PacketItem::Field(f) = item {
-                let count = match &f.array {
-                    None => None,
-                    Some(ArrayLength::Remaining) => Some(Count::Remaining),
-                    Some(ArrayLength::Expr(e)) => ctx.check_expr(e, f.span).map(|t| Count::Expr(coerce(t, Ty::Int))),
-                };
+                let count = ctx.field_count(f);
                 if let Some(&idx) = ctx.names.get(&f.id)
                     && f.id != "_"
                     && field_value_type(f) != ValueType::Str
@@ -293,7 +290,7 @@ impl<'a> PacketBuilder<'a> {
         }
 
         // Lengths must only use values already decoded.
-        if let Some(Count::Expr(e)) = &count {
+        if let Some(Count::Expr(e) | Count::Until(e)) = &count {
             self.ctx.require_available(e, &self.available, &self.scheduled, f.span, &f.id);
         }
         if matches!(count, Some(Count::Remaining)) {
@@ -331,7 +328,8 @@ impl<'a> PacketBuilder<'a> {
             }
             Codec::Str(StrMode::Padded | StrMode::Exact) => (8, Some(8)),
             Codec::Str(StrMode::Prefixed { width, .. }) => (*width as u64, None),
-            Codec::Str(StrMode::CString) => (8, None),
+            Codec::Str(StrMode::CString | StrMode::Terminated { .. }) => (8, None),
+            Codec::Varint(_) => (8, None),
             c => (c.bits() as u64, Some(c.bits() as u64)),
         };
         // Advance alignment and the exact offset.
@@ -341,7 +339,12 @@ impl<'a> PacketBuilder<'a> {
                 Some(n) if n >= 0 => self.cursor.advance(elem_bits, elem_fixed, n as u64),
                 _ => self.cursor.advance_unknown(elem_bits.wrapping_mul(const_factor(e))),
             },
-            Some(Count::Remaining) => self.cursor.advance_unknown(elem_bits),
+            Some(Count::Remaining | Count::Until(_)) => self.cursor.advance_unknown(elem_bits),
+            Some(Count::Terminated { term, optional }) => {
+                let min = if *optional { 0 } else { term.len() as u64 * 8 };
+                self.cursor.advance(min, None, 1);
+                self.cursor.advance_unknown(8);
+            }
         }
 
         self.steps.push(Step::Field { member, ty, codec, array: count });

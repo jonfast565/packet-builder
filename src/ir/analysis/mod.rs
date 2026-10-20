@@ -6,6 +6,7 @@
 //! - `checks`: `== value`, `in lo..hi`, `strict` and `lenient` on fields.
 //! - `derive`: derived fields, their marks and the encode order.
 //! - `union`: tagged unions (`switch`) and windows (`size n`).
+//! - `repeat`: `until` and `term`, and string encodings.
 //! - `context`: the member table and diagnostics shared by those passes.
 //! - `typecheck`, `codec`: expression and wire-format resolution.
 //! - `cursor`: what is known about the bit offset while laying out fields.
@@ -18,6 +19,7 @@ mod context;
 mod cursor;
 mod derive;
 mod packet;
+mod repeat;
 mod typecheck;
 mod types;
 mod union;

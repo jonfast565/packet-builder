@@ -114,6 +114,89 @@ pub enum TypeNode {
     },
     /// Reference to another packet by name.
     Packet(String),
+    /// A variable-length integer.
+    Varint(VarintKind),
+}
+
+/// Variable-length integer encodings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VarintKind {
+    /// Unsigned LEB128 (protobuf `varint`): 7 bits per byte, least significant first.
+    Uleb128,
+    /// Signed LEB128 (DWARF, WebAssembly).
+    Sleb128,
+    /// Protobuf `sint`: zigzag-mapped, then unsigned LEB128.
+    Zigzag,
+    /// 7 bits per byte, most significant first (MIDI, ASN.1 tags).
+    Vlq,
+    /// QUIC (RFC 9000): a 2-bit length (1, 2, 4 or 8 bytes) and 6 to 62 bits.
+    Quic,
+}
+
+impl VarintKind {
+    pub fn signed(self) -> bool {
+        matches!(self, VarintKind::Sleb128 | VarintKind::Zigzag)
+    }
+
+    /// The number the runtimes use for this encoding.
+    pub fn id(self) -> u32 {
+        self as u32
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            VarintKind::Uleb128 => "uleb128",
+            VarintKind::Sleb128 => "sleb128",
+            VarintKind::Zigzag => "zigzag",
+            VarintKind::Vlq => "vlq",
+            VarintKind::Quic => "quic_varint",
+        }
+    }
+}
+
+/// How a string's characters become bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TextEncoding {
+    #[default]
+    Utf8,
+    /// 7-bit ASCII; other characters are errors.
+    Ascii,
+    /// ISO-8859-1: each byte is the character with that code.
+    Latin1,
+    Utf16Le,
+    Utf16Be,
+}
+
+impl TextEncoding {
+    pub fn from_name(name: &str) -> Option<TextEncoding> {
+        Some(match name {
+            "utf8" => TextEncoding::Utf8,
+            "ascii" => TextEncoding::Ascii,
+            "latin1" => TextEncoding::Latin1,
+            "utf16le" => TextEncoding::Utf16Le,
+            "utf16be" => TextEncoding::Utf16Be,
+            _ => return None,
+        })
+    }
+
+    /// The number the runtimes use for this encoding.
+    pub fn id(self) -> u32 {
+        self as u32
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            TextEncoding::Utf8 => "utf8",
+            TextEncoding::Ascii => "ascii",
+            TextEncoding::Latin1 => "latin1",
+            TextEncoding::Utf16Le => "utf16le",
+            TextEncoding::Utf16Be => "utf16be",
+        }
+    }
+
+    pub fn is_utf16(self) -> bool {
+        matches!(self, TextEncoding::Utf16Le | TextEncoding::Utf16Be)
+    }
 }
 
 /// Array length specifier on a declaration.
@@ -139,6 +222,12 @@ pub struct TypeExpr {
     pub derive: Option<ExprNode>,
     /// `size n [exact]`: the field occupies exactly n bytes.
     pub window: Option<WindowExpr>,
+    /// `until expr`: an array ends after the element for which expr holds.
+    pub until: Option<ExprNode>,
+    /// `term 0x0d 0x0a [optional]`: bytes or text end at this sequence.
+    pub term: Option<(Vec<u64>, bool)>,
+    /// `latin1`, `utf16le`, ...: how a string's characters become bytes.
+    pub encoding: Option<TextEncoding>,
     pub rules: FieldRules,
     pub span: Span,
 }
@@ -320,6 +409,7 @@ impl TypeNode {
             TypeNode::UnsignedInteger64 | TypeNode::Integer64 | TypeNode::Float64 | TypeNode::DateTime => 64,
             TypeNode::MacAddress => 48,
             TypeNode::Bits { width, .. } => *width,
+            TypeNode::Varint(_) => 64,
             TypeNode::Packet(_) => return None,
         })
     }
@@ -336,6 +426,7 @@ impl TypeNode {
             TypeNode::UnsignedInteger64 => (64, false),
             TypeNode::Integer64 | TypeNode::DateTime => (64, true),
             TypeNode::Bits { width, signed } => (*width, *signed),
+            TypeNode::Varint(k) => (64, k.signed()),
             _ => return None,
         })
     }

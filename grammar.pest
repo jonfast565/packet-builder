@@ -92,6 +92,10 @@ dotdot     = @{ ".." }
 // Windows and unions. `switch` starts a field's type, so it is reserved;
 // `size` and `exact` are only special after a field's type.
 switch_kw = @{ "switch" }
+until_kw  = @{ "until" ~ !(alnum | underscore) }
+term_kw   = @{ "term" ~ !(alnum | underscore) }
+optional_kw = @{ "optional" ~ !(alnum | underscore) }
+text_encoding = @{ ("ascii" | "latin1" | "utf8" | "utf16le" | "utf16be") ~ !(alnum | underscore) }
 size_kw   = @{ "size" ~ !(alnum | underscore) }
 exact_kw  = @{ "exact" ~ !(alnum | underscore) }
 fat_arrow = @{ "=>" }
@@ -176,12 +180,14 @@ dword_t    = @{ "dword" | "doubleword" | ("double" ~ sp ~ "word") }
 qword_t    = @{ "qword" | "quadword" | ("quad" ~ sp ~ "word") }
 string_t   = @{ "string" }
 cstring_t  = @{ "cstring" }
+// Variable-length integers.
+varint_t   = @{ "uleb128" | "sleb128" | "varint" | "zigzag" | "vlq" | "quic_varint" }
 
 type_name = @{
     (uint8 | int8 | uint16 | int16 | uint32 | int32 | uint64 | int64
     | float32 | float64 | macaddr | datetime | bytes_t
     | uchar_t | char_t | byte_t | ushort_t | short_t | uint_t | int_t
-    | halfword_t | word_t | dword_t | qword_t | cstring_t | string_t) ~ kw_end
+    | halfword_t | word_t | dword_t | qword_t | cstring_t | string_t | varint_t) ~ kw_end
 }
 
 // Arbitrary-width integers measured in bits: u1 .. u64 and i2 .. i64.
@@ -244,9 +250,17 @@ range_call = { identifier ~ lparen ~ field_range ~ rparen }
 
 // Accessors & declarations
 declaration = {
-    identifier ~ field_type ~ array_specifier? ~ endianness? ~ alignment? ~ window? ~ category_tag? ~ derivation?
-    ~ constraint? ~ lenient_kw?
+    identifier ~ field_type ~ array_specifier? ~ until_clause? ~ term_clause? ~ text_encoding? ~ endianness?
+    ~ alignment? ~ window? ~ category_tag? ~ derivation? ~ constraint? ~ lenient_kw?
 }
+
+// `items Item[] until last.kind == 0`: stop after the element for which the
+// expression holds (or at the end of the input or window).
+until_clause = { until_kw ~ expr }
+
+// `line string term 0x0d 0x0a`: the bytes end at this sequence, which is
+// consumed; `optional` also accepts the end of the input or window.
+term_clause = { term_kw ~ numeric_constant+ ~ optional_kw? }
 
 // `size n`: the field occupies exactly n bytes. Decoding stops at the end
 // of the window (`[]` arrays inside it run to its end) and skips what is

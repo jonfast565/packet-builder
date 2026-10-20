@@ -6,7 +6,7 @@ use super::value::{Struct, Value};
 use super::{check, checked_members, intern, pad, sext};
 use std::collections::HashMap;
 
-use crate::ir::{BitPart, Codec, Count, Mark, Module, Packet, Step, StrMode, ValueType};
+use crate::ir::{BitPart, Codec, Count, Mark, Module, Packet, Step, StrMode, TextEncoding, ValueType};
 
 /// Decode packet `name` from the start of `data`; trailing bytes are ignored.
 pub fn decode(module: &Module, name: &str, data: &[u8]) -> Result<Value, PbError> {
@@ -73,7 +73,7 @@ impl Decoder<'_, '_, '_> {
             let (false, Some(e)) = (m.lenient, m.derived_expr()) else { continue };
             let r: &PbReader = self.r;
             let sum = |a, f, t, hf, ht| r.checksum(a, f, t, hf, ht);
-            let want = eval(e, &Env { values: &values, marks: Some(&marks), checksum: Some(&sum) }).int();
+            let want = eval(e, &Env { values: &values, marks: Some(&marks), checksum: Some(&sum), last: None }).int();
             let got = match values[mi] {
                 Value::Int(v) => v as i64,
                 _ => 0,
@@ -116,7 +116,8 @@ impl Decoder<'_, '_, '_> {
                 self.r.at(intern(name));
                 match (member, codec) {
                     (Some(mi), Codec::Str(mode)) => {
-                        values[*mi] = self.string(values, mode, array.as_ref())?;
+                        let enc = p.members[*mi].encoding;
+                        values[*mi] = self.string(values, mode, array.as_ref(), enc)?;
                     }
                     (None, codec) => {
                         let bits = codec.bits() as usize;
@@ -124,6 +125,8 @@ impl Decoder<'_, '_, '_> {
                             None => bits,
                             Some(Count::Expr(e)) => self.count(e, values, bits as u64)? * bits,
                             Some(Count::Remaining) => self.r.remaining_bits(),
+                            // Rejected by the analysis for padding.
+                            Some(Count::Until(_) | Count::Terminated { .. }) => 0,
                         };
                         self.r.skip_bits(skip)?;
                     }
@@ -153,7 +156,7 @@ impl Decoder<'_, '_, '_> {
                     (Some(_), _, Some(count)) => {
                         let n = match count {
                             Count::Expr(e) => self.count(e, values, 8)?,
-                            Count::Remaining => self.r.remaining_bits() / 8,
+                            _ => self.r.remaining_bits() / 8,
                         };
                         Some(Box::new(Value::Bytes(self.r.read_bytes(n)?)))
                     }
@@ -180,6 +183,7 @@ impl Decoder<'_, '_, '_> {
                 return Ok(Value::Float(f64::from_bits(raw)));
             }
             Codec::Mac => return Ok(Value::Bytes(self.r.read_bytes(6)?)),
+            Codec::Varint(kind) => self.r.read_varint(kind.id())?,
             Codec::Packet(n) => {
                 let p = find(self.module, n, self.r)?;
                 return Ok(Value::Struct(self.packet(p)?));
@@ -193,6 +197,24 @@ impl Decoder<'_, '_, '_> {
         let ebits = codec.min_elem_bits();
         let n = match count {
             Count::Expr(e) => Some(self.count(e, values, ebits)?),
+            Count::Terminated { term, optional } => return Ok(Value::Bytes(self.r.read_until(term, *optional)?)),
+            Count::Until(cond) => {
+                let mut items = Vec::new();
+                while self.r.remaining_bits() > 0 {
+                    self.r.at_index(items.len());
+                    let item = self.elem(codec, ty)?;
+                    let stop = eval(cond, &Env { last: Some(&item), ..Env::new(values) }).bool();
+                    items.push(item);
+                    if stop {
+                        break;
+                    }
+                }
+                if ty.is_byte() {
+                    let bytes = items.iter().map(|v| if let Value::Int(i) = v { *i as u8 } else { 0 }).collect();
+                    return Ok(Value::Bytes(bytes));
+                }
+                return Ok(Value::List(items));
+            }
             Count::Remaining => None,
         };
         if ty.is_byte() {
@@ -217,9 +239,16 @@ impl Decoder<'_, '_, '_> {
         Ok(Value::List(items))
     }
 
-    fn string(&mut self, values: &[Value], mode: &StrMode, array: Option<&Count>) -> Result<Value, PbError> {
+    fn string(
+        &mut self,
+        values: &[Value],
+        mode: &StrMode,
+        array: Option<&Count>,
+        enc: TextEncoding,
+    ) -> Result<Value, PbError> {
         let raw = match (mode, array) {
             (StrMode::CString, _) => self.r.read_cstring()?,
+            (StrMode::Terminated { term, optional }, _) => self.r.read_until(term, *optional)?,
             (StrMode::Prefixed { prefix, .. }, _) => {
                 let n = match self.elem(prefix, &ValueType::Int { width: 64, signed: false })? {
                     Value::Int(v) => v as i64,
@@ -237,13 +266,7 @@ impl Decoder<'_, '_, '_> {
                 self.r.read_bytes(n)?
             }
         };
-        let raw = if *mode == StrMode::Padded {
-            let end = raw.iter().position(|b| *b == 0).unwrap_or(raw.len());
-            raw[..end].to_vec()
-        } else {
-            raw
-        };
-        Ok(Value::Str(self.r.utf8(raw)?))
+        Ok(Value::Str(self.r.text(raw, enc.id(), *mode == StrMode::Padded)?))
     }
 
     fn bitfield(

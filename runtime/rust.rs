@@ -270,6 +270,98 @@ impl<'a> PbReader<'a> {
         String::from_utf8(raw).map_err(|_| self.error(PbErrorKind::Text, "invalid UTF-8".into()))
     }
 
+    /// Text in encoding `enc` (0 UTF-8, 1 ASCII, 2 Latin-1, 3 UTF-16LE,
+    /// 4 UTF-16BE); with `padded`, the text ends at the first NUL character.
+    pub fn text(&self, raw: Vec<u8>, enc: u32, padded: bool) -> Result<String, PbError> {
+        let bad = |what: &str| self.error(PbErrorKind::Text, format!("invalid {}", what));
+        match enc {
+            3 | 4 => {
+                if raw.len() % 2 != 0 {
+                    return Err(bad("UTF-16 (an odd number of bytes)"));
+                }
+                let mut units: Vec<u16> = raw
+                    .chunks(2)
+                    .map(|c| if enc == 3 { u16::from_le_bytes([c[0], c[1]]) } else { u16::from_be_bytes([c[0], c[1]]) })
+                    .collect();
+                if padded && let Some(n) = units.iter().position(|u| *u == 0) {
+                    units.truncate(n);
+                }
+                String::from_utf16(&units).map_err(|_| bad("UTF-16"))
+            }
+            _ => {
+                let raw = if padded { pb_until_nul(raw) } else { raw };
+                match enc {
+                    1 if raw.iter().any(|b| *b >= 0x80) => Err(bad("ASCII")),
+                    1 | 2 => Ok(raw.iter().map(|b| *b as char).collect()),
+                    _ => String::from_utf8(raw).map_err(|_| bad("UTF-8")),
+                }
+            }
+        }
+    }
+
+    /// One variable-length integer (`kind`: 0 uleb128, 1 sleb128, 2 zigzag,
+    /// 3 vlq, 4 quic); signed kinds return the two's complement bits.
+    pub fn read_varint(&mut self, kind: u32) -> Result<u64, PbError> {
+        let too_long = |r: &Self| r.error(PbErrorKind::Invalid, "the varint does not fit in 64 bits".into());
+        if kind == 4 {
+            let first = self.read_uint(1, false)?;
+            let n = 1u32 << (first >> 6);
+            let mut v = first & 0x3f;
+            if n > 1 {
+                v = (v << (8 * (n - 1))) | self.read_uint(n - 1, false)?;
+            }
+            return Ok(v);
+        }
+        let mut v: u64 = 0;
+        let mut shift = 0u32;
+        loop {
+            let b = self.read_uint(1, false)?;
+            if kind == 3 {
+                if v >> 57 != 0 {
+                    return Err(too_long(self));
+                }
+                v = (v << 7) | (b & 0x7f);
+            } else {
+                // The 10th byte holds bit 63 only (and, for sleb128, its sign).
+                let last_ok = if kind == 1 { b & 0x7f == 0 || b & 0x7f == 0x7f } else { b & 0x7e == 0 };
+                if shift >= 64 || (shift == 63 && (b & 0x80 != 0 || !last_ok)) {
+                    return Err(too_long(self));
+                }
+                v |= (b & 0x7f) << shift;
+            }
+            shift += 7;
+            if b & 0x80 == 0 {
+                if kind == 1 && shift < 64 && b & 0x40 != 0 {
+                    v |= u64::MAX << shift;
+                }
+                break;
+            }
+        }
+        if kind == 2 {
+            v = (v >> 1) ^ (v & 1).wrapping_neg();
+        }
+        Ok(v)
+    }
+
+    /// Bytes up to `term`, which is consumed. Without it: the rest of the
+    /// input when `optional`, otherwise an error.
+    pub fn read_until(&mut self, term: &[u8], optional: bool) -> Result<Vec<u8>, PbError> {
+        let start = self.pos >> 3;
+        let end = self.limit >> 3;
+        let window = &self.data[start..end];
+        match window.windows(term.len()).position(|w| w == term) {
+            Some(n) => {
+                self.pos += (n + term.len()) * 8;
+                Ok(window[..n].to_vec())
+            }
+            None if optional => {
+                self.pos = self.limit;
+                Ok(window.to_vec())
+            }
+            None => Err(self.short(self.remaining_bits() + 8, "the terminated field")),
+        }
+    }
+
     /// Checksum `algo` of the input between two bit positions (whole bytes);
     /// the bytes between `hole_from` and `hole_to` count as zero.
     pub fn checksum(&self, algo: u32, from: usize, to: usize, hole_from: usize, hole_to: usize) -> u64 {
@@ -400,6 +492,83 @@ impl PbWriter {
     /// bytes); the bytes between `hole_from` and `hole_to` count as zero.
     pub fn checksum(&self, algo: u32, from: usize, to: usize, hole_from: usize, hole_to: usize) -> u64 {
         pb_checksum(algo, &self.buf, from / 8, to / 8, hole_from / 8, hole_to / 8)
+    }
+
+    /// One variable-length integer (see `PbReader::read_varint`).
+    pub fn write_varint(&mut self, kind: u32, value: u64) -> Result<(), PbError> {
+        match kind {
+            4 => {
+                let n: u32 = match value {
+                    0..=0x3f => 1,
+                    0x40..=0x3fff => 2,
+                    0x4000..=0x3fff_ffff => 4,
+                    0x4000_0000..=0x3fff_ffff_ffff_ffff => 8,
+                    _ => {
+                        return Err(self.error(PbErrorKind::Range, format!("{} does not fit in a QUIC varint", value)));
+                    }
+                };
+                self.write_uint(value | ((n.trailing_zeros() as u64) << (8 * n - 2)), n, false);
+            }
+            1 => {
+                let mut v = value as i64;
+                loop {
+                    let b = (v & 0x7f) as u64;
+                    v >>= 7;
+                    let done = (v == 0 && b & 0x40 == 0) || (v == -1 && b & 0x40 != 0);
+                    self.write_uint(if done { b } else { b | 0x80 }, 1, false);
+                    if done {
+                        break;
+                    }
+                }
+            }
+            3 => {
+                let mut groups = vec![value & 0x7f];
+                let mut v = value >> 7;
+                while v != 0 {
+                    groups.push((v & 0x7f) | 0x80);
+                    v >>= 7;
+                }
+                for g in groups.iter().rev() {
+                    self.write_uint(*g, 1, false);
+                }
+            }
+            _ => {
+                let mut v = if kind == 2 { (value << 1) ^ (((value as i64) >> 63) as u64) } else { value };
+                loop {
+                    let b = v & 0x7f;
+                    v >>= 7;
+                    self.write_uint(if v != 0 { b | 0x80 } else { b }, 1, false);
+                    if v == 0 {
+                        break;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The bytes of `s` in encoding `enc` (see `PbReader::text`).
+    pub fn text(&self, s: &str, enc: u32) -> Result<Vec<u8>, PbError> {
+        match enc {
+            1 | 2 => {
+                let max = if enc == 1 { 0x7f } else { 0xff };
+                s.chars()
+                    .map(|c| if (c as u32) <= max { Ok(c as u8) } else { Err(c) })
+                    .collect::<Result<Vec<u8>, char>>()
+                    .map_err(|c| self.error(PbErrorKind::Text, format!("{:?} is not {}", c, if enc == 1 { "ASCII" } else { "Latin-1" })))
+            }
+            3 => Ok(s.encode_utf16().flat_map(|u| u.to_le_bytes()).collect()),
+            4 => Ok(s.encode_utf16().flat_map(|u| u.to_be_bytes()).collect()),
+            _ => Ok(s.as_bytes().to_vec()),
+        }
+    }
+
+    /// A terminated value must not contain its terminator.
+    pub fn check_no_term(&self, bytes: &[u8], term: &[u8]) -> Result<(), PbError> {
+        if bytes.windows(term.len()).any(|w| w == term) {
+            return Err(self.error(PbErrorKind::Invalid, "the value contains its terminator".into()));
+        }
+        Ok(())
     }
 
     pub fn check_fits(&self, len: usize, size: i64) -> Result<(), PbError> {

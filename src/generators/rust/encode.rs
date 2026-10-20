@@ -1,10 +1,11 @@
 //! Rust encoder statements.
 
+use super::decode::byte_list;
 use super::expr::store_value;
 use super::naming::{Rust, ident, scalar_type};
 use crate::generators::common::union::{C_LOGIC, arm_test, mismatch_message, uses_selector, variant_name};
 use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mark_var, mask, string_literal};
-use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, ValueType};
+use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, TextEncoding, ValueType};
 
 /// Statements that write one element held in `v`.
 fn write_elem(out: &mut Out, codec: &Codec, ty: &ValueType, v: &str) {
@@ -29,6 +30,7 @@ fn write_elem(out: &mut Out, codec: &Codec, ty: &ValueType, v: &str) {
             out.line(format!("pb_w.write_uint({}.to_bits(), 8, {});", v, Rust::little(endian)))
         }
         Codec::Mac => out.line(format!("pb_w.write_bytes(&{});", v)),
+        Codec::Varint(k) => out.line(format!("pb_w.write_varint({}, {} as u64)?;", k.id(), v)),
         Codec::Packet(_) => out.line(format!("{}.encode_to(pb_w)?;", v)),
         Codec::Str(_) => unreachable!("strings are handled by Encoder::string"),
     }
@@ -158,6 +160,8 @@ impl StepEmitter for Encoder<'_> {
             (Codec::Bits { width }, Some(at)) => {
                 out.line(format!("pb_w.patch_bits({}, {} as u64, {});", mark_var(at), v, width))
             }
+            // Varints are never patched (rejected by the analysis).
+            (Codec::Varint(k), None) => out.line(format!("pb_w.write_varint({}, {} as u64)?;", k.id(), v)),
             _ => unreachable!("derived fields are integers"),
         }
     }
@@ -168,12 +172,22 @@ impl StepEmitter for Encoder<'_> {
 
     fn string(&self, out: &mut Out, m: &Member, mode: &StrMode, array: Option<&Count>) {
         out.open("{");
-        out.line(format!("let pb_b = p.{}.as_bytes();", ident(&m.name)));
+        if m.encoding == TextEncoding::Utf8 {
+            out.line(format!("let pb_b = p.{}.as_bytes();", ident(&m.name)));
+        } else {
+            out.line(format!("let pb_e = pb_w.text(&p.{}, {})?;", ident(&m.name), m.encoding.id()));
+            out.line("let pb_b = pb_e.as_slice();");
+        }
         match (mode, array) {
             (StrMode::CString, _) => {
                 out.line("pb_w.check_no_nul(pb_b)?;");
                 out.line("pb_w.write_bytes(pb_b);");
                 out.line("pb_w.write_bytes(&[0]);");
+            }
+            (StrMode::Terminated { term, .. }, _) => {
+                out.line(format!("pb_w.check_no_term(pb_b, &{})?;", byte_list(term)));
+                out.line("pb_w.write_bytes(pb_b);");
+                out.line(format!("pb_w.write_bytes(&{});", byte_list(term)));
             }
             (StrMode::Prefixed { prefix, width }, _) => {
                 out.line(format!("pb_w.check_u(pb_b.len() as u64, {})?;", width));
@@ -202,7 +216,7 @@ impl StepEmitter for Encoder<'_> {
             Some(Count::Expr(e)) => {
                 out.line(format!("pb_w.write_zero_bits(({}).max(0) as usize * {});", self.scope.expr(e), bits))
             }
-            Some(Count::Remaining) => {}
+            Some(Count::Remaining | Count::Until(_) | Count::Terminated { .. }) => {}
         }
     }
 
@@ -216,6 +230,12 @@ impl StepEmitter for Encoder<'_> {
             && !self.packet().depends_on_wire(e)
         {
             out.line(format!("pb_w.check_len({}.len(), {})?;", place, self.scope.expr(e)));
+        }
+        if let Count::Terminated { term, .. } = count {
+            out.line(format!("pb_w.check_no_term(&{}, &{})?;", place, byte_list(term)));
+            out.line(format!("pb_w.write_bytes(&{});", place));
+            out.line(format!("pb_w.write_bytes(&{});", byte_list(term)));
+            return;
         }
         if ty.is_byte() {
             out.line(format!("pb_w.write_bytes(&{});", place));

@@ -6,7 +6,7 @@ use super::naming::{C, ident, len_ident, scalar_type};
 use super::packet::arm_kind;
 use crate::generators::common::union::{C_LOGIC, arm_test};
 use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mark_var, mask};
-use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, ValueType};
+use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, TextEncoding, ValueType};
 
 /// Statements that decode one element into the lvalue `lv`.
 fn read_elem(out: &mut Out, codec: &Codec, ty: &ValueType, lv: &str) {
@@ -25,6 +25,7 @@ fn read_elem(out: &mut Out, codec: &Codec, ty: &ValueType, lv: &str) {
             out.line(format!("PB_TRY(pb_read_bytes(pb_r, {}, 6));", lv));
             return;
         }
+        Codec::Varint(k) => out.line(format!("PB_TRY(pb_read_varint(pb_r, {}, &pb_u));", k.id())),
         Codec::Packet(n) => {
             out.line(format!("PB_TRY({}_decode_from(&{}, pb_r));", n, lv));
             return;
@@ -35,6 +36,12 @@ fn read_elem(out: &mut Out, codec: &Codec, ty: &ValueType, lv: &str) {
         ValueType::Int { width, signed: true } => out.line(format!("{} = ({})pb_sext(pb_u, {});", lv, st, width)),
         _ => out.line(format!("{} = ({})pb_u;", lv, st)),
     }
+}
+
+/// `(const uint8_t *)"\x0d\x0a", 2`
+pub fn term_args(term: &[u8]) -> String {
+    let bytes: String = term.iter().map(|b| format!("\\x{:02x}", b)).collect();
+    format!("(const uint8_t *)\"{}\", {}", bytes, term.len())
 }
 
 pub struct Decoder<'a> {
@@ -57,6 +64,7 @@ impl<'a> Decoder<'a> {
                 match count {
                     Count::Expr(e) => out.line(format!("PB_TRY(pb_count(pb_r, {}, 8, &pb_n));", self.scope.expr(e))),
                     Count::Remaining => out.line("pb_n = pb_remaining_bits(pb_r) / 8;"),
+                    Count::Until(_) | Count::Terminated { .. } => unreachable!("union arms have no until or term"),
                 }
                 out.line(format!("{}.data = pb_alloc(pb_n, 1);", target));
                 out.line(format!("if (!{}.data) {{ pb_rc = PB_ERR_NOMEM; goto pb_fail; }}", target));
@@ -148,24 +156,45 @@ impl StepEmitter for Decoder<'_> {
         let p = self.scope.packet;
         let target = format!("&p->{}, &p->{}", ident(&m.name), len_ident(p, m));
         let padded = if *mode == StrMode::Padded { 1 } else { 0 };
+        let enc = m.encoding.id();
+        // Read `n` bytes of text.
+        let read = |n: &str, padded: i32| {
+            if m.encoding == TextEncoding::Utf8 {
+                format!("PB_TRY(pb_read_text(pb_r, {}, {}, {}));", n, padded, target)
+            } else {
+                format!("PB_TRY(pb_read_text_enc(pb_r, {}, {}, {}, {}));", n, padded, enc, target)
+            }
+        };
         match (mode, array) {
-            (StrMode::CString, _) => out.line(format!("PB_TRY(pb_read_ctext(pb_r, {}));", target)),
+            (StrMode::CString, _) if m.encoding == TextEncoding::Utf8 => {
+                out.line(format!("PB_TRY(pb_read_ctext(pb_r, {}));", target))
+            }
+            (StrMode::CString, _) => {
+                out.line(format!("PB_TRY(pb_read_text_until(pb_r, {}, 0, {}, {}));", term_args(&[0]), enc, target))
+            }
+            (StrMode::Terminated { term, optional }, _) => out.line(format!(
+                "PB_TRY(pb_read_text_until(pb_r, {}, {}, {}, {}));",
+                term_args(term),
+                C::flag(*optional),
+                enc,
+                target
+            )),
             (StrMode::Prefixed { prefix, .. }, _) => {
                 out.open("{");
                 out.line("size_t pb_n;");
                 read_elem(out, prefix, &PREFIX_LEN, "pb_u");
                 out.line("PB_TRY(pb_count(pb_r, (int64_t)pb_u, 8, &pb_n));");
-                out.line(format!("PB_TRY(pb_read_text(pb_r, pb_n, 0, {}));", target));
+                out.line(read("pb_n", 0));
                 out.close("}");
             }
             (_, Some(Count::Expr(e))) => {
                 out.open("{");
                 out.line("size_t pb_n;");
                 out.line(format!("PB_TRY(pb_count(pb_r, {}, 8, &pb_n));", self.scope.expr(e)));
-                out.line(format!("PB_TRY(pb_read_text(pb_r, pb_n, {}, {}));", padded, target));
+                out.line(read("pb_n", padded));
                 out.close("}");
             }
-            _ => out.line(format!("PB_TRY(pb_read_text(pb_r, pb_remaining_bits(pb_r) / 8, {}, {}));", padded, target)),
+            _ => out.line(read("pb_remaining_bits(pb_r) / 8", padded)),
         }
     }
 
@@ -181,6 +210,8 @@ impl StepEmitter for Decoder<'_> {
                 out.close("}");
             }
             Some(Count::Remaining) => out.line("PB_TRY(pb_skip_bits(pb_r, pb_remaining_bits(pb_r)));"),
+            // Padding cannot use `until` or `term` (rejected by the analysis).
+            Some(Count::Until(_) | Count::Terminated { .. }) => {}
         }
     }
 
@@ -210,6 +241,32 @@ impl StepEmitter for Decoder<'_> {
                     read_elem(out, codec, ty, &format!("{}[pb_i]", target));
                     out.close("}");
                 }
+            }
+            Count::Terminated { term, optional } => {
+                out.line(format!(
+                    "PB_TRY(pb_read_until(pb_r, {}, {}, &{}, &{}));",
+                    term_args(term),
+                    C::flag(*optional),
+                    target,
+                    len
+                ));
+            }
+            Count::Until(cond) => {
+                out.line("size_t pb_cap = 0;");
+                out.open("for (pb_i = 0; pb_remaining_bits(pb_r) > 0; pb_i++) {");
+                out.line(format!("PB_TRY(pb_grow((void **)&{}, &pb_cap, pb_i + 1, sizeof *{}));", target, target));
+                out.line(format!("{} = pb_i + 1;", len));
+                out.line("pb_at_index(&pb_r->tr, pb_i);");
+                read_elem(out, codec, ty, &format!("{}[pb_i]", target));
+                out.open("{");
+                out.line(format!("const {} *pb_last = &{}[pb_i];", scalar_type(ty), target));
+                out.line(format!("if ({}) break;", self.scope.expr(cond)));
+                out.close("}");
+                out.close("}");
+                out.open(format!("if (!{}) {{", target));
+                out.line(format!("{} = pb_alloc(0, sizeof *{});", target, target));
+                out.line(format!("if (!{}) {{ pb_rc = PB_ERR_NOMEM; goto pb_fail; }}", target));
+                out.close("}");
             }
             Count::Remaining => {
                 out.line("size_t pb_cap = 0;");

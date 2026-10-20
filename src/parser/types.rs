@@ -1,6 +1,6 @@
 //! Type names and byte order keywords.
 
-use crate::ast::{Endianness, TypeNode};
+use crate::ast::{Endianness, TypeNode, VarintKind};
 
 /// "unsigned   char" -> "unsigned char"
 pub(super) fn normalize_type(name: &str) -> String {
@@ -42,6 +42,11 @@ pub(super) fn type_from_name(type_name: &str, word: u32) -> TypeNode {
         "macaddress" => TypeNode::MacAddress,
         "datetime" => TypeNode::DateTime,
         "bytes" => TypeNode::Bytes,
+        "uleb128" | "varint" => TypeNode::Varint(VarintKind::Uleb128),
+        "sleb128" => TypeNode::Varint(VarintKind::Sleb128),
+        "zigzag" => TypeNode::Varint(VarintKind::Zigzag),
+        "vlq" => TypeNode::Varint(VarintKind::Vlq),
+        "quic_varint" => TypeNode::Varint(VarintKind::Quic),
         other => {
             // bit_type: validated by check_literals
             let signed = other.starts_with('i');

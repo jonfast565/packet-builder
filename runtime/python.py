@@ -174,6 +174,72 @@ class PbReader(_PbTrace):
         except UnicodeDecodeError:
             raise self.error(PbError.TEXT, "invalid UTF-8") from None
 
+    def text(self, raw, enc, padded):
+        """Text in encoding `enc` (0 UTF-8, 1 ASCII, 2 Latin-1, 3 UTF-16LE,
+        4 UTF-16BE); `padded` cuts it at the first NUL character."""
+        if enc >= 3:
+            if len(raw) % 2:
+                raise self.error(PbError.TEXT, "invalid UTF-16 (an odd number of bytes)")
+            if padded:
+                for i in range(0, len(raw), 2):
+                    if raw[i] == 0 and raw[i + 1] == 0:
+                        raw = raw[:i]
+                        break
+        elif padded:
+            raw = _pb_until_nul(raw)
+        name = _PB_ENCODINGS[enc]
+        try:
+            return bytes(raw).decode(name)
+        except UnicodeDecodeError:
+            raise self.error(PbError.TEXT, "invalid %s" % name) from None
+
+    def read_varint(self, kind):
+        """One variable-length integer (`kind`: 0 uleb128, 1 sleb128,
+        2 zigzag, 3 vlq, 4 quic); signed kinds return the two's complement bits."""
+        if kind == 4:
+            first = self.read_uint(1, False)
+            n = 1 << (first >> 6)
+            v = first & 0x3F
+            if n > 1:
+                v = (v << (8 * (n - 1))) | self.read_uint(n - 1, False)
+            return v
+        v = 0
+        shift = 0
+        while True:
+            b = self.read_uint(1, False)
+            if kind == 3:
+                if v >> 57:
+                    raise self.error(PbError.INVALID, "the varint does not fit in 64 bits")
+                v = (v << 7) | (b & 0x7F)
+            else:
+                # The 10th byte holds bit 63 only (and, for sleb128, its sign).
+                last_ok = (b & 0x7F) in (0, 0x7F) if kind == 1 else (b & 0x7E) == 0
+                if shift >= 64 or (shift == 63 and (b & 0x80 or not last_ok)):
+                    raise self.error(PbError.INVALID, "the varint does not fit in 64 bits")
+                v |= (b & 0x7F) << shift
+            shift += 7
+            if not b & 0x80:
+                if kind == 1 and shift < 64 and b & 0x40:
+                    v |= ((1 << 64) - 1) << shift
+                break
+        v &= (1 << 64) - 1
+        if kind == 2:
+            v = (v >> 1) ^ (-(v & 1) & ((1 << 64) - 1))
+        return v
+
+    def read_until(self, term, optional):
+        """The bytes before `term`, consuming both. Without the terminator: the
+        rest of the input when `optional`, otherwise an error."""
+        start = self.pos >> 3
+        end = self.data.find(term, start, self.limit >> 3)
+        if end < 0:
+            if not optional:
+                raise self._short(self.remaining_bits() + 8, "the terminated field")
+            self.pos = self.limit
+            return self.data[start:self.limit >> 3]
+        self.pos = (end + len(term)) * 8
+        return self.data[start:end]
+
     def checksum(self, algo, start, end, hole_start, hole_end):
         """Checksum `algo` of the input between two bit positions (whole
         bytes); the bytes between `hole_start` and `hole_end` count as zero."""
@@ -260,6 +326,52 @@ class PbWriter(_PbTrace):
         except UnicodeEncodeError:
             raise self.error(PbError.TEXT, "the string is not valid Unicode") from None
 
+    def text_bytes(self, text, enc):
+        """`text` in encoding `enc` (see PbReader.text)."""
+        try:
+            return text.encode(_PB_ENCODINGS[enc])
+        except UnicodeEncodeError:
+            raise self.error(PbError.TEXT, "the string is not valid %s" % _PB_ENCODINGS[enc]) from None
+
+    def write_varint(self, kind, v):
+        """One variable-length integer (see PbReader.read_varint)."""
+        v &= (1 << 64) - 1
+        if kind == 4:
+            for n, code in ((1, 0), (2, 1), (4, 2), (8, 3)):
+                if v < 1 << (8 * n - 2):
+                    self.write_uint(v | (code << (8 * n - 2)), n, False)
+                    return
+            raise self.error(PbError.RANGE, "%d does not fit in a QUIC varint" % v)
+        if kind == 1:
+            x = v - (1 << 64) if v >> 63 else v
+            while True:
+                b = x & 0x7F
+                x >>= 7
+                done = (x == 0 and not b & 0x40) or (x == -1 and b & 0x40)
+                self.write_uint(b if done else b | 0x80, 1, False)
+                if done:
+                    return
+        if kind == 3:
+            groups = [v & 0x7F]
+            v >>= 7
+            while v:
+                groups.append((v & 0x7F) | 0x80)
+                v >>= 7
+            self.write_bytes(bytes(reversed(groups)))
+            return
+        if kind == 2:
+            v = ((v << 1) ^ (((1 << 64) - 1) if v >> 63 else 0)) & ((1 << 64) - 1)
+        while True:
+            b = v & 0x7F
+            v >>= 7
+            self.write_uint(b | 0x80 if v else b, 1, False)
+            if not v:
+                return
+
+    def check_no_term(self, data, term):
+        if bytes(term) in bytes(data):
+            raise self.error(PbError.INVALID, "the value contains its terminator")
+
     def check_fits(self, length, size):
         if length > size:
             raise self.error(PbError.RANGE, "%d byte(s) do not fit in %d" % (length, size))
@@ -333,6 +445,9 @@ def _pb_checksum(algo, buf, start, end, hole_start, hole_end):
     for b in data:
         x ^= b
     return x
+
+
+_PB_ENCODINGS = ("utf-8", "ascii", "latin-1", "utf-16-le", "utf-16-be")
 
 
 def _pb_pad(offset, unit):

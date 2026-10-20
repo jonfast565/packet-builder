@@ -424,3 +424,60 @@ fn windows_start_on_bytes() {
 fn union_type_names_are_free() {
     assert_error("packet PBody { }\npacket P { t uint8, body switch t { _ => x } }", "the union type `PBody`");
 }
+
+#[test]
+fn padding_cannot_repeat_until_or_end_at_a_terminator() {
+    assert_error("packet P { _ uint8[] until last == 0 }", "padding (`_`) cannot use `until` or `term`");
+}
+
+#[test]
+fn until_and_term_are_exclusive() {
+    assert_error("packet P { a uint8[] until last == 0 term 0x00 }", "`a` cannot have both `until` and `term`");
+}
+
+#[test]
+fn until_needs_an_open_array() {
+    assert_error("packet P { a uint8[2] until last == 0 }", "`until` on `a` needs an array without a length");
+    assert_error("packet P { a uint8 until a == 0 }", "`until` on `a` needs an array without a length");
+}
+
+#[test]
+fn term_applies_to_open_bytes_and_strings() {
+    assert_error("packet P { a uint16[] term 0x00 }", "`term` on `a` applies to bytes and strings without a length");
+    assert_error("packet P { a bytes[4] term 0x00 }", "`term` on `a` applies to bytes and strings without a length");
+}
+
+#[test]
+fn terminators_are_bytes() {
+    assert_error("packet P { a bytes term 0x100 }", "terminator byte 256 of `a` is not a byte");
+}
+
+#[test]
+fn text_encodings_apply_to_strings() {
+    assert_error("packet P { a uint8 latin1 }", "`a` is not a string, so it cannot have the text encoding `latin1`");
+    assert_error("packet P { a cstring utf16le }", "`a` is UTF-16, so it cannot end at a byte terminator");
+    assert_error("packet P { a string term 0x00 utf16be }", "`a` is UTF-16, so it cannot end at a byte terminator");
+}
+
+#[test]
+fn last_names_a_field_of_a_packet_element() {
+    assert_error(
+        "packet E { k uint8 } packet P { a E[] until last == 0 }",
+        "`last` is a `E`; name one of its fields, as in `last.kind`",
+    );
+    assert_error("packet P { a uint8[] until last.k == 0 }", "`last` is not a packet, so it has no fields");
+}
+
+#[test]
+fn varints_are_byte_aligned_without_a_byte_order() {
+    assert_error("packet P { a u3, b uleb128, _ u5 }", "variable-length integers");
+    assert_error("packet P { a uleb128 le }", "varint `a` cannot have a byte order");
+}
+
+#[test]
+fn varints_cannot_be_patched() {
+    assert_error(
+        "packet P { n uleb128 = sizeof(data), data bytes[n] }",
+        "varint `n` cannot be derived from the encoded bytes",
+    );
+}

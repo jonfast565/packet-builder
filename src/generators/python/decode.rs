@@ -4,7 +4,13 @@ use super::expr::store_value;
 use super::naming::{Python, float_format, ident};
 use crate::generators::common::union::{PY_LOGIC, arm_test};
 use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mark_var, mask, string_literal};
-use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, ValueType};
+use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, TextEncoding, ValueType};
+
+/// `b"\x0d\x0a"`
+pub fn byte_list(bytes: &[u8]) -> String {
+    let items: String = bytes.iter().map(|b| format!("\\x{:02x}", b)).collect();
+    format!("b\"{}\"", items)
+}
 
 fn read_elem(codec: &Codec, ty: &ValueType) -> String {
     let raw = match codec {
@@ -14,6 +20,7 @@ fn read_elem(codec: &Codec, ty: &ValueType) -> String {
             return format!("struct.unpack(\"{}\", pb_r.read_bytes({}))[0]", float_format(*width, endian), width / 8);
         }
         Codec::Mac => return "pb_r.read_bytes(6)".into(),
+        Codec::Varint(k) => format!("pb_r.read_varint({})", k.id()),
         Codec::Packet(n) => return format!("{}.decode_from(pb_r)", n),
         Codec::Str(_) => unreachable!("strings are handled by Decoder::string"),
     };
@@ -117,14 +124,28 @@ impl StepEmitter for Decoder<'_> {
     fn string(&self, out: &mut Out, m: &Member, mode: &StrMode, array: Option<&Count>) {
         let raw = match (mode, array) {
             (StrMode::CString, _) => "pb_r.read_cstring()".to_string(),
+            (StrMode::Terminated { term, optional }, _) => {
+                format!("pb_r.read_until({}, {})", byte_list(term), Python::flag(*optional))
+            }
             (StrMode::Prefixed { prefix, .. }, _) => {
                 format!("pb_r.read_bytes(pb_r.count({}, 8))", read_elem(prefix, &PREFIX_LEN))
             }
             (_, Some(Count::Expr(e))) => format!("pb_r.read_bytes(pb_r.count({}, 8))", self.scope.expr(e)),
             _ => "pb_r.read_bytes(pb_r.remaining_bits() // 8)".to_string(),
         };
-        let raw = if *mode == StrMode::Padded { format!("_pb_until_nul({})", raw) } else { raw };
-        out.line(format!("p.{} = pb_r.utf8({})", ident(&m.name), raw));
+        let padded = *mode == StrMode::Padded;
+        if m.encoding == TextEncoding::Utf8 {
+            let raw = if padded { format!("_pb_until_nul({})", raw) } else { raw };
+            out.line(format!("p.{} = pb_r.utf8({})", ident(&m.name), raw));
+        } else {
+            out.line(format!(
+                "p.{} = pb_r.text({}, {}, {})",
+                ident(&m.name),
+                raw,
+                m.encoding.id(),
+                Python::flag(padded)
+            ));
+        }
     }
 
     fn padding(&self, out: &mut Out, codec: &Codec, array: Option<&Count>) {
@@ -135,6 +156,8 @@ impl StepEmitter for Decoder<'_> {
                 out.line(format!("pb_r.skip_bits(pb_r.count({}, {}) * {})", self.scope.expr(e), bits, bits))
             }
             Some(Count::Remaining) => out.line("pb_r.skip_bits(pb_r.remaining_bits())"),
+            // Padding cannot use `until` or `term` (rejected by the analysis).
+            Some(Count::Until(_) | Count::Terminated { .. }) => {}
         }
     }
 
@@ -157,6 +180,20 @@ impl StepEmitter for Decoder<'_> {
                     out.line(format!("{}.append({})", target, read_elem(codec, ty)));
                     out.pop();
                 }
+            }
+            Count::Terminated { term, optional } => {
+                out.line(format!("{} = pb_r.read_until({}, {})", target, byte_list(term), Python::flag(*optional)))
+            }
+            Count::Until(cond) => {
+                out.line(format!("{} = []", target));
+                out.open("while pb_r.remaining_bits() > 0:");
+                out.line(format!("pb_r.at_index(len({}))", target));
+                out.line(format!("pb_last = {}", read_elem(codec, ty)));
+                out.line(format!("{}.append(pb_last)", target));
+                out.open(format!("if {}:", self.scope.expr(cond)));
+                out.line("break");
+                out.pop();
+                out.pop();
             }
             Count::Remaining => {
                 if ty.is_byte() {

@@ -220,6 +220,106 @@ pub const PbReader = struct {
         return out;
     }
 
+    /// The next `n` bytes, borrowed from the input.
+    pub fn bytesSlice(self: *PbReader, n: usize) PbError![]const u8 {
+        if (n > self.remainingBits() / 8) return self.short(n * 8);
+        const start = self.pos >> 3;
+        self.pos += n * 8;
+        return self.data[start .. start + n];
+    }
+
+    /// The bytes before `term` (borrowed), consuming both. Without the
+    /// terminator: the rest of the input when `optional`, otherwise an error.
+    pub fn untilSlice(self: *PbReader, term: []const u8, optional: bool) PbError![]const u8 {
+        const start = self.pos >> 3;
+        const window = self.data[0 .. self.limit >> 3];
+        if (std.mem.indexOfPos(u8, window, start, term)) |end| {
+            self.pos = (end + term.len) * 8;
+            return self.data[start..end];
+        }
+        if (!optional) return self.short(self.remainingBits() + 8);
+        self.pos = self.limit;
+        return self.data[start..window.len];
+    }
+
+    /// `raw` in encoding `enc` (0 UTF-8, 1 ASCII, 2 Latin-1, 3 UTF-16LE,
+    /// 4 UTF-16BE) as new UTF-8 text; `padded` cuts it at the first NUL.
+    pub fn text(self: *PbReader, allocator: std.mem.Allocator, raw: []const u8, enc: u32, padded: bool) PbError![]u8 {
+        var out = std.ArrayList(u8).init(allocator);
+        errdefer out.deinit();
+        var buf: [4]u8 = undefined;
+        if (enc <= 2) {
+            var src = raw;
+            if (padded) {
+                if (std.mem.indexOfScalar(u8, src, 0)) |end| src = src[0..end];
+            }
+            if (enc == 0) {
+                if (!std.unicode.utf8ValidateSlice(src)) return self.fail(PbError.InvalidText);
+                try out.appendSlice(src);
+            } else for (src) |b| {
+                if (enc == 1 and b >= 0x80) return self.fail(PbError.InvalidText);
+                const n = std.unicode.utf8Encode(b, &buf) catch unreachable;
+                try out.appendSlice(buf[0..n]);
+            }
+            return out.toOwnedSlice();
+        }
+        if (raw.len % 2 != 0) return self.fail(PbError.InvalidText);
+        var i: usize = 0;
+        while (i < raw.len) : (i += 2) {
+            const unit = struct {
+                fn get(r: []const u8, k: usize, le: bool) u21 {
+                    return if (le) @as(u21, r[k]) | @as(u21, r[k + 1]) << 8 else @as(u21, r[k]) << 8 | @as(u21, r[k + 1]);
+                }
+            }.get;
+            var cp = unit(raw, i, enc == 3);
+            if (cp == 0 and padded) break;
+            if (cp >= 0xD800 and cp <= 0xDBFF and i + 3 < raw.len) {
+                const lo = unit(raw, i + 2, enc == 3);
+                if (lo >= 0xDC00 and lo <= 0xDFFF) {
+                    cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+                    i += 2;
+                }
+            }
+            if (cp >= 0xD800 and cp <= 0xDFFF) return self.fail(PbError.InvalidText);
+            const n = std.unicode.utf8Encode(cp, &buf) catch unreachable;
+            try out.appendSlice(buf[0..n]);
+        }
+        return out.toOwnedSlice();
+    }
+
+    /// One variable-length integer (`kind`: 0 uleb128, 1 sleb128, 2 zigzag,
+    /// 3 vlq, 4 quic); signed kinds return the two's complement bits.
+    pub fn readVarint(self: *PbReader, kind: u32) PbError!u64 {
+        if (kind == 4) {
+            const first = try self.readUint(1, false);
+            const n: u4 = @as(u4, 1) << @intCast(first >> 6);
+            var q = first & 0x3f;
+            if (n > 1) q = (q << @intCast(8 * @as(u7, n - 1))) | try self.readUint(n - 1, false);
+            return q;
+        }
+        var v: u64 = 0;
+        var shift: u32 = 0;
+        while (true) {
+            const b = try self.readUint(1, false);
+            if (kind == 3) {
+                if (v >> 57 != 0) return self.fail(PbError.Invalid);
+                v = (v << 7) | (b & 0x7f);
+            } else {
+                // The 10th byte holds bit 63 only (and, for sleb128, its sign).
+                const last_ok = if (kind == 1) (b & 0x7f == 0 or b & 0x7f == 0x7f) else (b & 0x7e == 0);
+                if (shift >= 64 or (shift == 63 and (b & 0x80 != 0 or !last_ok))) return self.fail(PbError.Invalid);
+                v |= (b & 0x7f) << @intCast(shift);
+            }
+            shift += 7;
+            if (b & 0x80 == 0) {
+                if (kind == 1 and shift < 64 and b & 0x40 != 0) v |= ~@as(u64, 0) << @intCast(shift);
+                break;
+            }
+        }
+        if (kind == 2) v = (v >> 1) ^ (0 -% (v & 1));
+        return v;
+    }
+
     /// Checksum `algo` of the input between two bit positions (whole bytes);
     /// the bytes between `hole_from` and `hole_to` count as zero.
     pub fn checksum(self: *const PbReader, algo: u32, from: usize, to: usize, hole_from: usize, hole_to: usize) u64 {
@@ -316,6 +416,90 @@ pub const PbWriter = struct {
     pub fn checkText(self: *PbWriter, s: []const u8, allow_nul: bool) PbError!void {
         if (!allow_nul and std.mem.indexOfScalar(u8, s, 0) != null) return self.fail(PbError.InvalidText);
         if (!std.unicode.utf8ValidateSlice(s)) return self.fail(PbError.InvalidText);
+    }
+
+    /// One variable-length integer (see PbReader.readVarint).
+    pub fn writeVarint(self: *PbWriter, kind: u32, value: u64) PbError!void {
+        var v = value;
+        switch (kind) {
+            4 => {
+                if (v <= 0x3f) return self.writeUint(v, 1, false);
+                if (v <= 0x3fff) return self.writeUint(v | 1 << 14, 2, false);
+                if (v <= 0x3fffffff) return self.writeUint(v | 2 << 30, 4, false);
+                if (v <= 0x3fffffffffffffff) return self.writeUint(v | 3 << 62, 8, false);
+                return self.fail(PbError.Range);
+            },
+            1 => {
+                var x: i64 = @bitCast(v);
+                while (true) {
+                    const b: u64 = @intCast(x & 0x7f);
+                    x >>= 7;
+                    const done = (x == 0 and b & 0x40 == 0) or (x == -1 and b & 0x40 != 0);
+                    try self.writeUint(if (done) b else b | 0x80, 1, false);
+                    if (done) return;
+                }
+            },
+            3 => {
+                var groups: [10]u64 = undefined;
+                var k: usize = 0;
+                groups[k] = v & 0x7f;
+                k += 1;
+                v >>= 7;
+                while (v != 0) : (v >>= 7) {
+                    groups[k] = (v & 0x7f) | 0x80;
+                    k += 1;
+                }
+                while (k > 0) {
+                    k -= 1;
+                    try self.writeUint(groups[k], 1, false);
+                }
+            },
+            else => {
+                if (kind == 2) v = (v << 1) ^ @as(u64, @bitCast(@as(i64, @bitCast(v)) >> 63));
+                while (true) {
+                    const b = v & 0x7f;
+                    v >>= 7;
+                    try self.writeUint(if (v != 0) b | 0x80 else b, 1, false);
+                    if (v == 0) return;
+                }
+            },
+        }
+    }
+
+    /// The size in bytes of UTF-8 text `s` in encoding `enc` (see
+    /// PbReader.text); an error if a character has no encoding there.
+    pub fn textSize(self: *PbWriter, s: []const u8, enc: u32) PbError!usize {
+        if (enc == 0) return s.len;
+        var it = (std.unicode.Utf8View.init(s) catch return self.fail(PbError.InvalidText)).iterator();
+        var n: usize = 0;
+        while (it.nextCodepoint()) |cp| {
+            if ((enc == 1 and cp > 0x7f) or (enc == 2 and cp > 0xff)) return self.fail(PbError.InvalidText);
+            n += if (enc <= 2) 1 else if (cp >= 0x10000) 4 else 2;
+        }
+        return n;
+    }
+
+    /// Write UTF-8 text `s` in encoding `enc` (checked by textSize).
+    pub fn writeText(self: *PbWriter, s: []const u8, enc: u32) PbError!void {
+        if (enc == 0) return self.writeBytes(s);
+        var it = (std.unicode.Utf8View.init(s) catch return self.fail(PbError.InvalidText)).iterator();
+        const le = enc == 3;
+        while (it.nextCodepoint()) |cp| {
+            if (enc <= 2) {
+                try self.writeUint(cp, 1, false);
+            } else if (cp >= 0x10000) {
+                const c = cp - 0x10000;
+                try self.writeUint(0xD800 + (c >> 10), 2, le);
+                try self.writeUint(0xDC00 + (c & 0x3FF), 2, le);
+            } else {
+                try self.writeUint(cp, 2, le);
+            }
+        }
+    }
+
+    /// The bytes written since bit `from` must not contain the terminator.
+    pub fn checkNoTerm(self: *PbWriter, from: usize, term: []const u8) PbError!void {
+        if (std.mem.indexOf(u8, self.buf.items[from / 8 ..], term) != null) return self.fail(PbError.Invalid);
     }
 
     pub fn checkFits(self: *PbWriter, len: usize, size: i64) PbError!void {

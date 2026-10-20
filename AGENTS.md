@@ -15,7 +15,7 @@ source ──parser──▶ PacketExprList ──ir::analyze──▶ ir::Modul
 | `src/ast.rs` | parse-tree types (`TypeNode`, `ExprNode`, `PacketExpr`, ...). |
 | `src/ir/model.rs` | the validated model every backend consumes: `Packet`, `Member`, `ValueType`, `Codec`, `Step`. |
 | `src/ir/expr.rs` | type-checked expressions (`TExpr`). |
-| `src/ir/analysis/` | builds the model. `packet.rs` is a `PacketBuilder` that runs the passes in order (declare → counts → calcs → derived → lay out → finish); `consts.rs` folds named constants into a `ConstTable` (run before packets) and checks `: Category` tags; `checks.rs` turns `==`/`in`/`strict` into checks; `derive.rs` orders derived fields and their marks; `union.rs` lays out `switch` fields and `size n` windows; `cursor.rs` tracks the bit offset; `typecheck.rs`, `codec.rs`, `context.rs`, `types.rs` hold the rest. |
+| `src/ir/analysis/` | builds the model. `packet.rs` is a `PacketBuilder` that runs the passes in order (declare → counts → calcs → derived → lay out → finish); `consts.rs` folds named constants into a `ConstTable` (run before packets) and checks `: Category` tags; `checks.rs` turns `==`/`in`/`strict` into checks; `derive.rs` orders derived fields and their marks; `union.rs` lays out `switch` fields and `size n` windows; `repeat.rs` resolves `until`, `term` and text encodings; `cursor.rs` tracks the bit offset; `typecheck.rs`, `codec.rs`, `context.rs`, `types.rs` hold the rest. |
 | `src/ir/layout.rs` | the `layout` command's report. |
 | `src/ir/interp/` | the reference interpreter: decodes/encodes a `Module` directly, using `runtime/rust.rs` (included as `interp::rt`). `show.rs` renders decoded values for the `decode` command. |
 | `src/pcap.rs` | pcap/pcapng reading and pcap writing (no dependencies). |

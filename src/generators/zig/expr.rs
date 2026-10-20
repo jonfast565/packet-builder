@@ -95,6 +95,15 @@ impl ExprLang for Scope<'_, Zig> {
         format!("@as(i64, @bitCast({}.checksum({}, {}, {}, {}, {})))", rw, algo.id(), from, to, hf, ht)
     }
 
+    /// The element just appended to `pb_l` by a repeat-until loop.
+    fn last(&self, field: Option<(&str, &str)>, ty: Ty) -> String {
+        let f = if ty == Ty::Float { "pbF64" } else { "pbI64" };
+        match field {
+            Some((_, name)) => format!("{}(pb_l.items[pb_l.items.len - 1].{})", f, super::naming::ident(name)),
+            None => format!("{}(pb_l.items[pb_l.items.len - 1])", f),
+        }
+    }
+
     fn convert(&self, e: String, from: Ty, to: Ty) -> String {
         match (from, to) {
             (Ty::Bool, Ty::Int) => format!("@as(i64, @intFromBool({}))", e),

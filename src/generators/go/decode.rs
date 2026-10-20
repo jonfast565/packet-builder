@@ -6,7 +6,13 @@ use super::naming::{Go, field_name, member_type, scalar_type};
 use super::packet::arm_kind;
 use crate::generators::common::union::variant_name;
 use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mark_var, mask, string_literal};
-use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, ValueType};
+use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, TextEncoding, ValueType};
+
+/// `[]byte{0x0d, 0x0a}`
+pub fn byte_list(bytes: &[u8]) -> String {
+    let items: Vec<String> = bytes.iter().map(|b| format!("0x{:02x}", b)).collect();
+    format!("[]byte{{{}}}", items.join(", "))
+}
 
 fn read_elem(codec: &Codec, ty: &ValueType) -> String {
     let st = scalar_type(ty);
@@ -18,6 +24,7 @@ fn read_elem(codec: &Codec, ty: &ValueType) -> String {
         }
         Codec::Float { endian, .. } => return format!("math.Float64frombits(pbR.ReadUint(8, {}))", Go::little(endian)),
         Codec::Mac => return "pbR.ReadMac()".into(),
+        Codec::Varint(k) => format!("pbR.ReadVarint({})", k.id()),
         Codec::Packet(n) => return format!("pbDecode{}(pbR)", n),
         Codec::Str(_) => unreachable!("strings are handled by Decoder::string"),
     };
@@ -52,6 +59,9 @@ impl<'a> Decoder<'a> {
                 out.line(format!("{} = &pbV", target));
             }
             (Some(ty), Some(codec), None) => out.line(format!("{} = {}", target, read_elem(codec, ty))),
+            (_, _, Some(Count::Until(_) | Count::Terminated { .. })) => {
+                unreachable!("union arms have no until or term")
+            }
             _ => {}
         }
     }
@@ -126,13 +136,21 @@ impl StepEmitter for Decoder<'_> {
     fn string(&self, out: &mut Out, m: &Member, mode: &StrMode, array: Option<&Count>) {
         let raw = match (mode, array) {
             (StrMode::CString, _) => "pbR.ReadCString()".to_string(),
+            (StrMode::Terminated { term, optional }, _) => {
+                format!("pbR.ReadUntil({}, {})", byte_list(term), optional)
+            }
             (StrMode::Prefixed { prefix, .. }, _) => {
                 format!("pbR.ReadBytes(pbR.Count(int64({}), 8))", read_elem(prefix, &PREFIX_LEN))
             }
             (_, Some(Count::Expr(e))) => format!("pbR.ReadBytes(pbR.Count({}, 8))", self.scope.expr(e)),
             _ => "pbR.ReadBytes(pbR.RemainingBits()/8)".to_string(),
         };
-        out.line(format!("p.{} = pbR.Text({}, {})", field_name(&m.name), raw, *mode == StrMode::Padded));
+        let padded = *mode == StrMode::Padded;
+        if m.encoding == TextEncoding::Utf8 {
+            out.line(format!("p.{} = pbR.Text({}, {})", field_name(&m.name), raw, padded));
+        } else {
+            out.line(format!("p.{} = pbR.TextEnc({}, {}, {})", field_name(&m.name), raw, m.encoding.id(), padded));
+        }
     }
 
     fn padding(&self, out: &mut Out, codec: &Codec, array: Option<&Count>) {
@@ -143,6 +161,8 @@ impl StepEmitter for Decoder<'_> {
                 out.line(format!("pbR.SkipBits(pbR.Count({}, {}) * {})", self.scope.expr(e), bits, bits))
             }
             Some(Count::Remaining) => out.line("pbR.SkipBits(pbR.RemainingBits())"),
+            // Padding cannot use `until` or `term` (rejected by the analysis).
+            Some(Count::Until(_) | Count::Terminated { .. }) => {}
         }
     }
 
@@ -168,6 +188,21 @@ impl StepEmitter for Decoder<'_> {
                     out.close("}");
                     out.close("}");
                 }
+            }
+            Count::Terminated { term, optional } => {
+                out.line(format!("{} = pbR.ReadUntil({}, {})", target, byte_list(term), optional))
+            }
+            Count::Until(cond) => {
+                out.line(format!("{} = {}{{}}", target, member_type(m)));
+                out.open("for pbR.Err() == nil && pbR.RemainingBits() > 0 {");
+                out.line(format!("pbR.AtIndex(len({}))", target));
+                out.line(format!("pbLast := {}", read_elem(codec, ty)));
+                out.line(format!("pbStop := {}", self.scope.expr(cond)));
+                out.line(format!("{} = append({}, pbLast)", target, target));
+                out.open("if pbStop {");
+                out.line("break");
+                out.close("}");
+                out.close("}");
             }
             Count::Remaining => {
                 if ty.is_byte() {
