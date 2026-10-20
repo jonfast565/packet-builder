@@ -3,10 +3,12 @@
 mod decode;
 mod encode;
 mod expr;
+mod json;
 mod naming;
 mod packet;
+mod stream;
 
-pub use naming::{member_type, namespace, prop_name, scalar_type};
+pub use naming::{arm_class, member_type, namespace, prop_name, scalar_type};
 
 use crate::generators::Backend;
 use crate::generators::common::{ConstEmitter, GenOptions, Out, const_pascal};
@@ -28,9 +30,13 @@ impl Backend for CSharpGenerator {
         out.open("{");
         out.buf.push_str(RUNTIME);
         self.emit_constants(&mut out, module);
+        for u in &module.unions {
+            out.line("");
+            packet::emit_union(&mut out, u, &namespace(opts), opts.zero_copy);
+        }
         for p in &module.packets {
             out.line("");
-            packet::emit_packet(&mut out, p);
+            packet::emit_packet(&mut out, module, p, opts.zero_copy);
         }
         out.close("}");
         out.buf

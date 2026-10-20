@@ -1,17 +1,21 @@
 //! Go encoder statements. Like decoding, the writer records the first error.
 
+use super::decode::{byte_list, call_args, with_args};
+use super::expr::store_value;
 use super::naming::{Go, field_name};
-use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mask};
-use crate::ir::{BitPart, Codec, Count, Member, Packet, StrMode, ValueType};
+use super::packet::arm_kind;
+use crate::generators::common::union::{C_LOGIC, arm_test, mismatch_message, uses_selector, variant_name};
+use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mark_var, mask, string_literal};
+use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, PacketRef, StrMode, TExpr, TextEncoding, ValueType};
 
-fn write_elem(out: &mut Out, codec: &Codec, ty: &ValueType, v: &str, field: &str) {
+fn write_elem(out: &mut Out, codec: &Codec, ty: &ValueType, v: &str) {
     if let ValueType::Int { width, signed } = ty
         && ty.needs_range_check()
     {
         if *signed {
-            out.line(format!("pbW.CheckI(int64({}), {}, \"{}\")", v, width, field));
+            out.line(format!("pbW.CheckI(int64({}), {})", v, width));
         } else {
-            out.line(format!("pbW.CheckU(uint64({}), {}, \"{}\")", v, width, field));
+            out.line(format!("pbW.CheckU(uint64({}), {})", v, width));
         }
     }
     match codec {
@@ -26,7 +30,8 @@ fn write_elem(out: &mut Out, codec: &Codec, ty: &ValueType, v: &str, field: &str
             out.line(format!("pbW.WriteUint(math.Float64bits({}), 8, {})", v, Go::little(endian)))
         }
         Codec::Mac => out.line(format!("pbW.WriteBytes({}[:])", v)),
-        Codec::Packet(_) => out.line(format!("{}.EncodeTo(pbW)", v)),
+        Codec::Varint(k) => out.line(format!("pbW.WriteVarint({}, uint64({}))", k.id(), v)),
+        Codec::Packet(r) => out.line(format!("{}.EncodeTo(pbW{})", v, call_args(r))),
         Codec::Str(_) => unreachable!("strings are handled by Encoder::string"),
     }
 }
@@ -39,6 +44,27 @@ impl<'a> Encoder<'a> {
     pub fn new(packet: &'a Packet) -> Self {
         Encoder { scope: Scope::new(packet, Mode::Encode) }
     }
+
+    fn array_body(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec, count: &Count) {
+        let place = format!("p.{}", field_name(&m.name));
+        if let Count::Expr(e) = count
+            && !self.packet().depends_on_wire(e)
+        {
+            out.line(format!("pbW.CheckLen(len({}), {})", place, self.scope.expr(e)));
+        }
+        if let Count::Terminated { term, .. } = count {
+            out.line(format!("pbW.CheckNoTerm({}, {})", place, byte_list(term)));
+            out.line(format!("pbW.WriteBytes({})", place));
+            out.line(format!("pbW.WriteBytes({})", byte_list(term)));
+        } else if ty.is_byte() {
+            out.line(format!("pbW.WriteBytes({})", place));
+        } else {
+            out.open(format!("for pbI := range {} {{", place));
+            out.line("pbW.AtIndex(pbI)");
+            write_elem(out, codec, ty, &format!("{}[pbI]", place));
+            out.close("}");
+        }
+    }
 }
 
 impl StepEmitter for Encoder<'_> {
@@ -46,33 +72,165 @@ impl StepEmitter for Encoder<'_> {
         self.scope.packet
     }
 
+    fn check(&self, out: &mut Out, cond: &TExpr, message: &str) {
+        out.open(format!("if !{} {{", self.scope.expr(cond)));
+        out.line(format!("pbW.Fail(PbConstraint, \"%s\", {})", string_literal(message)));
+        out.close("}");
+    }
+
+    fn encoding(&self) -> bool {
+        true
+    }
+
+    fn locate(&self, out: &mut Out, field: &str) {
+        out.line(format!("pbW.At(\"{}\")", field));
+    }
+
+    fn switch(&self, out: &mut Out, m: &Member, selector: &TExpr, arms: &[Arm]) {
+        let ValueType::Union(u) = &m.ty else { return };
+        let place = format!("p.{}", field_name(&m.name));
+        out.open("{");
+        if uses_selector(arms) {
+            out.line(format!("pbSel := {}", self.scope.expr(selector)));
+        }
+        out.line(format!("switch {}.Kind {{", place));
+        for arm in arms {
+            out.line(format!("case {}:", arm_kind(u, arm)));
+            out.push();
+            if let Some(test) = arm_test(arm, arms, "pbSel", &C_LOGIC) {
+                out.open(format!("if !{} {{", test));
+                out.line(format!("pbW.Fail(PbMismatch, \"%s\", {})", string_literal(&mismatch_message(&m.name, arm))));
+                out.close("}");
+            }
+            let target = format!("{}.{}", place, variant_name(arm));
+            match (&arm.ty, &arm.codec, &arm.count) {
+                (Some(_), _, Some(count)) => {
+                    if let Count::Expr(e) = count
+                        && !self.packet().depends_on_wire(e)
+                    {
+                        out.line(format!("pbW.CheckLen(len({}), {})", target, self.scope.expr(e)));
+                    }
+                    out.line(format!("pbW.WriteBytes({})", target));
+                }
+                (Some(ValueType::Packet(n)), Some(codec @ Codec::Packet(r)), None) => {
+                    out.line(format!("pbV := {}", target));
+                    out.open("if pbV == nil {");
+                    out.line(format!("pbV = &{}{{}}", n));
+                    out.close("}");
+                    with_args(&self.scope, out, codec, |out| out.line(format!("pbV.EncodeTo(pbW{})", call_args(r))));
+                }
+                (Some(ty), Some(codec), None) => write_elem(out, codec, ty, &target),
+                _ => {}
+            }
+            out.pop();
+        }
+        out.line("default:");
+        out.line(format!(
+            "\tpbW.Fail(PbInvalid, \"%s\", {})",
+            string_literal(&format!("`{}` holds no known arm", m.name))
+        ));
+        out.line("}");
+        out.close("}");
+    }
+
+    fn at(&self, out: &mut Out, m: &Member, target: &PacketRef, offset: &TExpr, root: bool) {
+        out.open("{");
+        let from = if root { "0" } else { "pb_start" };
+        out.line(format!("pbS := pbW.Sub({}, {}, {})", from, self.scope.expr(offset), root));
+        with_args(&self.scope, out, &Codec::Packet(target.clone()), |out| {
+            out.line(format!("p.{}.EncodeTo(pbS{})", field_name(&m.name), call_args(target)))
+        });
+        out.line("pbW.Place(pbS)");
+        out.close("}");
+    }
+
+    fn open_window(&self, out: &mut Out, id: usize, size: Option<&TExpr>) {
+        if let Some(e) = size {
+            out.line(format!("pb_win{} := pbW.PositionBits()", id));
+            out.line(format!("pb_wsz{} := {}", id, self.scope.expr(e)));
+        }
+    }
+
+    fn close_window(&self, out: &mut Out, id: usize, sized: bool, exact: bool) {
+        if sized {
+            out.line(format!("pbW.EndWindow(pb_win{}, pb_wsz{}, {})", id, id, exact));
+        }
+    }
+
+    fn mark(&self, out: &mut Out, mark: Mark) {
+        out.line(format!("{} := pbW.PositionBits()", mark_var(mark)));
+    }
+
+    fn define_local(&self, out: &mut Out, m: &Member, value: &TExpr) {
+        if m.is_derived() {
+            out.line(format!("var pbc_{} int64 = {}", m.name, self.scope.expr(value)));
+        } else {
+            out.line(format!("pbc_{} := {}", m.name, store_value(value, self.scope.expr(value), &m.ty)));
+        }
+    }
+
+    fn write_derived(&self, out: &mut Out, m: &Member, codec: &Codec, at: Option<Mark>) {
+        let v = format!("pbc_{}", m.name);
+        if let ValueType::Int { width, signed } = &m.ty {
+            if *signed {
+                out.line(format!("pbW.CheckI({}, {})", v, width));
+            } else {
+                out.line(format!("pbW.CheckU(uint64({}), {})", v, width));
+            }
+        }
+        match (codec, at) {
+            (Codec::Bytes { nbytes, endian }, None) => {
+                out.line(format!("pbW.WriteUint(uint64({}), {}, {})", v, nbytes, Go::little(endian)))
+            }
+            (Codec::Bytes { nbytes, endian }, Some(at)) => {
+                out.line(format!("pbW.PatchUint({}, uint64({}), {}, {})", mark_var(at), v, nbytes, Go::little(endian)))
+            }
+            (Codec::Bits { width }, None) => out.line(format!("pbW.WriteBits(uint64({}), {})", v, width)),
+            (Codec::Bits { width }, Some(at)) => {
+                out.line(format!("pbW.PatchBits({}, uint64({}), {})", mark_var(at), v, width))
+            }
+            // Varints are never patched (rejected by the analysis).
+            (Codec::Varint(k), None) => out.line(format!("pbW.WriteVarint({}, uint64({}))", k.id(), v)),
+            _ => unreachable!("derived fields are integers"),
+        }
+    }
+
     fn align(&self, out: &mut Out, bytes: u64) {
-        out.line(format!("pbW.WriteZeroBits(int64(pbPad(pbW.PositionBits()-pbStart, {})))", bytes * 8))
+        out.line(format!("pbW.WriteZeroBits(int64(pbPad(pbW.PositionBits()-pb_start, {})))", bytes * 8))
     }
 
     fn string(&self, out: &mut Out, m: &Member, mode: &StrMode, array: Option<&Count>) {
         out.open("{");
-        out.line(format!("pbW.CheckUTF8(p.{}, \"{}\")", field_name(&m.name), m.name));
-        out.line(format!("pbB := []byte(p.{})", field_name(&m.name)));
+        out.line(format!("pbW.CheckUTF8(p.{})", field_name(&m.name)));
+        if m.encoding == TextEncoding::Utf8 {
+            out.line(format!("pbB := []byte(p.{})", field_name(&m.name)));
+        } else {
+            out.line(format!("pbB := pbW.EncodeText(p.{}, {})", field_name(&m.name), m.encoding.id()));
+        }
         match (mode, array) {
             (StrMode::CString, _) => {
-                out.line(format!("pbW.CheckNoNul(pbB, \"{}\")", m.name));
+                out.line("pbW.CheckNoNul(pbB)");
                 out.line("pbW.WriteBytes(pbB)");
                 out.line("pbW.WriteBytes([]byte{0})");
             }
+            (StrMode::Terminated { term, .. }, _) => {
+                out.line(format!("pbW.CheckNoTerm(pbB, {})", byte_list(term)));
+                out.line("pbW.WriteBytes(pbB)");
+                out.line(format!("pbW.WriteBytes({})", byte_list(term)));
+            }
             (StrMode::Prefixed { prefix, width }, _) => {
-                out.line(format!("pbW.CheckU(uint64(len(pbB)), {}, \"{}\")", width, m.name));
-                write_elem(out, prefix, &PREFIX_LEN, "len(pbB)", &m.name);
+                out.line(format!("pbW.CheckU(uint64(len(pbB)), {})", width));
+                write_elem(out, prefix, &PREFIX_LEN, "len(pbB)");
                 out.line("pbW.WriteBytes(pbB)");
             }
             (StrMode::Padded, Some(Count::Expr(e))) => {
                 out.line(format!("pbN := {}", self.scope.expr(e)));
-                out.line(format!("pbW.CheckFits(len(pbB), pbN, \"{}\")", m.name));
+                out.line("pbW.CheckFits(len(pbB), pbN)");
                 out.line("pbW.WriteBytes(pbB)");
                 out.line("pbW.WriteZeroBits((pbN - int64(len(pbB))) * 8)");
             }
-            (_, Some(Count::Expr(e))) => {
-                out.line(format!("pbW.CheckLen(len(pbB), {}, \"{}\")", self.scope.expr(e), m.name));
+            (_, Some(Count::Expr(e))) if !self.packet().depends_on_wire(e) => {
+                out.line(format!("pbW.CheckLen(len(pbB), {})", self.scope.expr(e)));
                 out.line("pbW.WriteBytes(pbB)");
             }
             _ => out.line("pbW.WriteBytes(pbB)"),
@@ -85,26 +243,16 @@ impl StepEmitter for Encoder<'_> {
         match array {
             None => out.line(format!("pbW.WriteZeroBits({})", bits)),
             Some(Count::Expr(e)) => out.line(format!("pbW.WriteZeroBits(pbMax({}, 0) * {})", self.scope.expr(e), bits)),
-            Some(Count::Remaining) => {}
+            Some(Count::Remaining | Count::Until(_) | Count::Terminated { .. }) => {}
         }
     }
 
     fn scalar(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec) {
-        write_elem(out, codec, ty, &format!("p.{}", field_name(&m.name)), &m.name);
+        with_args(&self.scope, out, codec, |out| write_elem(out, codec, ty, &format!("p.{}", field_name(&m.name))));
     }
 
     fn array(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec, count: &Count) {
-        let place = format!("p.{}", field_name(&m.name));
-        if let Count::Expr(e) = count {
-            out.line(format!("pbW.CheckLen(len({}), {}, \"{}\")", place, self.scope.expr(e), m.name));
-        }
-        if ty.is_byte() {
-            out.line(format!("pbW.WriteBytes({})", place));
-        } else {
-            out.open(format!("for pbI := range {} {{", place));
-            write_elem(out, codec, ty, &format!("{}[pbI]", place), &m.name);
-            out.close("}");
-        }
+        with_args(&self.scope, out, codec, |out| self.array_body(out, m, ty, codec, count));
     }
 
     fn bitfield(&self, out: &mut Out, container: &Codec, container_width: u32, parts: &[BitPart]) {
@@ -114,9 +262,9 @@ impl StepEmitter for Encoder<'_> {
             let m = self.scope.member(part.member);
             let place = format!("p.{}", field_name(&m.name));
             if part.signed {
-                out.line(format!("pbW.CheckI(int64({}), {}, \"{}\")", place, part.width, m.name));
+                out.line(format!("pbW.CheckI(int64({}), {})", place, part.width));
             } else {
-                out.line(format!("pbW.CheckU(uint64({}), {}, \"{}\")", place, part.width, m.name));
+                out.line(format!("pbW.CheckU(uint64({}), {})", place, part.width));
             }
             out.line(format!("pbC |= (uint64({}) & 0x{:x}) << {}", place, mask(part.width), part.shift));
         }

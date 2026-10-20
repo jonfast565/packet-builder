@@ -22,6 +22,9 @@ pub enum ExprNode {
     // function call: name(args...)
     Call(String, Vec<ExprNode>),
 
+    // a function over fields: len(x), sizeof(a..b), offsetof(f), crc32(self)
+    RangeCall(String, FieldRange),
+
     GuardExpression(Box<ExprNode>, Box<ExprNode>, Box<ExprNode>), // when cond then a otherwise b
 
     // aggregates: sumof foo / productof bar
@@ -34,6 +37,19 @@ pub enum ExprNode {
     Mult(Box<ExprNode>, Box<ExprNode>),
     Div(Box<ExprNode>, Box<ExprNode>),
     Pow(Box<ExprNode>, Box<ExprNode>),
+    Mod(Box<ExprNode>, Box<ExprNode>),
+
+    // bitwise
+    Shl(Box<ExprNode>, Box<ExprNode>),
+    Shr(Box<ExprNode>, Box<ExprNode>),
+    BitAnd(Box<ExprNode>, Box<ExprNode>),
+    BitOr(Box<ExprNode>, Box<ExprNode>),
+    BitXor(Box<ExprNode>, Box<ExprNode>),
+
+    // unary: -x, ~x, not x
+    Neg(Box<ExprNode>),
+    BitNot(Box<ExprNode>),
+    Not(Box<ExprNode>),
 
     // comparisons
     Gt(Box<ExprNode>, Box<ExprNode>),
@@ -46,6 +62,15 @@ pub enum ExprNode {
     // boolean
     And(Box<ExprNode>, Box<ExprNode>),
     Or(Box<ExprNode>, Box<ExprNode>),
+}
+
+/// The argument of a function over fields.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FieldRange {
+    /// `self`: the whole packet.
+    Whole,
+    /// `a` or `a..b` (inclusive).
+    Fields(String, Option<String>),
 }
 
 /// Source location of a declaration (byte offsets into the input).
@@ -89,6 +114,89 @@ pub enum TypeNode {
     },
     /// Reference to another packet by name.
     Packet(String),
+    /// A variable-length integer.
+    Varint(VarintKind),
+}
+
+/// Variable-length integer encodings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VarintKind {
+    /// Unsigned LEB128 (protobuf `varint`): 7 bits per byte, least significant first.
+    Uleb128,
+    /// Signed LEB128 (DWARF, WebAssembly).
+    Sleb128,
+    /// Protobuf `sint`: zigzag-mapped, then unsigned LEB128.
+    Zigzag,
+    /// 7 bits per byte, most significant first (MIDI, ASN.1 tags).
+    Vlq,
+    /// QUIC (RFC 9000): a 2-bit length (1, 2, 4 or 8 bytes) and 6 to 62 bits.
+    Quic,
+}
+
+impl VarintKind {
+    pub fn signed(self) -> bool {
+        matches!(self, VarintKind::Sleb128 | VarintKind::Zigzag)
+    }
+
+    /// The number the runtimes use for this encoding.
+    pub fn id(self) -> u32 {
+        self as u32
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            VarintKind::Uleb128 => "uleb128",
+            VarintKind::Sleb128 => "sleb128",
+            VarintKind::Zigzag => "zigzag",
+            VarintKind::Vlq => "vlq",
+            VarintKind::Quic => "quic_varint",
+        }
+    }
+}
+
+/// How a string's characters become bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TextEncoding {
+    #[default]
+    Utf8,
+    /// 7-bit ASCII; other characters are errors.
+    Ascii,
+    /// ISO-8859-1: each byte is the character with that code.
+    Latin1,
+    Utf16Le,
+    Utf16Be,
+}
+
+impl TextEncoding {
+    pub fn from_name(name: &str) -> Option<TextEncoding> {
+        Some(match name {
+            "utf8" => TextEncoding::Utf8,
+            "ascii" => TextEncoding::Ascii,
+            "latin1" => TextEncoding::Latin1,
+            "utf16le" => TextEncoding::Utf16Le,
+            "utf16be" => TextEncoding::Utf16Be,
+            _ => return None,
+        })
+    }
+
+    /// The number the runtimes use for this encoding.
+    pub fn id(self) -> u32 {
+        self as u32
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            TextEncoding::Utf8 => "utf8",
+            TextEncoding::Ascii => "ascii",
+            TextEncoding::Latin1 => "latin1",
+            TextEncoding::Utf16Le => "utf16le",
+            TextEncoding::Utf16Be => "utf16be",
+        }
+    }
+
+    pub fn is_utf16(self) -> bool {
+        matches!(self, TextEncoding::Utf16Le | TextEncoding::Utf16Be)
+    }
 }
 
 /// Array length specifier on a declaration.
@@ -110,7 +218,88 @@ pub struct TypeExpr {
     pub align: Option<u64>,
     /// `: Category`: the named constants this field's values come from.
     pub category: Option<(String, Span)>,
+    /// `= expr`: a derived field, computed when encoding.
+    pub derive: Option<ExprNode>,
+    /// `size n [exact]`: the field occupies exactly n bytes.
+    pub window: Option<WindowExpr>,
+    /// `until expr`: an array ends after the element for which expr holds.
+    pub until: Option<ExprNode>,
+    /// `term 0x0d 0x0a [optional]`: bytes or text end at this sequence.
+    pub term: Option<(Vec<u64>, bool)>,
+    /// `latin1`, `utf16le`, ...: how a string's characters become bytes.
+    pub encoding: Option<TextEncoding>,
+    /// Arguments for a packet type's parameters.
+    pub args: Vec<ExprNode>,
+    /// `at [root] offset`.
+    pub at: Option<AtExpr>,
+    pub rules: FieldRules,
     pub span: Span,
+}
+
+/// `at [root] offset` after a field.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AtExpr {
+    pub offset: ExprNode,
+    /// `at root`: from the start of the whole input rather than the packet.
+    pub root: bool,
+}
+
+/// A packet parameter: `version uint8` in `packet Body(version uint8)`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParamExpr {
+    pub name: String,
+    pub ty: TypeNode,
+    pub span: Span,
+}
+
+/// `size n [exact]` after a field.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WindowExpr {
+    pub size: ExprNode,
+    /// The content must fill the window exactly.
+    pub exact: bool,
+}
+
+/// `name switch selector { values => arm Type, ..., _ => other Type }`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SwitchExpr {
+    pub id: String,
+    pub selector: ExprNode,
+    pub arms: Vec<ArmExpr>,
+    pub align: Option<u64>,
+    pub window: Option<WindowExpr>,
+    pub span: Span,
+}
+
+/// One arm of a union.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArmExpr {
+    /// The selector values that pick this arm; None for the default (`_`).
+    pub values: Option<Vec<ExprNode>>,
+    pub name: String,
+    /// The arm's type, length and byte order; None for an empty arm.
+    pub ty: Option<(TypeNode, Option<ArrayLength>, Option<Endianness>)>,
+    /// Arguments for a packet arm's parameters.
+    pub args: Vec<ExprNode>,
+    pub span: Span,
+}
+
+/// Validation written after a field's type.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct FieldRules {
+    /// `: Category strict`: only the category's values are valid.
+    pub strict: bool,
+    pub constraint: Option<Constraint>,
+    /// `lenient`: keep the value even when a check fails.
+    pub lenient: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Constraint {
+    /// `== value`
+    Equals(ExprNode),
+    /// `in lo..hi`, inclusive
+    Range(ExprNode, ExprNode),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -128,6 +317,7 @@ pub struct BitfieldMember {
     pub width: u32,
     pub signed: bool,
     pub category: Option<(String, Span)>,
+    pub rules: FieldRules,
     pub span: Span,
 }
 
@@ -153,17 +343,32 @@ pub struct CalculatedField {
 
 /// One entry of a packet body, in source order.
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::large_enum_variant)] // a parse tree, built once
 pub enum PacketItem {
     Field(TypeExpr),
     Bitfield(BitfieldExpr),
     Calculated(CalculatedField),
     /// `align N` on its own: pad to a multiple of N bytes from the packet start.
     Align(u64, Span),
+    /// `assert expr "message"`
+    Assert(AssertExpr),
+    /// A tagged union.
+    Switch(SwitchExpr),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AssertExpr {
+    pub expr: ExprNode,
+    /// The expression as written, for the default message.
+    pub source: String,
+    pub message: Option<String>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PacketExpr {
     pub name: String,
+    pub params: Vec<ParamExpr>,
     pub items: Vec<PacketItem>,
     pub endianness: Option<Endianness>,
     /// `packet P align N`: C-struct-like natural alignment, packed to N bytes.
@@ -214,6 +419,9 @@ pub struct PacketExprList {
     pub constants: Vec<ConstDecl>,
     /// Bits in a `word` (16 unless the file says `wordsize 32`).
     pub word_size: u32,
+    /// `import "file"` declarations: the path as written, and where.
+    pub imports: Vec<(String, Span)>,
+    pub dissectors: Vec<DissectorExpr>,
 }
 
 impl TypeNode {
@@ -227,6 +435,7 @@ impl TypeNode {
             TypeNode::UnsignedInteger64 | TypeNode::Integer64 | TypeNode::Float64 | TypeNode::DateTime => 64,
             TypeNode::MacAddress => 48,
             TypeNode::Bits { width, .. } => *width,
+            TypeNode::Varint(_) => 64,
             TypeNode::Packet(_) => return None,
         })
     }
@@ -243,7 +452,20 @@ impl TypeNode {
             TypeNode::UnsignedInteger64 => (64, false),
             TypeNode::Integer64 | TypeNode::DateTime => (64, true),
             TypeNode::Bits { width, signed } => (*width, *signed),
+            TypeNode::Varint(k) => (64, k.signed()),
             _ => return None,
         })
     }
+}
+
+/// `dissector Packet { name "...", abbrev "...", tcp.port 5190, heuristic }`.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct DissectorExpr {
+    pub packet: String,
+    /// `name "..."`, `abbrev "..."` and any other quoted option.
+    pub strings: Vec<(String, String, Span)>,
+    /// `table value` registrations.
+    pub tables: Vec<(String, u64)>,
+    pub heuristic: bool,
+    pub span: Span,
 }

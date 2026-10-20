@@ -1,8 +1,8 @@
 //! Go spelling of expressions.
 
 use super::naming::{Go, scalar_type};
-use crate::generators::common::{ExprLang, Scope};
-use crate::ir::{AggOp, ArithOp, Func, TExpr, Ty, ValueType, storage_for};
+use crate::generators::common::{ExprLang, Mode, Scope};
+use crate::ir::{AggOp, ArithOp, Checksum, Func, TExpr, Ty, UnaryOp, ValueType, storage_for};
 
 impl ExprLang for Scope<'_, Go> {
     fn int_lit(&self, v: i64) -> String {
@@ -42,6 +42,20 @@ impl ExprLang for Scope<'_, Go> {
             (ArithOp::Div, _) => format!("pbDiv({}, {})", a, b),
             (ArithOp::Pow, Ty::Float) => format!("math.Pow({}, {})", a, b),
             (ArithOp::Pow, _) => format!("pbPow({}, {})", a, b),
+            (ArithOp::Mod, _) => format!("pbMod({}, {})", a, b),
+            (ArithOp::Shl, _) => format!("pbShl({}, {})", a, b),
+            (ArithOp::Shr, _) => format!("pbShr({}, {})", a, b),
+            (ArithOp::BitAnd, _) => format!("({} & {})", a, b),
+            (ArithOp::BitOr, _) => format!("({} | {})", a, b),
+            (ArithOp::BitXor, _) => format!("({} ^ {})", a, b),
+        }
+    }
+
+    fn unary(&self, op: UnaryOp, e: String, _ty: Ty) -> String {
+        match op {
+            UnaryOp::Neg => format!("(-{})", e),
+            UnaryOp::BitNot => format!("(^{})", e),
+            UnaryOp::Not => format!("(!{})", e),
         }
     }
 
@@ -55,6 +69,32 @@ impl ExprLang for Scope<'_, Go> {
             Func::Min => format!("pbMin({}, {})", args[0], args[1]),
             Func::Max => format!("pbMax({}, {})", args[0], args[1]),
         }
+    }
+
+    fn len(&self, member: usize) -> String {
+        format!("int64(len({}))", self.place(member))
+    }
+
+    fn size(&self, from: &str, to: &str) -> String {
+        format!("pbSize({}, {})", from, to)
+    }
+
+    fn checksum(&self, algo: Checksum, from: &str, to: &str, hole: Option<(&str, &str)>) -> String {
+        let rw = if self.mode == Mode::Encode { "pbW" } else { "pbR" };
+        let (hf, ht) = hole.unwrap_or(("0", "0"));
+        format!("int64({}.Checksum({}, {}, {}, {}, {}))", rw, algo.id(), from, to, hf, ht)
+    }
+
+    fn last(&self, field: Option<(&str, &str)>, ty: Ty) -> String {
+        let t = if ty == Ty::Float { "float64" } else { "int64" };
+        match field {
+            Some((_, f)) => format!("{}(pbLast.{})", t, super::naming::field_name(f)),
+            None => format!("{}(pbLast)", t),
+        }
+    }
+
+    fn param(&self, index: usize) -> String {
+        format!("int64({})", self.param_var(index))
     }
 
     fn convert(&self, e: String, from: Ty, to: Ty) -> String {

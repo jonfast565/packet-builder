@@ -34,3 +34,8 @@ fn csharp_parsers_work() {
 fn zig_parsers_work() {
     harness::run_target(&harness::zig::ZigTarget);
 }
+
+#[test]
+fn interpreter_works() {
+    harness::run_target(&harness::interp::InterpTarget);
+}

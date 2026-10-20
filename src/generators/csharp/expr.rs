@@ -1,8 +1,9 @@
 //! C# spelling of expressions.
 
 use super::naming::{CSharp, scalar_type};
+use crate::generators::common::Mode;
 use crate::generators::common::{ExprLang, Scope};
-use crate::ir::{AggOp, ArithOp, Func, Ty, ValueType, storage_for};
+use crate::ir::{AggOp, ArithOp, Checksum, Func, Ty, UnaryOp, ValueType, storage_for};
 
 impl ExprLang for Scope<'_, CSharp> {
     fn int_lit(&self, v: i64) -> String {
@@ -26,10 +27,12 @@ impl ExprLang for Scope<'_, CSharp> {
     fn aggregate(&self, member: usize, op: AggOp, ty: Ty) -> String {
         let place = self.place(member);
         match (op, ty) {
-            (AggOp::Sum, Ty::Float) => format!("{}.Aggregate(0.0d, (pbA, pbV) => pbA + (double)pbV)", place),
-            (AggOp::Product, Ty::Float) => format!("{}.Aggregate(1.0d, (pbA, pbV) => pbA * (double)pbV)", place),
-            (AggOp::Sum, _) => format!("{}.Aggregate(0L, (pbA, pbV) => unchecked(pbA + (long)pbV))", place),
-            (AggOp::Product, _) => format!("{}.Aggregate(1L, (pbA, pbV) => unchecked(pbA * (long)pbV))", place),
+            (AggOp::Sum, Ty::Float) => format!("Pb.Seq({}).Aggregate(0.0d, (pbA, pbV) => pbA + (double)pbV)", place),
+            (AggOp::Product, Ty::Float) => {
+                format!("Pb.Seq({}).Aggregate(1.0d, (pbA, pbV) => pbA * (double)pbV)", place)
+            }
+            (AggOp::Sum, _) => format!("Pb.Seq({}).Aggregate(0L, (pbA, pbV) => unchecked(pbA + (long)pbV))", place),
+            (AggOp::Product, _) => format!("Pb.Seq({}).Aggregate(1L, (pbA, pbV) => unchecked(pbA * (long)pbV))", place),
         }
     }
 
@@ -42,6 +45,21 @@ impl ExprLang for Scope<'_, CSharp> {
             (ArithOp::Div, _) => format!("Pb.Div({}, {})", a, b),
             (ArithOp::Pow, Ty::Float) => format!("Math.Pow({}, {})", a, b),
             (ArithOp::Pow, _) => format!("Pb.Pow({}, {})", a, b),
+            (ArithOp::Mod, _) => format!("Pb.Mod({}, {})", a, b),
+            (ArithOp::Shl, _) => format!("Pb.Shl({}, {})", a, b),
+            (ArithOp::Shr, _) => format!("Pb.Shr({}, {})", a, b),
+            (ArithOp::BitAnd, _) => format!("({} & {})", a, b),
+            (ArithOp::BitOr, _) => format!("({} | {})", a, b),
+            (ArithOp::BitXor, _) => format!("({} ^ {})", a, b),
+        }
+    }
+
+    fn unary(&self, op: UnaryOp, e: String, ty: Ty) -> String {
+        match (op, ty) {
+            (UnaryOp::Neg, Ty::Float) => format!("(-{})", e),
+            (UnaryOp::Neg, _) => format!("unchecked(-{})", e),
+            (UnaryOp::BitNot, _) => format!("(~{})", e),
+            (UnaryOp::Not, _) => format!("(!{})", e),
         }
     }
 
@@ -55,6 +73,35 @@ impl ExprLang for Scope<'_, CSharp> {
             Func::Min => format!("Math.Min({}, {})", args[0], args[1]),
             Func::Max => format!("Math.Max({}, {})", args[0], args[1]),
         }
+    }
+
+    fn len(&self, member: usize) -> String {
+        match self.member(member).ty {
+            ValueType::Str => format!("((long)System.Text.Encoding.UTF8.GetByteCount({}))", self.place(member)),
+            _ => format!("((long){}.Length)", self.place(member)),
+        }
+    }
+
+    fn size(&self, from: &str, to: &str) -> String {
+        format!("(({} - {}) / 8)", to, from)
+    }
+
+    fn checksum(&self, algo: Checksum, from: &str, to: &str, hole: Option<(&str, &str)>) -> String {
+        let rw = if self.mode == Mode::Encode { "pbW" } else { "pbR" };
+        let (hf, ht) = hole.unwrap_or(("0", "0"));
+        format!("unchecked((long){}.Checksum({}, {}, {}, {}, {}))", rw, algo.id(), from, to, hf, ht)
+    }
+
+    fn last(&self, field: Option<(&str, &str)>, ty: Ty) -> String {
+        let t = if ty == Ty::Float { "double" } else { "long" };
+        match field {
+            Some((packet, f)) => format!("(({})pbLast.{})", t, super::naming::prop_name(packet, f)),
+            None => format!("(({})pbLast)", t),
+        }
+    }
+
+    fn param(&self, index: usize) -> String {
+        format!("((long){})", self.param_var(index))
     }
 
     fn convert(&self, e: String, from: Ty, to: Ty) -> String {

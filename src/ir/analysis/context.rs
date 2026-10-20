@@ -3,23 +3,48 @@
 use std::collections::{HashMap, HashSet};
 
 use super::consts::ConstTable;
+use super::params::Sigs;
 use crate::ast::{PacketExpr, Span};
 use crate::errors::Diagnostic;
 use crate::ir::expr::TExpr;
-use crate::ir::model::{Member, MemberKind, Packet, Step, ValueType};
+use crate::ir::model::{Member, MemberKind, Packet, Param, Step, ValueType};
 
 pub(super) struct Ctx<'a> {
     pub packet: &'a PacketExpr,
     pub done: &'a HashMap<String, Packet>,
+    pub sigs: &'a Sigs,
     pub consts: &'a ConstTable,
+    /// This packet's parameters.
+    pub params: Vec<Param>,
     pub members: Vec<Member>,
     pub names: HashMap<String, usize>,
     pub diags: Vec<Diagnostic>,
+    /// While type-checking a derived field: `sizeof`, `offsetof` and
+    /// checksums are allowed.
+    pub allow_wire: bool,
+    /// While type-checking an `until` condition: the element type `last` has.
+    pub last: Option<ValueType>,
 }
 
 impl<'a> Ctx<'a> {
-    pub fn new(packet: &'a PacketExpr, done: &'a HashMap<String, Packet>, consts: &'a ConstTable) -> Self {
-        Ctx { packet, done, consts, members: Vec::new(), names: HashMap::new(), diags: Vec::new() }
+    pub fn new(
+        packet: &'a PacketExpr,
+        done: &'a HashMap<String, Packet>,
+        sigs: &'a Sigs,
+        consts: &'a ConstTable,
+    ) -> Self {
+        Ctx {
+            packet,
+            done,
+            sigs,
+            consts,
+            params: sigs.get(&packet.name).map(|s| s.params.clone()).unwrap_or_default(),
+            members: Vec::new(),
+            names: HashMap::new(),
+            diags: Vec::new(),
+            allow_wire: false,
+            last: None,
+        }
     }
 
     pub fn declare(&mut self, name: &str, ty: ValueType, kind: MemberKind, span: Span) {
@@ -43,7 +68,16 @@ impl<'a> Ctx<'a> {
                 span,
             ));
         }
-        self.members.push(Member { name: name.to_string(), ty, array: None, kind, category: None });
+        self.members.push(Member {
+            name: name.to_string(),
+            ty,
+            array: None,
+            kind,
+            category: None,
+            checks: Vec::new(),
+            lenient: false,
+            encoding: Default::default(),
+        });
     }
 
     /// Add calculated fields to the decode steps once their inputs are known.
@@ -70,12 +104,16 @@ impl<'a> Ctx<'a> {
         }
     }
 
+    /// `e`, the `what` (length, size, ...) of `field`, may only use values
+    /// decoded before it.
+    #[allow(clippy::too_many_arguments)]
     pub fn require_available(
         &mut self,
         e: &TExpr,
         available: &HashSet<usize>,
         scheduled: &HashSet<usize>,
         span: Span,
+        what: &str,
         field: &str,
     ) {
         let mut deps = Vec::new();
@@ -83,10 +121,15 @@ impl<'a> Ctx<'a> {
         for d in deps {
             if !available.contains(&d) && !scheduled.contains(&d) {
                 let name = self.members[d].name.clone();
-                self.diags.push(Diagnostic::new(
-                    format!("the length of `{}` uses `{}`, which is not known yet at that point", field, name),
-                    span,
-                ).with_note("lengths may only use fields declared before them (or calculated fields that depend only on those)"));
+                self.diags.push(
+                    Diagnostic::new(
+                        format!("the {} of `{}` uses `{}`, which is not known yet at that point", what, field, name),
+                        span,
+                    )
+                    .with_note(
+                        "it may only use fields declared before it (or calculated fields that depend only on those)",
+                    ),
+                );
             }
         }
     }

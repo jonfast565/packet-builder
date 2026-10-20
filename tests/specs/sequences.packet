@@ -1,0 +1,70 @@
+// Variable-length integers, repeat-until arrays, terminators and text
+// encodings. Used by tests/codegen.rs.
+
+packet Varints be {
+  a uleb128,
+  b sleb128,
+  c zigzag,
+  d vlq,
+  e quic_varint,
+  f varint
+}
+
+packet OneUleb be { v uleb128 }
+
+// TCP-style options: single-byte END and NOP, the rest kind/length/value
+// (the length counts the kind byte too).
+packet OptionValue be {
+  length uint8 = sizeof(self) + 1,
+  data bytes[length - 2]
+}
+
+packet TcpOption be {
+  kind uint8,
+  body switch kind { 0 => end, 1 => nop, _ => value OptionValue }
+}
+
+// The list ends with END, or at the end of its window.
+packet Options be {
+  opts TcpOption[] until last.kind == 0,
+  tail uint8
+}
+
+packet OptionsHeader be {
+  n uint8,
+  opts TcpOption[] until last.kind == 0 size n,
+  tail uint8
+}
+
+// Scalar elements; the condition may use earlier fields.
+packet Labels be {
+  name uint8[] until last == 0,
+  stop uint16,
+  codes uint16[] until last == stop,
+  after uint8
+}
+
+// Terminators: required, on bytes, and optional at the end.
+packet Lines be {
+  first string term 0x0d 0x0a,
+  data bytes term 0xff,
+  last string term 0x00 optional
+}
+
+packet Csv be { field string term 0x2c, rest bytes[] }
+
+// Text encodings.
+packet Texts be {
+  a string(uint8) latin1,
+  b char[6] utf16le,
+  c string(uint8) utf16be,
+  d string(uint8) ascii
+}
+
+packet Emoji be { s string(uint8) utf16be }
+
+// A derived count over a varint.
+packet Counted be {
+  n varint = len(items),
+  items uint16[n]
+}

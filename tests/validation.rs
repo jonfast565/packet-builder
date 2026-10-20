@@ -24,9 +24,8 @@ fn examples_compile() {
     for file in
         ["examples/oscar.packet", "examples/p3.packet", "examples/network.packet", "tests/specs/features.packet"]
     {
-        let src = std::fs::read_to_string(file).unwrap();
-        if let Err(e) = compile(&src) {
-            panic!("{}:\n{}", file, e.render(file, &src));
+        if let Err(e) = packet_builder::compile_file(std::path::Path::new(file)) {
+            panic!("{}:\n{}", file, e.render());
         }
     }
 }
@@ -300,4 +299,253 @@ fn category_tags_are_checked() {
         "`K.b` = 9 does not fit `x` (u3)",
     );
     assert_error("const K int8 { a = 0 - 1 }\npacket P { x uint8 : K }", "`K.a` = -1 does not fit `x` (u8)");
+}
+
+#[test]
+fn checks_need_single_integers() {
+    assert_error("packet P { a uint8[2] == 1 }", "`a` is not a single integer");
+    assert_error("packet P { s cstring == 1 }", "`s` is not a single integer");
+}
+
+#[test]
+fn checked_values_are_constants_that_fit() {
+    assert_error("packet P { a uint8, b uint8 == a }", "must be a constant integer expression");
+    assert_error("packet P { a uint8 == 300 }", "300 does not fit `a`");
+    assert_error("packet P { a u3 in 0..9 }", "9 does not fit `a`");
+    assert_error("packet P { a uint8 in 5..1 }", "the range 5..1 of `a` is empty");
+}
+
+#[test]
+fn strict_needs_a_category() {
+    assert_error("const K uint8 { x = 1 }\npacket P { a uint8 : K, b uint8 strict }", "expected");
+    assert_error("packet P { a uint8 : Missing strict }", "unknown category `Missing`");
+}
+
+#[test]
+fn lenient_needs_a_check() {
+    assert_error("packet P { a uint8 lenient }", "`lenient` on `a` has no check to relax");
+}
+
+#[test]
+fn padding_cannot_be_checked() {
+    assert_error("packet P { _ uint8 == 0 }", "padding (`_`) cannot have checks");
+}
+
+#[test]
+fn assertions_are_type_checked() {
+    assert_error("packet P { a uint8, assert b > 1 }", "unknown field `b`");
+    assert_error("packet P { assert uint8 }", "unknown field `uint8`");
+}
+
+#[test]
+fn checks_compile() {
+    compile(
+        "const K u4 { x = 1 }\npacket P be { a uint8 == 1, b u4 : K strict, c u4 in 0..3 lenient, assert a + c < 9 }",
+    )
+    .unwrap();
+}
+
+#[test]
+fn wire_functions_only_derive_fields() {
+    assert_error("packet P { a uint8, calc x uint8 = sizeof(a) }", "can only be used to derive a field");
+    assert_error("packet P { a uint8, b uint8[crc8(a)] }", "can only be used to derive a field");
+    assert_error("packet P { a uint8 = foo(a) }", "unknown function `foo`");
+}
+
+#[test]
+fn derived_fields_are_single_integers() {
+    assert_error("packet P { a uint8[2] = 1 }", "derived field `a` must be a single integer");
+    assert_error("packet P { a float32 = 1 }", "derived field `a` must be a single integer");
+    assert_error("packet P { _ uint8 = 1 }", "padding (`_`) cannot be derived");
+}
+
+#[test]
+fn derived_fields_need_sensible_inputs() {
+    assert_error("packet P { a uint8, b uint8 = len(a) }", "`a` is not an array or a string");
+    assert_error("packet P { a uint8 = a + 1 }", "uses its own value");
+    assert_error("packet P { a uint8, b uint8, c uint8 = sizeof(b..a) }", "comes after");
+    assert_error("packet P { a uint8 = crc8(b), b uint8 = crc8(a) }", "depends on a field that depends on it");
+    assert_error("packet P { f bitfield uint8 { x u4, y u4 }, s uint8 = sizeof(x) }", "not a field on the wire");
+}
+
+#[test]
+fn measured_ranges_are_whole_bytes() {
+    assert_error("packet P { a u4, s u4 = sizeof(a) }", "does not start and end on byte boundaries");
+}
+
+#[test]
+fn derived_fields_compile() {
+    compile(
+        "packet P be { n uint8 = len(xs), xs uint16[n], s uint16 = sizeof(self) lenient, c uint32 = crc32(n..xs) }",
+    )
+    .unwrap();
+}
+
+#[test]
+fn union_arms_are_distinct() {
+    assert_error("packet P { t uint8, b switch t { 1 => a uint8, 1 => c uint8 } }", "value 1 selects both `a` and `c`");
+    assert_error("packet P { t uint8, b switch t { _ => a uint8, _ => c uint8 } }", "has two `_` arms");
+    assert_error("packet P { t uint8, b switch t { 1 => a uint8, 2 => a uint16 } }", "has two arms named `a`");
+    assert_error("packet P { t uint8, b switch t { t => a uint8 } }", "must be constant integers");
+}
+
+#[test]
+fn union_arms_hold_simple_types() {
+    assert_error(
+        "packet P { t uint8, b switch t { 1 => s cstring } }",
+        "must hold a packet, an integer, bytes, or nothing",
+    );
+    assert_error(
+        "packet P { t uint8, b switch t { 1 => s uint16[2] } }",
+        "must hold a packet, an integer, bytes, or nothing",
+    );
+    assert_error("packet P { t uint8, b switch t { 1 => s Missing } }", "unknown type `Missing`");
+}
+
+#[test]
+fn open_ended_unions_come_last() {
+    assert_error("packet P { t uint8, b switch t { _ => r bytes[] }, x uint8 }", "must be the last field");
+    compile("packet P { t uint8, n uint8, b switch t { _ => r bytes[] } size n, x uint8 }").unwrap();
+}
+
+#[test]
+fn unions_are_not_values() {
+    assert_error("packet P { t uint8, b switch t { _ => r uint8 }, calc x uint8 = b }", "`b` is a union");
+}
+
+#[test]
+fn windows_start_on_bytes() {
+    assert_error("packet P { a u4, b uint8 size 1, _ u4 }", "`b` has a size, so it must start on a byte boundary");
+    assert_error("packet P { b uint8 size n, n uint8 }", "not known yet");
+}
+
+#[test]
+fn union_type_names_are_free() {
+    assert_error("packet PBody { }\npacket P { t uint8, body switch t { _ => x } }", "the union type `PBody`");
+}
+
+#[test]
+fn padding_cannot_repeat_until_or_end_at_a_terminator() {
+    assert_error("packet P { _ uint8[] until last == 0 }", "padding (`_`) cannot use `until` or `term`");
+}
+
+#[test]
+fn until_and_term_are_exclusive() {
+    assert_error("packet P { a uint8[] until last == 0 term 0x00 }", "`a` cannot have both `until` and `term`");
+}
+
+#[test]
+fn until_needs_an_open_array() {
+    assert_error("packet P { a uint8[2] until last == 0 }", "`until` on `a` needs an array without a length");
+    assert_error("packet P { a uint8 until a == 0 }", "`until` on `a` needs an array without a length");
+}
+
+#[test]
+fn term_applies_to_open_bytes_and_strings() {
+    assert_error("packet P { a uint16[] term 0x00 }", "`term` on `a` applies to bytes and strings without a length");
+    assert_error("packet P { a bytes[4] term 0x00 }", "`term` on `a` applies to bytes and strings without a length");
+}
+
+#[test]
+fn terminators_are_bytes() {
+    assert_error("packet P { a bytes term 0x100 }", "terminator byte 256 of `a` is not a byte");
+}
+
+#[test]
+fn text_encodings_apply_to_strings() {
+    assert_error("packet P { a uint8 latin1 }", "`a` is not a string, so it cannot have the text encoding `latin1`");
+    assert_error("packet P { a cstring utf16le }", "`a` is UTF-16, so it cannot end at a byte terminator");
+    assert_error("packet P { a string term 0x00 utf16be }", "`a` is UTF-16, so it cannot end at a byte terminator");
+}
+
+#[test]
+fn last_names_a_field_of_a_packet_element() {
+    assert_error(
+        "packet E { k uint8 } packet P { a E[] until last == 0 }",
+        "`last` is a `E`; name one of its fields, as in `last.kind`",
+    );
+    assert_error("packet P { a uint8[] until last.k == 0 }", "`last` is not a packet, so it has no fields");
+}
+
+#[test]
+fn varints_are_byte_aligned_without_a_byte_order() {
+    assert_error("packet P { a u3, b uleb128, _ u5 }", "variable-length integers");
+    assert_error("packet P { a uleb128 le }", "varint `a` cannot have a byte order");
+}
+
+#[test]
+fn varints_cannot_be_patched() {
+    assert_error(
+        "packet P { n uleb128 = sizeof(data), data bytes[n] }",
+        "varint `n` cannot be derived from the encoded bytes",
+    );
+}
+
+#[test]
+fn parameters_are_integers() {
+    assert_error("packet B(x float32) { a uint8 }", "parameter `x` of `B` must have an integer type");
+}
+
+#[test]
+fn parameters_and_fields_have_different_names() {
+    assert_error("packet B(a uint8) { a uint8 }", "`a` is both a parameter and a field of packet `B`");
+}
+
+#[test]
+fn arguments_match_the_parameters() {
+    assert_error(
+        "packet B(n uint8) { a uint8[n] } packet P { b B }",
+        "packet `B` takes 1 argument(s), but `b` passes 0",
+    );
+    assert_error("packet B { a uint8 } packet P { b B(1) }", "packet `B` takes 0 argument(s), but `b` passes 1");
+}
+
+#[test]
+fn arguments_use_known_values() {
+    assert_error(
+        "packet B(n uint8) { a uint8[n] } packet P { b B(n), n uint8 }",
+        "the arguments of `b` uses `n`, which is not known yet",
+    );
+}
+
+#[test]
+fn at_fields_are_single_packets() {
+    assert_error("packet P { o uint8, a uint16 at o }", "`a` uses `at`, so it must be a single packet");
+    assert_error(
+        "packet E { a uint8 } packet P { o uint8, e E[2] at o }",
+        "`e` uses `at`, so it cannot also have a length, `until`, `size`, `align` or `=`",
+    );
+    assert_error(
+        "packet E { a uint8 } packet P { e E at o, o uint8 }",
+        "the offset of `e` uses `o`, which is not known yet",
+    );
+}
+
+#[test]
+fn recursion_needs_an_array_or_at() {
+    assert_error("packet A { b B } packet B { a A }", "contains itself");
+    assert_error("packet A { x uint8, a A }", "packet `A` contains itself");
+    // Through an array or `at`, it is fine.
+    compile("packet A { n uint8, kids A[n] }").expect("array recursion");
+    compile("packet A { o uint8, next A at root o }").expect("at recursion");
+    compile("packet A { b B } packet B { n uint8, a A[n] }").expect("mutual recursion");
+}
+
+#[test]
+fn dissector_declarations_are_checked() {
+    assert_error("packet P { a uint8 } dissector Q { }", "dissector for unknown packet `Q`");
+    assert_error("packet P { a uint8 } dissector P { abbrev \"Bad Name\" }", "is not a protocol abbreviation");
+    assert_error("packet P { a uint8 } dissector P { colour \"red\" }", "unknown dissector option `colour`");
+    assert_error(
+        "packet P(n uint8) { a uint8 } dissector P { }",
+        "packet `P` takes parameters, so it cannot have a dissector of its own",
+    );
+    assert_error(
+        "packet P { a uint8 } packet Q { b uint8 } dissector P { abbrev \"x\" } dissector Q { abbrev \"x\" }",
+        "two dissectors are called `x`",
+    );
+    let m = compile("packet P { a uint8 } dissector P { name \"Pee\", udp.port 4000, heuristic }").unwrap();
+    assert_eq!(m.dissectors[0].abbrev, "p");
+    assert_eq!(m.dissectors[0].tables, [("udp.port".to_string(), 4000)]);
+    assert!(m.dissectors[0].heuristic);
 }

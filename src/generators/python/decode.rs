@@ -2,10 +2,22 @@
 
 use super::expr::store_value;
 use super::naming::{Python, float_format, ident};
-use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mask};
-use crate::ir::{BitPart, Codec, Count, Member, Packet, StrMode, TExpr, ValueType};
+use crate::generators::common::union::{PY_LOGIC, arm_test};
+use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mark_var, mask, string_literal};
+use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, PacketRef, StrMode, TExpr, TextEncoding, ValueType};
 
-fn read_elem(codec: &Codec, ty: &ValueType) -> String {
+/// `, a, b`: the arguments for nested packet `r`.
+pub fn call_args(scope: &Scope<'_, Python>, r: &PacketRef) -> String {
+    scope.args(r, store_value).iter().map(|a| format!(", {}", a)).collect()
+}
+
+/// `b"\x0d\x0a"`
+pub fn byte_list(bytes: &[u8]) -> String {
+    let items: String = bytes.iter().map(|b| format!("\\x{:02x}", b)).collect();
+    format!("b\"{}\"", items)
+}
+
+fn read_elem(scope: &Scope<'_, Python>, codec: &Codec, ty: &ValueType) -> String {
     let raw = match codec {
         Codec::Bytes { nbytes, endian } => format!("pb_r.read_uint({}, {})", nbytes, Python::little(endian)),
         Codec::Bits { width } => format!("pb_r.read_bits({})", width),
@@ -13,7 +25,8 @@ fn read_elem(codec: &Codec, ty: &ValueType) -> String {
             return format!("struct.unpack(\"{}\", pb_r.read_bytes({}))[0]", float_format(*width, endian), width / 8);
         }
         Codec::Mac => return "pb_r.read_bytes(6)".into(),
-        Codec::Packet(n) => return format!("{}.decode_from(pb_r)", n),
+        Codec::Varint(k) => format!("pb_r.read_varint({})", k.id()),
+        Codec::Packet(r) => return format!("{}.decode_from(pb_r{})", r.name, call_args(scope, r)),
         Codec::Str(_) => unreachable!("strings are handled by Decoder::string"),
     };
     match ty {
@@ -24,17 +37,101 @@ fn read_elem(codec: &Codec, ty: &ValueType) -> String {
 
 pub struct Decoder<'a> {
     scope: Scope<'a, Python>,
+    /// Byte buffers are memoryviews of the input.
+    zero_copy: bool,
 }
 
 impl<'a> Decoder<'a> {
-    pub fn new(packet: &'a Packet) -> Self {
-        Decoder { scope: Scope::new(packet, Mode::Decode) }
+    pub fn new(packet: &'a Packet, zero_copy: bool) -> Self {
+        Decoder { scope: Scope::new(packet, Mode::Decode), zero_copy }
+    }
+
+    /// The reader method for a byte buffer: a copy, or a memoryview.
+    fn read_bytes(&self) -> &'static str {
+        if self.zero_copy { "read_view" } else { "read_bytes" }
+    }
+
+    /// Expression that decodes the value of `arm`.
+    fn arm_value(&self, arm: &Arm) -> String {
+        match (&arm.ty, &arm.codec, &arm.count) {
+            (None, ..) => "None".into(),
+            (Some(_), _, Some(Count::Expr(e))) => {
+                format!("pb_r.{}(pb_r.count({}, 8))", self.read_bytes(), self.scope.expr(e))
+            }
+            (Some(_), _, Some(Count::Remaining)) => format!("pb_r.{}(pb_r.remaining_bits() // 8)", self.read_bytes()),
+            (Some(ty), Some(codec), None) => read_elem(&self.scope, codec, ty),
+            _ => "None".into(),
+        }
     }
 }
 
 impl StepEmitter for Decoder<'_> {
     fn packet(&self) -> &Packet {
         self.scope.packet
+    }
+
+    fn check(&self, out: &mut Out, cond: &TExpr, message: &str) {
+        out.open(format!("if not {}:", self.scope.expr(cond)));
+        out.line(format!("raise pb_r.error(PbError.CONSTRAINT, {})", string_literal(message)));
+        out.pop();
+    }
+
+    fn locate(&self, out: &mut Out, field: &str) {
+        out.line(format!("pb_r.at(\"{}\")", field));
+    }
+
+    fn switch(&self, out: &mut Out, m: &Member, selector: &TExpr, arms: &[Arm]) {
+        let ValueType::Union(u) = &m.ty else { return };
+        let place = format!("p.{}", ident(&m.name));
+        out.line(format!("pb_sel = {}", self.scope.expr(selector)));
+        let mut first = true;
+        for arm in arms.iter().filter(|a| !a.default) {
+            let test = arm_test(arm, arms, "pb_sel", &PY_LOGIC).unwrap_or_else(|| "True".into());
+            out.open(format!("{} {}:", if first { "if" } else { "elif" }, test));
+            out.line(format!("{} = {}(\"{}\", {})", place, u, arm.name, self.arm_value(arm)));
+            out.pop();
+            first = false;
+        }
+        let default = arms.iter().find(|a| a.default);
+        if !first {
+            out.open("else:");
+        }
+        match default {
+            Some(arm) => out.line(format!("{} = {}(\"{}\", {})", place, u, arm.name, self.arm_value(arm))),
+            None => out.line(format!("raise pb_r.error(PbError.INVALID, \"no arm of `{}` for %d\" % pb_sel)", m.name)),
+        }
+        if !first {
+            out.pop();
+        }
+    }
+
+    fn open_window(&self, out: &mut Out, id: usize, size: Option<&TExpr>) {
+        let size = size.map(|e| self.scope.expr(e)).unwrap_or_else(|| "0".into());
+        out.line(format!("pb_win{} = pb_r.push_limit({})", id, size));
+    }
+
+    fn close_window(&self, out: &mut Out, id: usize, _sized: bool, exact: bool) {
+        out.line(format!("pb_r.pop_limit(pb_win{}, {})", id, if exact { "True" } else { "False" }));
+    }
+
+    fn mark(&self, out: &mut Out, mark: Mark) {
+        out.line(format!("{} = pb_r.position_bits()", mark_var(mark)));
+    }
+
+    fn verify(&self, out: &mut Out, m: &Member, value: &TExpr) {
+        out.open(format!("if _pb_wrap(p.{}) != {}:", ident(&m.name), self.scope.expr(value)));
+        out.line(format!(
+            "raise pb_r.error(PbError.MISMATCH, {})",
+            string_literal(&format!("`{}` does not match the value computed from the data", m.name))
+        ));
+        out.pop();
+    }
+
+    fn at(&self, out: &mut Out, m: &Member, target: &PacketRef, offset: &TExpr, root: bool) {
+        let from = if root { "0" } else { "pb_start" };
+        out.line(format!("pb_j = pb_r.jump({}, {})", from, self.scope.expr(offset)));
+        out.line(format!("p.{} = {}.decode_from(pb_r{})", ident(&m.name), target.name, call_args(&self.scope, target)));
+        out.line("pb_r.jump_back(pb_j)");
     }
 
     fn align(&self, out: &mut Out, bytes: u64) {
@@ -47,17 +144,29 @@ impl StepEmitter for Decoder<'_> {
 
     fn string(&self, out: &mut Out, m: &Member, mode: &StrMode, array: Option<&Count>) {
         let raw = match (mode, array) {
-            (StrMode::CString, _) => format!("pb_r.read_cstring(\"{}\")", m.name),
+            (StrMode::CString, _) => "pb_r.read_cstring()".to_string(),
+            (StrMode::Terminated { term, optional }, _) => {
+                format!("pb_r.read_until({}, {})", byte_list(term), Python::flag(*optional))
+            }
             (StrMode::Prefixed { prefix, .. }, _) => {
-                format!("pb_r.read_bytes(_pb_count({}, 8, pb_r, \"{}\"))", read_elem(prefix, &PREFIX_LEN), m.name)
+                format!("pb_r.read_bytes(pb_r.count({}, 8))", read_elem(&self.scope, prefix, &PREFIX_LEN))
             }
-            (_, Some(Count::Expr(e))) => {
-                format!("pb_r.read_bytes(_pb_count({}, 8, pb_r, \"{}\"))", self.scope.expr(e), m.name)
-            }
+            (_, Some(Count::Expr(e))) => format!("pb_r.read_bytes(pb_r.count({}, 8))", self.scope.expr(e)),
             _ => "pb_r.read_bytes(pb_r.remaining_bits() // 8)".to_string(),
         };
-        let raw = if *mode == StrMode::Padded { format!("_pb_until_nul({})", raw) } else { raw };
-        out.line(format!("p.{} = _pb_utf8({}, \"{}\")", ident(&m.name), raw, m.name));
+        let padded = *mode == StrMode::Padded;
+        if m.encoding == TextEncoding::Utf8 {
+            let raw = if padded { format!("_pb_until_nul({})", raw) } else { raw };
+            out.line(format!("p.{} = pb_r.utf8({})", ident(&m.name), raw));
+        } else {
+            out.line(format!(
+                "p.{} = pb_r.text({}, {}, {})",
+                ident(&m.name),
+                raw,
+                m.encoding.id(),
+                Python::flag(padded)
+            ));
+        }
     }
 
     fn padding(&self, out: &mut Out, codec: &Codec, array: Option<&Count>) {
@@ -65,14 +174,16 @@ impl StepEmitter for Decoder<'_> {
         match array {
             None => out.line(format!("pb_r.skip_bits({})", bits)),
             Some(Count::Expr(e)) => {
-                out.line(format!("pb_r.skip_bits(_pb_count({}, {}, pb_r, \"_\") * {})", self.scope.expr(e), bits, bits))
+                out.line(format!("pb_r.skip_bits(pb_r.count({}, {}) * {})", self.scope.expr(e), bits, bits))
             }
             Some(Count::Remaining) => out.line("pb_r.skip_bits(pb_r.remaining_bits())"),
+            // Padding cannot use `until` or `term` (rejected by the analysis).
+            Some(Count::Until(_) | Count::Terminated { .. }) => {}
         }
     }
 
     fn scalar(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec) {
-        out.line(format!("p.{} = {}", ident(&m.name), read_elem(codec, ty)));
+        out.line(format!("p.{} = {}", ident(&m.name), read_elem(&self.scope, codec, ty)));
     }
 
     fn array(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec, count: &Count) {
@@ -80,20 +191,40 @@ impl StepEmitter for Decoder<'_> {
         let ebits = codec.min_elem_bits();
         match count {
             Count::Expr(e) => {
-                let n = format!("_pb_count({}, {}, pb_r, \"{}\")", self.scope.expr(e), ebits, m.name);
+                let n = format!("pb_r.count({}, {})", self.scope.expr(e), ebits);
                 if ty.is_byte() {
-                    out.line(format!("{} = pb_r.read_bytes({})", target, n));
+                    out.line(format!("{} = pb_r.{}({})", target, self.read_bytes(), n));
                 } else {
-                    out.line(format!("{} = [{} for _ in range({})]", target, read_elem(codec, ty), n));
+                    out.line(format!("{} = []", target));
+                    out.open(format!("for pb_i in range({}):", n));
+                    out.line("pb_r.at_index(pb_i)");
+                    out.line(format!("{}.append({})", target, read_elem(&self.scope, codec, ty)));
+                    out.pop();
                 }
+            }
+            Count::Terminated { term, optional } => {
+                let read = if self.zero_copy { "read_until_view" } else { "read_until" };
+                out.line(format!("{} = pb_r.{}({}, {})", target, read, byte_list(term), Python::flag(*optional)))
+            }
+            Count::Until(cond) => {
+                out.line(format!("{} = []", target));
+                out.open("while pb_r.remaining_bits() > 0:");
+                out.line(format!("pb_r.at_index(len({}))", target));
+                out.line(format!("pb_last = {}", read_elem(&self.scope, codec, ty)));
+                out.line(format!("{}.append(pb_last)", target));
+                out.open(format!("if {}:", self.scope.expr(cond)));
+                out.line("break");
+                out.pop();
+                out.pop();
             }
             Count::Remaining => {
                 if ty.is_byte() {
-                    out.line(format!("{} = pb_r.read_bytes(pb_r.remaining_bits() // 8)", target));
+                    out.line(format!("{} = pb_r.{}(pb_r.remaining_bits() // 8)", target, self.read_bytes()));
                 } else {
                     out.line(format!("{} = []", target));
                     out.open("while pb_r.remaining_bits() > 0:");
-                    out.line(format!("{}.append({})", target, read_elem(codec, ty)));
+                    out.line(format!("pb_r.at_index(len({}))", target));
+                    out.line(format!("{}.append({})", target, read_elem(&self.scope, codec, ty)));
                     out.pop();
                 }
             }

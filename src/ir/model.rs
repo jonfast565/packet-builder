@@ -2,9 +2,9 @@
 
 use std::collections::HashSet;
 
-use super::expr::TExpr;
-use crate::ast::Endianness;
-pub use crate::ast::Radix;
+use super::expr::{Mark, TExpr};
+pub use super::wire::{BitPart, Codec, Count, Step, StrMode};
+pub use crate::ast::{Radix, TextEncoding, VarintKind};
 
 #[derive(Debug, Clone)]
 pub struct Module {
@@ -13,6 +13,86 @@ pub struct Module {
     pub constants: Vec<Constant>,
     /// Categories of named constants, in source order.
     pub categories: Vec<Category>,
+    /// Tagged unions (`body switch kind { ... }`), in packet order.
+    pub unions: Vec<Union>,
+    /// Wireshark dissectors to generate (`dissector` declarations).
+    pub dissectors: Vec<Dissector>,
+}
+
+/// A Wireshark dissector for a packet.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Dissector {
+    pub packet: String,
+    /// The protocol's long name (`AIM OSCAR`).
+    pub name: String,
+    /// The filter name and field prefix (`oscar`).
+    pub abbrev: String,
+    /// Dissector tables to register in: (`tcp.port`, 5190).
+    pub tables: Vec<(String, u64)>,
+    /// Also try the dissector on TCP/UDP payloads (`heuristic`).
+    pub heuristic: bool,
+}
+
+impl Dissector {
+    /// Defaults: the packet's name, and its lowercase as the abbreviation.
+    pub fn new(packet: &str) -> Self {
+        Dissector {
+            packet: packet.to_string(),
+            name: packet.to_string(),
+            abbrev: packet.to_ascii_lowercase(),
+            tables: Vec::new(),
+            heuristic: false,
+        }
+    }
+
+    /// Wireshark protocol filter names: a lowercase letter, then lowercase
+    /// letters, digits, `_`, `-` and `.`.
+    pub fn check_abbrev(abbrev: &str) -> Result<(), String> {
+        let ok = abbrev.starts_with(|c: char| c.is_ascii_lowercase())
+            && abbrev.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "_-.".contains(c));
+        if ok {
+            Ok(())
+        } else {
+            Err(format!("`{}` is not a protocol abbreviation (lowercase letters, digits, _ - and .)", abbrev))
+        }
+    }
+}
+
+/// A tagged union: the type of a `switch` member.
+#[derive(Debug, Clone)]
+pub struct Union {
+    /// `<Packet><Field>` in PascalCase, e.g. `FlapBody`.
+    pub name: String,
+    pub arms: Vec<Arm>,
+}
+
+impl Union {
+    pub fn default_arm(&self) -> Option<&Arm> {
+        self.arms.iter().find(|a| a.default)
+    }
+}
+
+/// One arm of a union.
+#[derive(Debug, Clone)]
+pub struct Arm {
+    pub name: String,
+    /// The selector values that pick this arm (none for the default arm).
+    pub values: Vec<i64>,
+    /// `_`: any value no other arm lists.
+    pub default: bool,
+    /// What the arm holds: an integer, a packet or bytes (`Int` 8-bit with a
+    /// count); None for an empty arm.
+    pub ty: Option<ValueType>,
+    pub codec: Option<Codec>,
+    /// For bytes arms: the byte count.
+    pub count: Option<Count>,
+}
+
+impl Arm {
+    /// A byte buffer (`raw bytes[n]`).
+    pub fn is_bytes(&self) -> bool {
+        self.count.is_some()
+    }
 }
 
 /// A named value from a `const` declaration.
@@ -71,18 +151,36 @@ impl ValueType {
 }
 
 impl Module {
+    pub fn union(&self, name: &str) -> Option<&Union> {
+        self.unions.iter().find(|u| u.name == name)
+    }
+
     /// Packets ordered so that every packet comes after the packets it
-    /// contains (needed by languages that require declaration before use).
+    /// contains by value (needed by languages that require declaration before
+    /// use). Arrays are stored out of line, so they do not count: that is how
+    /// a packet can contain itself.
     pub fn in_dependency_order(&self) -> Vec<&Packet> {
         fn visit<'a>(m: &'a Module, p: &'a Packet, seen: &mut HashSet<String>, out: &mut Vec<&'a Packet>) {
             if !seen.insert(p.name.clone()) {
                 return;
             }
-            for member in &p.members {
-                if let ValueType::Packet(n) = &member.ty
-                    && let Some(dep) = m.packets.iter().find(|x| &x.name == n)
-                {
-                    visit(m, dep, seen, out);
+            for member in p.members.iter().filter(|m| m.array.is_none()) {
+                let mut deps: Vec<&String> = Vec::new();
+                match &member.ty {
+                    ValueType::Packet(n) => deps.push(n),
+                    ValueType::Union(u) => {
+                        for arm in m.union(u).map(|u| u.arms.as_slice()).unwrap_or(&[]) {
+                            if let Some(ValueType::Packet(n)) = &arm.ty {
+                                deps.push(n);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+                for n in deps {
+                    if let Some(dep) = m.packets.iter().find(|x| &x.name == n) {
+                        visit(m, dep, seen, out);
+                    }
                 }
             }
             out.push(p);
@@ -99,6 +197,8 @@ impl Module {
 #[derive(Debug, Clone)]
 pub struct Packet {
     pub name: String,
+    /// Values passed in by the containing packet (`packet Body(version uint8)`).
+    pub params: Vec<Param>,
     /// Struct members in declaration order (stored fields, bitfield members,
     /// calculated fields). Padding is not a member.
     pub members: Vec<Member>,
@@ -115,6 +215,52 @@ pub struct Packet {
     pub fixed_bits: Option<u64>,
     /// Alignment in bytes of the packet when nested (from `packet P align N`).
     pub alignment: u64,
+    /// `assert` items, in source order (`Step::Assert` refers to them).
+    pub asserts: Vec<Assertion>,
+    /// Derived members, which decoding verifies after the last step.
+    pub derived: Vec<usize>,
+    /// Derived members whose value depends on the encoded bytes (`sizeof`,
+    /// `offsetof`, checksums): encoding writes a placeholder and patches it
+    /// after the last step, in this order.
+    pub patches: Vec<usize>,
+    /// Members only known after encoding the body: `patches` and the
+    /// calculated members that depend on them.
+    pub wire_dependent: Vec<usize>,
+}
+
+/// A packet parameter: an integer the containing packet passes in. It is
+/// not stored; expressions read it as `TExpr::Param`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Param {
+    pub name: String,
+    pub ty: ValueType,
+}
+
+/// A nested packet and the arguments for its parameters: i64 expressions
+/// over the containing packet, converted to the parameter types (`types`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PacketRef {
+    pub name: String,
+    pub args: Vec<TExpr>,
+    pub types: Vec<ValueType>,
+}
+
+impl PacketRef {
+    pub fn new(name: &str) -> Self {
+        PacketRef { name: name.to_string(), args: Vec::new(), types: Vec::new() }
+    }
+
+    /// Each argument with the type of its parameter.
+    pub fn typed_args(&self) -> impl Iterator<Item = (&TExpr, &ValueType)> {
+        self.args.iter().zip(&self.types)
+    }
+}
+
+/// `assert cond "message"`.
+#[derive(Debug, Clone)]
+pub struct Assertion {
+    pub cond: TExpr,
+    pub message: String,
 }
 
 impl Packet {
@@ -123,12 +269,58 @@ impl Packet {
         self.steps.iter().any(|s| matches!(s, Step::Align { .. }))
     }
 
-    /// Calculated members that encoding evaluates up front, with their expressions.
+    /// Members that encoding evaluates up front (calculated members lengths
+    /// need, and derived members that only depend on values), with their
+    /// expressions, dependencies first.
     pub fn encode_calc_members(&self) -> impl Iterator<Item = (&Member, &TExpr)> {
         self.encode_calcs.iter().filter_map(|&c| {
             let m = &self.members[c];
-            m.calc_expr().map(|e| (m, e))
+            m.calc_expr().or(m.derived_expr()).map(|e| (m, e))
         })
+    }
+
+    /// True if `e` reads a member only known after encoding the body; such
+    /// length checks and assertions are skipped when encoding.
+    pub fn depends_on_wire(&self, e: &TExpr) -> bool {
+        let mut deps = Vec::new();
+        e.deps(&mut deps);
+        deps.iter().any(|d| self.wire_dependent.contains(d))
+    }
+
+    /// The step that reads or writes stored member `member`.
+    pub fn field_step(&self, member: usize) -> Option<usize> {
+        self.steps.iter().position(|s| matches!(s, Step::Field { member: Some(m), .. } if *m == member))
+    }
+
+    /// The positions decoding (`encoding == false`) or encoding records: the
+    /// marks read by verified or patched derived fields, and the position of
+    /// each patched field.
+    pub fn marks(&self, encoding: bool) -> Vec<Mark> {
+        let mut out = Vec::new();
+        let members: &[usize] = if encoding { &self.patches } else { &self.derived };
+        for &m in members {
+            let member = &self.members[m];
+            if !encoding && member.lenient {
+                continue;
+            }
+            if let Some(e) = member.derived_expr() {
+                e.marks(&mut out);
+            }
+            if encoding && let Some(step) = self.field_step(m) {
+                out.push(Mark::Before(step));
+            }
+        }
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    /// True if decoding or encoding needs the packet's start position
+    /// (`pb_start`): for alignment, or for a mark.
+    pub fn needs_start(&self, encoding: bool) -> bool {
+        self.uses_align()
+            || self.marks(encoding).contains(&Mark::PacketStart)
+            || self.steps.iter().any(|s| matches!(s, Step::At { root: false, .. }))
     }
 }
 
@@ -140,9 +332,49 @@ pub struct Member {
     pub kind: MemberKind,
     /// `: Category`: the named constants this member's values come from.
     pub category: Option<String>,
+    /// Declared checks on the value (`== v`, `in a..b`, `: Category strict`).
+    pub checks: Vec<Check>,
+    /// `lenient`: generated codecs do not enforce `checks`.
+    pub lenient: bool,
+    /// For strings: how characters become bytes.
+    pub encoding: TextEncoding,
+}
+
+/// A declared check on a member's value. Decoding fails with a `constraint`
+/// error when `cond` is false (after reading the member); encoding fails
+/// before writing it.
+#[derive(Debug, Clone)]
+pub struct Check {
+    pub kind: CheckKind,
+    pub cond: TExpr,
+    /// What the value must be, for error messages ("`start` must be 0x2a").
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum CheckKind {
+    /// `== value`: a magic value; the member also defaults to it.
+    Equals(i64),
+    /// `in lo..hi`, inclusive.
+    Range(i64, i64),
+    /// `: Category strict`: one of the category's values.
+    InCategory(String),
 }
 
 impl Member {
+    /// The value of a `== value` check: what the member defaults to.
+    pub fn magic(&self) -> Option<i64> {
+        self.checks.iter().find_map(|c| match c.kind {
+            CheckKind::Equals(v) => Some(v),
+            _ => None,
+        })
+    }
+
+    /// The checks generated codecs enforce (none for `lenient` members).
+    pub fn enforced_checks(&self) -> &[Check] {
+        if self.lenient { &[] } else { &self.checks }
+    }
+
     pub fn is_calculated(&self) -> bool {
         matches!(self.kind, MemberKind::Calculated(_))
     }
@@ -154,6 +386,18 @@ impl Member {
             _ => None,
         }
     }
+
+    /// The expression of a derived member (`length uint16 = len(payload)`).
+    pub fn derived_expr(&self) -> Option<&TExpr> {
+        match &self.kind {
+            MemberKind::Derived(e) => Some(e),
+            _ => None,
+        }
+    }
+
+    pub fn is_derived(&self) -> bool {
+        matches!(self.kind, MemberKind::Derived(_))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -161,6 +405,9 @@ pub enum MemberKind {
     Stored,
     BitfieldPart,
     Calculated(TExpr),
+    /// Stored on the wire, but computed when encoding and verified when
+    /// decoding.
+    Derived(TExpr),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -175,6 +422,8 @@ pub enum ValueType {
     Packet(String),
     /// Text (UTF-8).
     Str,
+    /// A tagged union (`Module::unions`).
+    Union(String),
 }
 
 impl ValueType {
@@ -184,7 +433,7 @@ impl ValueType {
             ValueType::Int { width, .. } => storage_for(*width),
             ValueType::Float { width } => *width,
             ValueType::Mac => 48,
-            ValueType::Packet(_) | ValueType::Str => 0,
+            ValueType::Packet(_) | ValueType::Str | ValueType::Union(_) => 0,
         }
     }
 
@@ -214,89 +463,4 @@ pub fn storage_for(width: u32) -> u32 {
         17..=32 => 32,
         _ => 64,
     }
-}
-
-#[derive(Debug, Clone)]
-pub enum Count {
-    Expr(TExpr),
-    /// Repeat until the input is exhausted.
-    Remaining,
-}
-
-/// How a single element travels on the wire.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Codec {
-    /// Byte aligned integer of `nbytes` bytes in the given byte order.
-    Bytes {
-        nbytes: u32,
-        endian: Endianness,
-    },
-    /// Integer of `width` bits read MSB-first from the bit stream.
-    Bits {
-        width: u32,
-    },
-    Float {
-        width: u32,
-        endian: Endianness,
-    },
-    Mac,
-    Packet(String),
-    Str(StrMode),
-}
-
-/// How a string's length is determined. For `Padded` and `Exact` the byte
-/// count is the step's `array` count.
-#[derive(Debug, Clone, PartialEq)]
-pub enum StrMode {
-    /// `char[n]`: n bytes; the text ends at the first NUL, encoding pads with NULs.
-    Padded,
-    /// `string[n]` / `string[]`: exactly the given bytes.
-    Exact,
-    /// `string(uint8)`: a length prefix (written automatically), then the bytes.
-    Prefixed { prefix: Box<Codec>, width: u32 },
-    /// `cstring`: bytes up to a terminating NUL.
-    CString,
-}
-
-impl Codec {
-    pub fn bits(&self) -> u32 {
-        match self {
-            Codec::Bytes { nbytes, .. } => nbytes * 8,
-            Codec::Bits { width } => *width,
-            Codec::Float { width, .. } => *width,
-            Codec::Mac => 48,
-            Codec::Packet(_) | Codec::Str(_) => 0,
-        }
-    }
-
-    /// Lower bound on the size of one element, used to reject element counts
-    /// larger than the remaining input before allocating. Nested packets in
-    /// arrays are at least one byte (enforced by the analysis).
-    pub fn min_elem_bits(&self) -> u64 {
-        match self {
-            Codec::Packet(_) | Codec::Str(_) => 8,
-            c => c.bits() as u64,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum Step {
-    /// A stored member, or padding when `member` is None.
-    Field { member: Option<usize>, ty: ValueType, codec: Codec, array: Option<Count> },
-    /// An integer container split into sub-fields.
-    Bitfield { container: Codec, container_width: u32, parts: Vec<BitPart> },
-    /// Evaluate a calculated member (decode only).
-    Calc { member: usize },
-    /// Skip (decode) or zero-fill (encode) to the next multiple of `bytes`
-    /// bytes counted from the start of the packet.
-    Align { bytes: u64 },
-}
-
-#[derive(Debug, Clone)]
-pub struct BitPart {
-    pub member: usize,
-    pub shift: u32,
-    pub width: u32,
-    pub signed: bool,
 }

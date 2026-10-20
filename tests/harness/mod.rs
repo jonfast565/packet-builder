@@ -20,10 +20,23 @@
 //!   ] }
 //! ```
 //! Unless `encoded` or an error is given, re-encoding must reproduce `hex`.
+//! `error_kind` / `error_path` (and `encode_error_kind` / `encode_error_path`)
+//! also check the error's kind (`incomplete`, `invalid`, `range`, `text`,
+//! `mismatch`, `constraint`) and where it happened (`Packet.field[1].field`).
+//!
+//! Every driver prints two JSON lines per case. The first: `{"ok":false,
+//! "error":..,"kind":..,"path":..}` when decoding fails, otherwise
+//! `{"ok":true,"value":..}` plus `"encoded":"hex"` or `"encode_error":..,
+//! "encode_kind":..,"encode_path":..`. The second is what the stream helpers
+//! say about the same bytes: `{"try":"done","n":bytes taken}`,
+//! `{"try":"incomplete","n":bytes needed}` or `{"try":"error"}`, plus
+//! `"frame":size` (null while the header is incomplete, "error" for a bad
+//! length) for packets with a frame length (`has_frame`).
 
 pub mod c;
 pub mod csharp;
 pub mod go;
+pub mod interp;
 pub mod python;
 pub mod rust;
 pub mod zig;
@@ -46,6 +59,10 @@ pub struct Case {
     pub error: bool,
     pub encode_error: bool,
     pub encoded: Option<String>,
+    pub error_kind: Option<String>,
+    pub error_path: Option<String>,
+    pub encode_error_kind: Option<String>,
+    pub encode_error_path: Option<String>,
     /// Derived robustness case: any outcome is fine as long as the decoder
     /// reports it cleanly (no crash, leak or hang).
     pub any: bool,
@@ -76,9 +93,7 @@ fn load_spec(path: &Path) -> Spec {
     let json: Value = serde_json::from_str(&text).unwrap_or_else(|e| panic!("{}: {}", path.display(), e));
     let packet_file = json["spec"].as_str().expect("spec field");
     let source_path = path.parent().unwrap().join(packet_file);
-    let source = fs::read_to_string(&source_path).unwrap_or_else(|e| panic!("{}: {}", source_path.display(), e));
-    let module = packet_builder::compile(&source)
-        .unwrap_or_else(|e| panic!("{}", e.render(&source_path.display().to_string(), &source)));
+    let module = packet_builder::compile_file(&source_path).unwrap_or_else(|e| panic!("{}", e.render()));
 
     let mut cases = Vec::new();
     for c in json["cases"].as_array().expect("cases array") {
@@ -88,18 +103,29 @@ fn load_spec(path: &Path) -> Spec {
             .and_then(|s| s.as_object())
             .map(|o| o.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
             .unwrap_or_default();
+        let text = |k: &str| c.get(k).and_then(|e| e.as_str()).map(str::to_string);
+        let (error_kind, error_path) = (text("error_kind"), text("error_path"));
+        let (encode_error_kind, encode_error_path) = (text("encode_error_kind"), text("encode_error_path"));
         let case = Case {
             name: c["name"].as_str().expect("name").to_string(),
             packet: c["packet"].as_str().expect("packet").to_string(),
             hex,
             set,
             expect: c.get("expect").and_then(|e| e.as_object()).cloned(),
-            error: c.get("error").and_then(|e| e.as_bool()).unwrap_or(false),
-            encode_error: c.get("encode_error").and_then(|e| e.as_bool()).unwrap_or(false),
+            error: c.get("error").and_then(|e| e.as_bool()).unwrap_or(false)
+                || error_kind.is_some()
+                || error_path.is_some(),
+            encode_error: c.get("encode_error").and_then(|e| e.as_bool()).unwrap_or(false)
+                || encode_error_kind.is_some()
+                || encode_error_path.is_some(),
             encoded: c
                 .get("encoded")
                 .and_then(|e| e.as_str())
                 .map(|s| s.chars().filter(|c| !c.is_whitespace()).collect()),
+            error_kind,
+            error_path,
+            encode_error_kind,
+            encode_error_path,
             any: false,
         };
         assert!(
@@ -148,6 +174,10 @@ fn derived_cases(cases: &[Case]) -> Vec<Case> {
                 error: false,
                 encode_error: false,
                 encoded: None,
+                error_kind: None,
+                error_path: None,
+                encode_error_kind: None,
+                encode_error_path: None,
                 any: true,
             });
         }
@@ -157,11 +187,16 @@ fn derived_cases(cases: &[Case]) -> Vec<Case> {
 
 /// A target language as seen by the test driver.
 pub trait Target {
-    fn language(&self) -> Language;
+    /// The generated language, or None for the reference interpreter.
+    fn language(&self) -> Option<Language>;
+    fn name(&self) -> &'static str {
+        self.language().map(|l| l.name()).unwrap_or("interp")
+    }
     /// Returns a reason when the toolchain is missing.
     fn unavailable(&self) -> Option<String>;
-    /// Program that runs every case and prints one JSON object per line.
-    fn harness(&self, module: &Module, cases: &[Case]) -> String;
+    /// Program that runs every case and prints its JSON lines; the code
+    /// was generated with `--zero-copy` when `zero_copy`.
+    fn harness(&self, module: &Module, cases: &[Case], zero_copy: bool) -> String;
     /// Write `generated` and `harness` into `dir`, build, run, return stdout.
     fn build_and_run(&self, dir: &Path, generated: &str, harness: &str) -> Result<String, String>;
 }
@@ -223,8 +258,8 @@ pub fn which(program: &str) -> Option<PathBuf> {
     std::env::split_paths(&path).map(|d| d.join(program)).find(|p| p.is_file())
 }
 
-pub fn work_dir(lang: Language, spec: &str) -> PathBuf {
-    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("codegen").join(lang.name()).join(spec);
+pub fn work_dir(target: &str, spec: &str) -> PathBuf {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("codegen").join(target).join(spec);
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     dir
@@ -232,43 +267,57 @@ pub fn work_dir(lang: Language, spec: &str) -> PathBuf {
 
 /// Generate, build and run every spec for `target`, then check the results.
 pub fn run_target(target: &dyn Target) {
-    let lang = target.language();
+    let name = target.name();
     if let Some(reason) = target.unavailable() {
         if std::env::var("PB_REQUIRE_ALL").is_ok() {
-            panic!("{} toolchain required (PB_REQUIRE_ALL is set): {}", lang.name(), reason);
+            panic!("{} toolchain required (PB_REQUIRE_ALL is set): {}", name, reason);
         }
-        eprintln!("skipping {} tests: {}", lang.name(), reason);
+        eprintln!("skipping {} tests: {}", name, reason);
         return;
     }
 
     let mut failures = Vec::new();
-    for spec in load_specs() {
-        let dir = work_dir(lang, &spec.name);
-        let opts = GenOptions::default();
-        let generated = packet_builder::generate_module(&spec.module, lang, &opts);
-        let harness = target.harness(&spec.module, &spec.cases);
+    // Every spec runs with the default options and with --zero-copy (the
+    // interpreter has no options).
+    let modes: &[bool] = if target.language().is_some() { &[false, true] } else { &[false] };
+    for (spec, &zero_copy) in load_specs().iter().flat_map(|s| modes.iter().map(move |m| (s, m))) {
+        let mode = if zero_copy { "-zero-copy" } else { "" };
+        let name = format!("{}{}", target.name(), mode);
+        let name = name.as_str();
+        let dir = work_dir(name, &spec.name);
+        let opts = GenOptions { zero_copy, ..GenOptions::default() };
+        let generated = match target.language() {
+            Some(lang) => packet_builder::generate_module(&spec.module, lang, &opts),
+            None => String::new(),
+        };
+        let harness = target.harness(&spec.module, &spec.cases, zero_copy);
         let stdout = match target.build_and_run(&dir, &generated, &harness) {
             Ok(s) => s,
             Err(e) => {
-                failures.push(format!("[{} / {}] {}", lang.name(), spec.name, e));
+                failures.push(format!("[{} / {}] {}", name, spec.name, e));
                 continue;
             }
         };
         let lines: Vec<&str> = stdout.lines().filter(|l| l.starts_with('{')).collect();
-        if lines.len() != spec.cases.len() {
+        if lines.len() != 2 * spec.cases.len() {
             failures.push(format!(
                 "[{} / {}] expected {} result lines, got {}:\n{}",
-                lang.name(),
+                name,
                 spec.name,
-                spec.cases.len(),
+                2 * spec.cases.len(),
                 lines.len(),
                 stdout
             ));
             continue;
         }
-        for (case, line) in spec.cases.iter().zip(lines) {
-            if let Err(e) = check_case(case, line) {
-                failures.push(format!("[{} / {} / {}] {}\n    output: {}", lang.name(), spec.name, case.name, e, line));
+        for (case, pair) in spec.cases.iter().zip(lines.chunks(2)) {
+            let sequential = !uses_at(&spec.module, packet(&spec.module, &case.packet));
+            let result = check_case(case, pair[0]).and_then(|_| check_stream(case, sequential, pair[0], pair[1]));
+            if let Err(e) = result {
+                failures.push(format!(
+                    "[{} / {} / {}] {}\n    output: {}\n    stream: {}",
+                    name, spec.name, case.name, e, pair[0], pair[1]
+                ));
             }
         }
     }
@@ -284,7 +333,10 @@ fn check_case(case: &Case, line: &str) -> Result<(), String> {
         return if out.get("ok").is_some() { Ok(()) } else { Err("malformed result".into()) };
     }
     if case.error {
-        return if ok { Err("expected a decode error, but decoding succeeded".into()) } else { Ok(()) };
+        if ok {
+            return Err("expected a decode error, but decoding succeeded".into());
+        }
+        return check_error(&out, "kind", "path", &case.error_kind, &case.error_path);
     }
     if !ok {
         return Err(format!("decode failed: {}", out["error"]));
@@ -298,11 +350,10 @@ fn check_case(case: &Case, line: &str) -> Result<(), String> {
         }
     }
     if case.encode_error {
-        return if out.get("encode_error").is_some() {
-            Ok(())
-        } else {
-            Err("expected an encode error, but encoding succeeded".into())
-        };
+        if out.get("encode_error").is_none() {
+            return Err("expected an encode error, but encoding succeeded".into());
+        }
+        return check_error(&out, "encode_kind", "encode_path", &case.encode_error_kind, &case.encode_error_path);
     }
     if let Some(e) = out.get("encode_error") {
         return Err(format!("encode failed: {}", e));
@@ -311,6 +362,85 @@ fn check_case(case: &Case, line: &str) -> Result<(), String> {
     let got = out["encoded"].as_str().unwrap_or("").to_ascii_lowercase();
     if want != got {
         return Err(format!("re-encoded bytes differ:\n      want {}\n      got  {}", want, got));
+    }
+    Ok(())
+}
+
+/// Whether `packet` has stream helpers that find its size from its header.
+pub fn has_frame(module: &Module, packet: &Packet) -> bool {
+    packet.params.is_empty() && module.frame_length(packet).is_some()
+}
+
+/// Whether decoding `p` reads data elsewhere (`at`), directly or in a
+/// nested packet: then it takes fewer bytes than the vector holds.
+fn uses_at(module: &Module, p: &Packet) -> bool {
+    fn visit(module: &Module, p: &Packet, seen: &mut Vec<String>) -> bool {
+        if seen.contains(&p.name) {
+            return false;
+        }
+        seen.push(p.name.clone());
+        p.steps.iter().any(|s| match s {
+            packet_builder::ir::Step::At { .. } => true,
+            packet_builder::ir::Step::Field { codec: packet_builder::ir::Codec::Packet(r), .. } => {
+                visit(module, packet(module, &r.name), seen)
+            }
+            packet_builder::ir::Step::Switch { arms, .. } => arms.iter().any(|a| match &a.codec {
+                Some(packet_builder::ir::Codec::Packet(r)) => visit(module, packet(module, &r.name), seen),
+                _ => false,
+            }),
+            _ => false,
+        })
+    }
+    visit(module, p, &mut Vec::new())
+}
+
+/// Check the stream helpers against the decode result for the same bytes;
+/// `sequential`: the packet takes every byte of a vector it decodes.
+fn check_stream(case: &Case, sequential: bool, line: &str, stream: &str) -> Result<(), String> {
+    let out: Value = serde_json::from_str(line).map_err(|e| format!("invalid JSON from harness: {}", e))?;
+    let st: Value = serde_json::from_str(stream).map_err(|e| format!("invalid stream JSON from harness: {}", e))?;
+    let kind = st["try"].as_str().unwrap_or("");
+    let n = st["n"].as_u64();
+    if out["ok"].as_bool().unwrap_or(false) {
+        let n = match (kind, n) {
+            ("done", Some(n)) => n,
+            _ => return Err("try_decode should succeed like decode".into()),
+        };
+        if sequential && !case.any && case.encoded.is_none() && n as usize != case.hex.len() / 2 {
+            return Err(format!("try_decode took {} byte(s) of {}", n, case.hex.len() / 2));
+        }
+        if let Some(frame) = st.get("frame")
+            && frame.as_u64() != Some(n)
+        {
+            return Err(format!("frame_len says {} but the packet took {} byte(s)", frame, n));
+        }
+        return Ok(());
+    }
+    match (out["kind"].as_str(), kind, n) {
+        (Some("incomplete"), "incomplete", Some(n)) if n > 0 => Ok(()),
+        (Some("incomplete"), ..) => Err("try_decode should ask for more bytes".into()),
+        (_, "error", _) => Ok(()),
+        _ => Err("try_decode should fail like decode".into()),
+    }
+}
+
+/// Compare an error's reported kind and path with the expectations.
+fn check_error(
+    out: &Value,
+    kind_key: &str,
+    path_key: &str,
+    kind: &Option<String>,
+    path: &Option<String>,
+) -> Result<(), String> {
+    for (key, want) in [(kind_key, kind), (path_key, path)] {
+        // A driver that cannot know the path (Zig rejects some values at
+        // compile time) leaves the key out.
+        if let (Some(want), Some(got)) = (want, out.get(key)) {
+            let got = got.as_str().unwrap_or("");
+            if got != want {
+                return Err(format!("error {}: expected `{}`, got `{}`", key, want, got));
+            }
+        }
     }
     Ok(())
 }

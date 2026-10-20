@@ -20,6 +20,12 @@ minus  = @{ "-" }
 mult   = @{ "*" }
 div    = @{ "/" }
 pw     = @{ "^" }
+modulo = @{ "%" }
+shl    = @{ "<<" }
+shr    = @{ ">>" }
+band   = @{ "&" }
+bor    = @{ "|" }
+bnot   = @{ "~" }
 
 lparen = @{ "(" }
 rparen = @{ ")" }
@@ -30,11 +36,11 @@ rarray = @{ "]" }
 comma  = @{ "," }
 colon  = @{ ":" }
 dot    = @{ "." }
-assign = @{ "=" }          
+assign = @{ "=" ~ !"=" }
 
-gt   = @{ ">" }
+gt   = @{ ">" ~ !">" }
 gte  = @{ ">=" }
-lt   = @{ "<" }
+lt   = @{ "<" ~ !"<" }
 lte  = @{ "<=" }          
 eq   = @{ "==" }
 neq  = @{ "!=" | "<>" }
@@ -42,6 +48,8 @@ neq  = @{ "!=" | "<>" }
 // Logical
 and_kw = @{ "and" }
 or_kw  = @{ "or" }
+not_kw = @{ "not" }
+xor_kw = @{ "xor" }
 
 // Aggregates / control
 sumof_kw      = @{ "sumof" }
@@ -52,6 +60,9 @@ otherwise_kw  = @{ "otherwise" }
 
 // Packet keywords
 packet_kw     = @{ "packet" }
+import_kw     = @{ "import" }
+dissector_kw  = @{ "dissector" }
+heuristic_kw  = @{ "heuristic" ~ !(alnum | underscore) }
 calc_kw       = @{ "calc" }
 const_kw      = @{ "const" }
 
@@ -73,18 +84,41 @@ lsb_kw      = @{ "lsb" }
 align_kw    = @{ "align" }
 wordsize_kw = @{ "wordsize" }
 
+// Validation. Only `assert` is reserved (it starts a rule); the others are
+// only special after a field's type.
+assert_kw  = @{ "assert" }
+in_kw      = @{ "in" ~ !(alnum | underscore) }
+strict_kw  = @{ "strict" ~ !(alnum | underscore) }
+lenient_kw = @{ "lenient" ~ !(alnum | underscore) }
+dotdot     = @{ ".." }
+
+// Windows and unions. `switch` starts a field's type, so it is reserved;
+// `size` and `exact` are only special after a field's type.
+switch_kw = @{ "switch" }
+until_kw  = @{ "until" ~ !(alnum | underscore) }
+term_kw   = @{ "term" ~ !(alnum | underscore) }
+optional_kw = @{ "optional" ~ !(alnum | underscore) }
+text_encoding = @{ ("ascii" | "latin1" | "utf8" | "utf16le" | "utf16be") ~ !(alnum | underscore) }
+size_kw   = @{ "size" ~ !(alnum | underscore) }
+exact_kw  = @{ "exact" ~ !(alnum | underscore) }
+fat_arrow = @{ "=>" }
+// Absolute offsets: `name Foo at offset`, `name Foo at root offset`.
+at_kw     = @{ "at" ~ !(alnum | underscore) }
+root_kw   = @{ "root" ~ !(alnum | underscore) }
+default_arm = @{ "_" ~ !(alnum | underscore) }
+
 // ===============================
 // Keyword reservation
 // ===============================
 keyword = _{
-    packet_kw | calc_kw | const_kw
+    packet_kw | calc_kw | const_kw | import_kw | dissector_kw
   | when_kw | then_kw | otherwise_kw
   | sumof_kw | productof_kw
-  | and_kw | or_kw
+  | and_kw | or_kw | not_kw | xor_kw
   | sqrt_kw | min_kw | max_kw
   | le_kw | be_kw
   | bitfield_kw | msb_kw | lsb_kw
-  | align_kw | wordsize_kw
+  | align_kw | wordsize_kw | assert_kw | switch_kw
   // Type names are not reserved: they are only special in type position, so
   // a field may be called `word` or `string`.
 }
@@ -152,26 +186,31 @@ dword_t    = @{ "dword" | "doubleword" | ("double" ~ sp ~ "word") }
 qword_t    = @{ "qword" | "quadword" | ("quad" ~ sp ~ "word") }
 string_t   = @{ "string" }
 cstring_t  = @{ "cstring" }
+// Variable-length integers.
+varint_t   = @{ "uleb128" | "sleb128" | "varint" | "zigzag" | "vlq" | "quic_varint" }
 
 type_name = @{
     (uint8 | int8 | uint16 | int16 | uint32 | int32 | uint64 | int64
     | float32 | float64 | macaddr | datetime | bytes_t
     | uchar_t | char_t | byte_t | ushort_t | short_t | uint_t | int_t
-    | halfword_t | word_t | dword_t | qword_t | cstring_t | string_t) ~ kw_end
+    | halfword_t | word_t | dword_t | qword_t | cstring_t | string_t | varint_t) ~ kw_end
 }
 
 // Arbitrary-width integers measured in bits: u1 .. u64 and i2 .. i64.
 // They are read MSB-first from the bit stream and need no byte alignment.
 bit_type = @{ ("u" | "i") ~ digit+ ~ !(alnum | underscore) }
 
-// A reference to another packet declared in the same file.
+// A reference to another packet declared in the same file, with arguments
+// for its parameters: `Body(version, length - 4)`.
 packet_type = @{ identifier }
+packet_ref  = { packet_type ~ arg_list? }
+arg_list    = { lparen ~ expr ~ (comma ~ expr)* ~ comma? ~ rparen }
 
 // A string preceded by its length: string(uint8), string(uint16 le), ...
 prefixed_string = { string_t ~ lparen ~ (type_name | bit_type) ~ endianness? ~ rparen }
 
 // Any type usable in a field declaration
-field_type = { prefixed_string | type_name | bit_type | packet_type }
+field_type = { prefixed_string | type_name | bit_type | packet_ref }
 
 // Alignment in bytes, relative to the start of the packet
 alignment = { align_kw ~ numeric_constant }
@@ -180,21 +219,28 @@ alignment = { align_kw ~ numeric_constant }
 bit_order = @{ msb_kw | lsb_kw }
 
 // Endianness specifier (optional per packet/field)
-endianness = @{ le_kw | be_kw }
+endianness = @{ (le_kw | be_kw) ~ !(alnum | underscore) }
 
 // ===============================
-// Expressions (precedence: or < and < comparison < +,- < *,/ < ^ < primary)
+// Expressions, loosest first: or, and, not, comparison, |, xor, &, << >>,
+// + -, * / %, unary - ~, ^, primary.
 // ===============================
 expr            = { bool_or }
 bool_or         = { bool_and ~ (or_kw  ~ bool_and )* }
-bool_and        = { cmp      ~ (and_kw ~ cmp      )* }
+bool_and        = { bool_not ~ (and_kw ~ bool_not )* }
+bool_not        = { not_kw* ~ cmp }
 // Comparisons do not chain ("a < b < c" is a syntax error).
-cmp             = { sum ~ ((neq|gte|lte|gt|lt|eq) ~ sum)? }
+cmp             = { bit_or ~ ((neq|gte|lte|gt|lt|eq) ~ bit_or)? }
+bit_or          = { bit_xor ~ (bor ~ bit_xor)* }
+bit_xor         = { bit_and ~ (xor_kw ~ bit_and)* }
+bit_and         = { shift ~ (band ~ shift)* }
+shift           = { sum ~ ((shl | shr) ~ sum)* }
 sum             = { product ~ ((plus | minus) ~ product)* }
-product         = { power   ~ ((mult | div)  ~ power  )* }
+product         = { unary   ~ ((mult | div | modulo) ~ unary)* }
+unary           = { (minus | bnot)* ~ power }
 power           = { primary ~ (pw ~ primary)? }
 
-primary         = { guard_expression | literal | function_call | accessor | inner_expr }
+primary         = { guard_expression | literal | function_call | range_call | accessor | inner_expr }
 
 inner_expr      = { lparen ~ expr ~ rparen }
 literal         = { numeric_constant | string }
@@ -204,11 +250,56 @@ intrinsic_function = @{ sqrt_kw | min_kw | max_kw }
 parameter_list = { lparen ~ (expr ~ (comma ~ expr)*)? ~ comma? ~ rparen } // allows trailing comma
 function_call = { intrinsic_function ~ parameter_list }
 
-// Accessors & declarations
-declaration = { identifier ~ field_type ~ array_specifier? ~ endianness? ~ alignment? ~ category_tag? }
+// Functions over fields rather than values: len(items), sizeof(a..b),
+// sizeof(self), offsetof(f), crc32(header..payload). The name is checked
+// during analysis.
+self_kw    = @{ "self" ~ !(alnum | underscore) }
+field_range = { self_kw | (identifier ~ (dotdot ~ identifier)?) }
+range_call = { identifier ~ lparen ~ field_range ~ rparen }
 
-// `: Category` notes which named constants a field's values come from.
-category_tag = { colon ~ identifier }
+// Accessors & declarations
+declaration = {
+    identifier ~ field_type ~ array_specifier? ~ until_clause? ~ term_clause? ~ text_encoding? ~ endianness?
+    ~ at_clause? ~ alignment? ~ window? ~ category_tag? ~ derivation? ~ constraint? ~ lenient_kw?
+}
+
+// `at offset`: the field is somewhere else, `offset` bytes from the start of
+// the packet (`at root offset`: of the whole input). Reading it does not
+// move the cursor.
+at_clause = { at_kw ~ root_kw? ~ expr }
+
+// `items Item[] until last.kind == 0`: stop after the element for which the
+// expression holds (or at the end of the input or window).
+until_clause = { until_kw ~ expr }
+
+// `line string term 0x0d 0x0a`: the bytes end at this sequence, which is
+// consumed; `optional` also accepts the end of the input or window.
+term_clause = { term_kw ~ numeric_constant+ ~ optional_kw? }
+
+// `size n`: the field occupies exactly n bytes. Decoding stops at the end
+// of the window (`[]` arrays inside it run to its end) and skips what is
+// left, unless `exact`; encoding pads to n bytes.
+window = { size_kw ~ expr ~ exact_kw? }
+
+// A tagged union: the selector picks the arm.
+//   body switch channel { Channel.snac => snac Snac, _ => raw bytes[] } size length
+switch_field = {
+    identifier ~ switch_kw ~ expr ~ lbracket ~ switch_arm ~ (comma ~ switch_arm)* ~ comma? ~ rbracket
+    ~ alignment? ~ window?
+}
+switch_arm = { (default_arm | arm_values) ~ fat_arrow ~ identifier ~ (field_type ~ array_specifier? ~ endianness?)? }
+arm_values = { expr ~ (comma ~ expr)* }
+
+// `length uint16 = len(payload)`: encoding computes the value; decoding
+// checks it.
+derivation = { assign ~ expr }
+
+// `: Category` notes which named constants a field's values come from;
+// `strict` rejects any other value.
+category_tag = { colon ~ identifier ~ strict_kw? }
+
+// `== MAGIC` (the field always holds this value) or `in 1..255` (inclusive).
+constraint = { (eq ~ expr) | (in_kw ~ expr ~ dotdot ~ expr) }
 
 // A fixed-size integer container split into named sub-fields:
 //   flags bitfield uint8 { one u1, two u2, _ u5 }
@@ -217,7 +308,7 @@ bitfield_declaration = {
     identifier ~ bitfield_kw ~ (type_name | bit_type) ~ endianness? ~ bit_order? ~ alignment?
     ~ lbracket ~ bitfield_member ~ (comma ~ bitfield_member)* ~ comma? ~ rbracket
 }
-bitfield_member = { identifier ~ bit_type ~ category_tag? }
+bitfield_member = { identifier ~ bit_type ~ category_tag? ~ constraint? ~ lenient_kw? }
 accessor    = { aggregate_accessor | qualified_accessor | direct_value_accessor }
 
 // `Category.member`: a named constant from a category.
@@ -248,7 +339,20 @@ const_member = { identifier ~ assign ~ expr ~ string? }
 // ===============================
 // Packets
 // ===============================
-packets = { SOI ~ wordsize_directive? ~ (const_decl | packet)+ ~ EOI }
+packets = { SOI ~ wordsize_directive? ~ import_decl* ~ (const_decl | packet | dissector_decl)* ~ EOI }
+
+// A Wireshark dissector for a packet (`packet_builder dissector`):
+//   dissector Flap { name "AIM OSCAR", abbrev "oscar", tcp.port 5190, heuristic }
+// `name` and `abbrev` set the protocol's names; `table value` registers it
+// in a dissector table (tcp.port, udp.port, ethertype, ip.proto, ...);
+// `heuristic` also tries it on any TCP/UDP payload.
+dissector_decl   = { dissector_kw ~ identifier ~ lbracket ~ (dissector_option ~ (comma ~ dissector_option)* ~ comma?)? ~ rbracket }
+dissector_option = { heuristic_kw | (identifier ~ string) | (table_name ~ numeric_constant) }
+table_name       = @{ identifier ~ ("." ~ identifier)* }
+
+// `import "common.packet"`: the packets and constants of another file,
+// relative to this one.
+import_decl = { import_kw ~ string }
 
 // Width of a `word` in bits (16 by default, x86 style; 32 for ARM style).
 wordsize_directive = { wordsize_kw ~ numeric_constant }
@@ -257,12 +361,20 @@ wordsize_directive = { wordsize_kw ~ numeric_constant }
 // every field is aligned to min(its natural alignment, N) and the packet is
 // padded to a multiple of its alignment.
 packet  = {
-  packet_kw ~ identifier ~ endianness? ~ alignment? ~ lbracket ~ rule_list? ~ rbracket
+  packet_kw ~ identifier ~ param_list? ~ endianness? ~ alignment? ~ lbracket ~ rule_list? ~ rbracket
 }
+
+// `packet Body(version uint8, length uint16) { ... }`: values the packet's
+// expressions may use, passed by whoever contains it.
+param_list = { lparen ~ param ~ (comma ~ param)* ~ comma? ~ rparen }
+param      = { identifier ~ (type_name | bit_type) }
 
 rule_list = { rule ~ (comma ~ rule)* ~ comma? }
 
-rule = { calculated_field | align_directive | bitfield_declaration | declaration }
+rule = { calculated_field | align_directive | assert_directive | bitfield_declaration | switch_field | declaration }
+
+// `assert expr "message"`: decoding and encoding fail when expr is false.
+assert_directive = { assert_kw ~ expr ~ string? }
 
 // Pad with zero bytes up to the next multiple of N bytes from the packet start.
 align_directive = { align_kw ~ numeric_constant }

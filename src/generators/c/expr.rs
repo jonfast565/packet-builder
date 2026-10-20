@@ -1,12 +1,12 @@
 //! C spelling of expressions.
 
 use super::naming::{C, helper_suffix, len_ident, scalar_type};
-use crate::generators::common::{Dialect, ExprLang, Scope};
-use crate::ir::{AggOp, ArithOp, Func, Ty, ValueType, storage_for};
+use crate::generators::common::{Dialect, ExprLang, Mode, Scope};
+use crate::ir::{AggOp, ArithOp, Checksum, Func, Ty, UnaryOp, ValueType, storage_for};
 
 impl Scope<'_, C> {
     /// The element count of array member `member`.
-    fn len(&self, member: usize) -> String {
+    fn len_field(&self, member: usize) -> String {
         format!("p->{}", len_ident(self.packet, self.member(member)))
     }
 }
@@ -30,7 +30,14 @@ impl ExprLang for Scope<'_, C> {
     fn index(&self, member: usize, index: String, ty: Ty) -> String {
         let t = if ty == Ty::Float { "double" } else { "int64_t" };
         let m = &self.packet.members[member];
-        format!("(({})pb_at_{}({}, {}, {}))", t, helper_suffix(&m.ty), self.place(member), self.len(member), index)
+        format!(
+            "(({})pb_at_{}({}, {}, {}))",
+            t,
+            helper_suffix(&m.ty),
+            self.place(member),
+            self.len_field(member),
+            index
+        )
     }
 
     fn aggregate(&self, member: usize, op: AggOp, ty: Ty) -> String {
@@ -41,7 +48,7 @@ impl ExprLang for Scope<'_, C> {
             (AggOp::Sum, _) => "sum",
             (AggOp::Product, _) => "prod",
         };
-        format!("pb_{}_{}({}, {})", f, helper_suffix(&m.ty), self.place(member), self.len(member))
+        format!("pb_{}_{}({}, {})", f, helper_suffix(&m.ty), self.place(member), self.len_field(member))
     }
 
     fn arith(&self, op: ArithOp, a: String, b: String, ty: Ty) -> String {
@@ -52,6 +59,7 @@ impl ExprLang for Scope<'_, C> {
                 ArithOp::Mul => format!("({} * {})", a, b),
                 ArithOp::Div => format!("({} / {})", a, b),
                 ArithOp::Pow => format!("pow({}, {})", a, b),
+                _ => unreachable!("integer-only operator on floats"),
             };
         }
         let f = match op {
@@ -60,8 +68,23 @@ impl ExprLang for Scope<'_, C> {
             ArithOp::Mul => "pb_mul",
             ArithOp::Div => "pb_div",
             ArithOp::Pow => "pb_pow",
+            ArithOp::Mod => "pb_mod",
+            ArithOp::Shl => "pb_shl",
+            ArithOp::Shr => "pb_shr",
+            ArithOp::BitAnd => return format!("({} & {})", a, b),
+            ArithOp::BitOr => return format!("({} | {})", a, b),
+            ArithOp::BitXor => return format!("({} ^ {})", a, b),
         };
         format!("{}({}, {})", f, a, b)
+    }
+
+    fn unary(&self, op: UnaryOp, e: String, ty: Ty) -> String {
+        match (op, ty) {
+            (UnaryOp::Neg, Ty::Float) => format!("(-{})", e),
+            (UnaryOp::Neg, _) => format!("pb_neg({})", e),
+            (UnaryOp::BitNot, _) => format!("(~{})", e),
+            (UnaryOp::Not, _) => format!("(!{})", e),
+        }
     }
 
     fn guard(&self, cond: String, then: String, other: String, _ty: Ty) -> String {
@@ -75,6 +98,33 @@ impl ExprLang for Scope<'_, C> {
             Func::Min => format!("pb_min_{}({}, {})", s, args[0], args[1]),
             Func::Max => format!("pb_max_{}({}, {})", s, args[0], args[1]),
         }
+    }
+
+    fn len(&self, member: usize) -> String {
+        format!("((int64_t){})", self.len_field(member))
+    }
+
+    fn size(&self, from: &str, to: &str) -> String {
+        format!("((int64_t)(({} - {}) / 8))", to, from)
+    }
+
+    fn checksum(&self, algo: Checksum, from: &str, to: &str, hole: Option<(&str, &str)>) -> String {
+        let (f, rw) =
+            if self.mode == Mode::Encode { ("pb_writer_checksum", "pb_w") } else { ("pb_reader_checksum", "pb_r") };
+        let (hf, ht) = hole.unwrap_or(("0", "0"));
+        format!("((int64_t){}({}, {}, {}, {}, {}, {}))", f, rw, algo.id(), from, to, hf, ht)
+    }
+
+    fn last(&self, field: Option<(&str, &str)>, ty: Ty) -> String {
+        let t = if ty == Ty::Float { "double" } else { "int64_t" };
+        match field {
+            Some((_, f)) => format!("(({})pb_last->{})", t, super::naming::ident(f)),
+            None => format!("(({})*pb_last)", t),
+        }
+    }
+
+    fn param(&self, index: usize) -> String {
+        format!("((int64_t){})", self.param_var(index))
     }
 
     fn convert(&self, e: String, from: Ty, to: Ty) -> String {

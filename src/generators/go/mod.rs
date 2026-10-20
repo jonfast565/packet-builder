@@ -3,8 +3,10 @@
 mod decode;
 mod encode;
 mod expr;
+mod json;
 mod naming;
 mod packet;
+mod stream;
 
 pub use naming::{field_name, member_type, scalar_type};
 
@@ -26,14 +28,22 @@ impl Backend for GoGenerator {
         out.line("import (");
         out.line("\t\"fmt\"");
         out.line("\t\"math\"");
+        out.line("\t\"sort\"");
+        out.line("\t\"strconv\"");
+        out.line("\t\"strings\"");
         out.line("\t\"unicode/utf8\"");
         out.line(")");
         out.line("");
         out.buf.push_str(RUNTIME);
         self.emit_constants(&mut out, module);
+        for u in &module.unions {
+            out.line("");
+            packet::emit_union(&mut out, u);
+            json::emit_union_json(&mut out, u);
+        }
         for p in &module.packets {
             out.line("");
-            packet::emit_packet(&mut out, p);
+            packet::emit_packet(&mut out, module, p, opts.zero_copy);
         }
         out.buf
     }

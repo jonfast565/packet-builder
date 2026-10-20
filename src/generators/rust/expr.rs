@@ -1,8 +1,9 @@
 //! Rust spelling of expressions.
 
 use super::naming::{Rust, scalar_type};
+use crate::generators::common::Mode;
 use crate::generators::common::{ExprLang, Scope};
-use crate::ir::{AggOp, ArithOp, Func, Ty, ValueType, storage_for};
+use crate::ir::{AggOp, ArithOp, Checksum, Func, Ty, UnaryOp, ValueType, storage_for};
 
 impl ExprLang for Scope<'_, Rust> {
     fn int_lit(&self, v: i64) -> String {
@@ -11,6 +12,10 @@ impl ExprLang for Scope<'_, Rust> {
 
     fn float_lit(&self, v: f64) -> String {
         format!("({:?}f64)", v)
+    }
+
+    fn param(&self, index: usize) -> String {
+        format!("({} as i64)", self.param_var(index))
     }
 
     fn member_ref(&self, member: usize, ty: Ty) -> String {
@@ -47,6 +52,7 @@ impl ExprLang for Scope<'_, Rust> {
                 ArithOp::Mul => format!("({} * {})", a, b),
                 ArithOp::Div => format!("({} / {})", a, b),
                 ArithOp::Pow => format!("{}.powf({})", a, b),
+                _ => unreachable!("integer-only operator on floats"),
             };
         }
         match op {
@@ -55,6 +61,20 @@ impl ExprLang for Scope<'_, Rust> {
             ArithOp::Mul => format!("{}.wrapping_mul({})", a, b),
             ArithOp::Div => format!("pb_div({}, {})", a, b),
             ArithOp::Pow => format!("pb_pow({}, {})", a, b),
+            ArithOp::Mod => format!("pb_mod({}, {})", a, b),
+            ArithOp::Shl => format!("pb_shl({}, {})", a, b),
+            ArithOp::Shr => format!("pb_shr({}, {})", a, b),
+            ArithOp::BitAnd => format!("({} & {})", a, b),
+            ArithOp::BitOr => format!("({} | {})", a, b),
+            ArithOp::BitXor => format!("({} ^ {})", a, b),
+        }
+    }
+
+    fn unary(&self, op: UnaryOp, e: String, ty: Ty) -> String {
+        match (op, ty) {
+            (UnaryOp::Neg, Ty::Float) => format!("(-{})", e),
+            (UnaryOp::Neg, _) => format!("{}.wrapping_neg()", e),
+            (UnaryOp::BitNot, _) | (UnaryOp::Not, _) => format!("(!{})", e),
         }
     }
 
@@ -68,6 +88,28 @@ impl ExprLang for Scope<'_, Rust> {
             Func::Min => format!("{}.min({})", args[0], args[1]),
             Func::Max => format!("{}.max({})", args[0], args[1]),
         }
+    }
+
+    fn last(&self, field: Option<(&str, &str)>, ty: Ty) -> String {
+        let t = if ty == Ty::Float { "f64" } else { "i64" };
+        match field {
+            Some((_, f)) => format!("(pb_last.{} as {})", super::naming::ident(f), t),
+            None => format!("(pb_last as {})", t),
+        }
+    }
+
+    fn len(&self, member: usize) -> String {
+        format!("({}.len() as i64)", self.place(member))
+    }
+
+    fn size(&self, from: &str, to: &str) -> String {
+        format!("((({} - {}) / 8) as i64)", to, from)
+    }
+
+    fn checksum(&self, algo: Checksum, from: &str, to: &str, hole: Option<(&str, &str)>) -> String {
+        let rw = if self.mode == Mode::Encode { "pb_w" } else { "pb_r" };
+        let (hf, ht) = hole.unwrap_or(("0", "0"));
+        format!("({}.checksum({}, {}, {}, {}, {}) as i64)", rw, algo.id(), from, to, hf, ht)
     }
 
     fn convert(&self, e: String, from: Ty, to: Ty) -> String {

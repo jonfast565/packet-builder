@@ -1,0 +1,94 @@
+// Packet parameters, absolute offsets and recursion. Used by tests/codegen.rs.
+
+// A body whose layout depends on values from its header.
+packet Item(version uint8) be {
+  a uint8,
+  b uint8[when version >= 2 then 1 otherwise 0],
+  calc seen uint8 = version
+}
+
+packet Body(version uint8, length uint16) be {
+  data bytes[length],
+  item Item(version),
+  assert version < 10 "version too new"
+}
+
+packet Versioned be {
+  version uint8,
+  length uint16,
+  body Body(version, length),
+  items Item(version + 1)[2],
+  tail switch version {
+    1 => old Item(1),
+    _ => new Item(version)
+  }
+}
+
+// Arguments wrap to the parameter's type.
+packet Narrow(v u4, s int8) be {
+  calc wide uint8 = v,
+  calc signed int16 = s
+}
+
+packet Wrapped be {
+  x uint8,
+  inner Narrow(x + 250, x + 120)
+}
+
+// Entries found through offsets from the start of the table.
+packet Entry be {
+  len uint8 = len(data),
+  data bytes[len]
+}
+
+packet Table be {
+  first uint8,
+  second uint8,
+  a Entry at first,
+  b Entry at second
+}
+
+packet Tables be {
+  tag uint8,
+  table Table
+}
+
+// An offset from the start of the whole input.
+packet Pointer be {
+  off uint8,
+  target Entry at root off
+}
+
+packet Rooted be {
+  tag uint8,
+  ptr Pointer
+}
+
+// A tree: a node contains nodes.
+packet Node be {
+  value uint8,
+  count uint8 = len(children),
+  children Node[count]
+}
+
+// Recursion through `until`, a union arm and `at root`: a chain of links
+// that ends with a zero, or jumps elsewhere and continues there.
+packet Link be {
+  kind uint8,
+  body switch kind {
+    0 => end,
+    1 => value Value,
+    2 => jump Jump
+  }
+}
+
+packet Value be { v uint8 }
+
+packet Jump be {
+  off uint8,
+  rest Chain at root off
+}
+
+packet Chain be {
+  links Link[] until last.kind != 1
+}

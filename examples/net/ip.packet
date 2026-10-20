@@ -1,0 +1,118 @@
+// IPv4 (with its options), TCP (with its options) and UDP headers. All
+// big-endian, most-significant bit first. Imported by ethernet.packet.
+
+const WORD_BYTES uint8 = 4 "IPv4 `ihl` and TCP `data_offset` count 32-bit words"
+const IPV4_VERSION u4 = 4
+const IPV4_MIN_HEADER uint8 = 20 "IPv4 header bytes before the options"
+
+const IpProtocol uint8 {
+  icmp = 1,
+  tcp = 6   "Tcp",
+  udp = 17  "Udp",
+}
+
+// TCP and IPv4 options share a layout: END and NOP are a single kind byte,
+// every other option is kind, length (counting the kind byte) and data. A
+// list ends with END or with the space the header leaves for it.
+packet OptionData be {
+  length uint8 = sizeof(self) + 1,
+  data bytes[length - 2]
+}
+
+const Ipv4OptionKind uint8 {
+  end = 0,
+  nop = 1,
+  record_route = 7,
+  timestamp = 68,
+  router_alert = 148,
+}
+
+packet Ipv4Option be {
+  kind uint8 : Ipv4OptionKind,
+  body switch kind {
+    Ipv4OptionKind.end => end,
+    Ipv4OptionKind.nop => nop,
+    _ => data OptionData
+  }
+}
+
+// IPv4 header (RFC 791). Sub-byte fields live directly in the bit stream.
+packet Ipv4 be {
+  version u4 == IPV4_VERSION,
+  ihl u4 = offsetof(payload) / WORD_BYTES,  // header length in WORD_BYTES units
+  dscp u6,
+  ecn u2,
+  total_length uint16 = sizeof(self),  // header and payload
+  identification uint16,
+  _ u1,                     // reserved, must be zero
+  dont_fragment u1,
+  more_fragments u1,
+  fragment_offset u13,      // in 8-byte units
+  ttl uint8,
+  protocol uint8 : IpProtocol,
+  checksum uint16 = internet(version..options),  // over the header, this field counted as zero
+  source uint8[4],
+  destination uint8[4],
+  options Ipv4Option[] until last.kind == Ipv4OptionKind.end size ihl * WORD_BYTES - IPV4_MIN_HEADER,
+  align 4,                  // the header ends on a 32-bit word
+  // Only the first fragment starts with the next header.
+  payload switch when fragment_offset == 0 then protocol otherwise -1 {
+    IpProtocol.tcp => tcp Tcp,
+    IpProtocol.udp => udp Udp,
+    _ => other bytes[]
+  } size total_length - ihl * WORD_BYTES,
+  calc header_length uint8 = ihl * WORD_BYTES,
+  calc payload_length uint16 = total_length - ihl * WORD_BYTES
+}
+
+const TCP_MIN_HEADER uint8 = 20 "TCP header bytes before the options"
+
+const TcpOptionKind uint8 {
+  end = 0,
+  nop = 1,
+  mss = 2             "maximum segment size",
+  window_scale = 3,
+  sack_permitted = 4,
+  sack = 5,
+  timestamps = 8,
+}
+
+packet TcpOption be {
+  kind uint8 : TcpOptionKind,
+  body switch kind {
+    TcpOptionKind.end => end,
+    TcpOptionKind.nop => nop,
+    _ => data OptionData
+  }
+}
+
+// TCP header (RFC 793 / 3168). The nine flag bits form a u9 bitfield
+// container that starts in the middle of a byte.
+packet Tcp be {
+  source_port uint16,
+  destination_port uint16,
+  sequence uint32,
+  acknowledgment uint32,
+  data_offset u4 = offsetof(payload) / WORD_BYTES,  // header length in WORD_BYTES units
+  _ u3,
+  flags bitfield u9 {
+    ns u1, cwr u1, ece u1, urg u1, ack u1, psh u1, rst u1, syn u1, fin u1
+  },
+  window uint16,
+  checksum uint16,          // covers an IPv4/IPv6 pseudo-header, so it is not derived here
+  urgent_pointer uint16,
+  options TcpOption[] until last.kind == TcpOptionKind.end size data_offset * WORD_BYTES - TCP_MIN_HEADER,
+  align 4,                  // the header ends on a 32-bit word
+  payload bytes[]           // the rest of the IP payload
+}
+
+const UDP_HEADER uint16 = 8 "UDP header bytes"
+
+// UDP header (RFC 768) and payload.
+packet Udp be {
+  source_port uint16,
+  destination_port uint16,
+  length uint16 = sizeof(self),  // UDP_HEADER + payload
+  checksum uint16,          // covers a pseudo-header, like TCP's
+  payload bytes[length - UDP_HEADER]
+}

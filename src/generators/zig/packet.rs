@@ -2,12 +2,67 @@
 
 use super::decode::Decoder;
 use super::encode::Encoder;
-use super::expr::store_value;
 use super::naming::{default_value, ident, member_type, owns_memory, scalar_type};
-use crate::generators::common::{Out, StepEmitter, member_category};
-use crate::ir::{Packet, ValueType};
+use crate::generators::common::{Out, StepEmitter, member_category, param_var};
+use crate::ir::{Arm, Module, Packet, Union, ValueType};
 
-pub fn emit_packet(out: &mut Out, p: &Packet) {
+/// The Zig type an arm holds (`void` for an empty arm).
+fn arm_type(arm: &Arm) -> String {
+    match (&arm.ty, arm.is_bytes()) {
+        (None, _) => "void".into(),
+        (Some(_), true) => "[]const u8".into(),
+        (Some(t), false) => scalar_type(t),
+    }
+}
+
+/// The value an arm starts with.
+fn arm_default(arm: &Arm) -> String {
+    match (&arm.ty, arm.is_bytes()) {
+        (None, _) => "{}".into(),
+        (Some(_), true) => "&.{}".into(),
+        (Some(ValueType::Packet(_)), false) => ".{}".into(),
+        (Some(_), false) => "0".into(),
+    }
+}
+
+/// A tagged union with a `deinit` for the arms that own memory.
+pub fn emit_union(out: &mut Out, u: &Union, zero_copy: bool) {
+    out.open(format!("pub const {} = union(enum) {{", u.name));
+    for arm in &u.arms {
+        out.line(format!("{}: {},", ident(&arm.name), arm_type(arm)));
+    }
+    out.line("");
+    let first = &u.arms[0];
+    out.line(format!("pub const pb_default: {} = .{{ .{} = {} }};", u.name, ident(&first.name), arm_default(first)));
+    out.line("");
+    out.line("/// Free memory owned by a decoded value.");
+    out.open(format!("pub fn deinit(self: *{}, allocator: std.mem.Allocator) void {{", u.name));
+    let owning: Vec<&Arm> =
+        u.arms.iter().filter(|a| (a.is_bytes() && !zero_copy) || matches!(a.ty, Some(ValueType::Packet(_)))).collect();
+    if owning.is_empty() {
+        out.line("_ = allocator;");
+    } else {
+        out.open("switch (self.*) {");
+        for arm in &owning {
+            if arm.is_bytes() {
+                out.line(format!(".{} => |pb_v| allocator.free(pb_v),", ident(&arm.name)));
+            } else {
+                out.line(format!(".{} => |*pb_v| pb_v.deinit(allocator),", ident(&arm.name)));
+            }
+        }
+        if owning.len() < u.arms.len() {
+            out.line("else => {},");
+        }
+        out.close("}");
+    }
+    out.line("self.* = pb_default;");
+    out.close("}");
+    super::json::emit_union_json(out, u);
+    out.close("};");
+    out.line("");
+}
+
+pub fn emit_packet(out: &mut Out, module: &Module, p: &Packet, zero_copy: bool) {
     let name = &p.name;
     out.open(format!("pub const {} = struct {{", name));
     for m in &p.members {
@@ -19,7 +74,7 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     if !p.members.is_empty() {
         out.line("");
     }
-    let allocates = p.members.iter().any(owns_memory);
+    let allocates = p.members.iter().any(|m| owns_memory(m, zero_copy));
 
     // deinit
     out.line("/// Free memory owned by a decoded value.");
@@ -28,7 +83,7 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
         out.line("_ = self;");
         out.line("_ = allocator;");
     }
-    for m in p.members.iter().filter(|m| owns_memory(m)) {
+    for m in p.members.iter().filter(|m| owns_memory(m, zero_copy)) {
         let id = ident(&m.name);
         match (&m.array, &m.ty) {
             (Some(_), ValueType::Packet(_)) => {
@@ -39,58 +94,73 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
             _ => out.line(format!("self.{}.deinit(allocator);", id)),
         }
         let empty = match (&m.array, &m.ty) {
-            (Some(_), _) => "&.{}",
-            (None, ValueType::Str) => "\"\"",
-            _ => ".{}",
+            (Some(_), _) => "&.{}".to_string(),
+            (None, ValueType::Str) => "\"\"".to_string(),
+            (None, ValueType::Union(u)) => format!("{}.pb_default", u),
+            _ => ".{}".to_string(),
         };
         out.line(format!("self.{} = {};", id, empty));
     }
     out.close("}");
     out.line("");
 
+    // Parameters: `, pbp_a: u8` in signatures, `, pbp_a` in calls.
+    let decl: String = p.params.iter().map(|x| format!(", {}: {}", param_var(&x.name), scalar_type(&x.ty))).collect();
+    let pass: String = p.params.iter().map(|x| format!(", {}", param_var(&x.name))).collect();
+    // Zig rejects unused parameters.
+    let touch = |out: &mut Out, body: &str| {
+        for x in &p.params {
+            if !uses(body, &param_var(&x.name)) {
+                out.line(format!("_ = {};", param_var(&x.name)));
+            }
+        }
+    };
+
     // decode
     out.line("/// Decode from the start of `data`. Trailing bytes are ignored.");
-    out.open(format!("pub fn decode(allocator: std.mem.Allocator, data: []const u8) PbError!{} {{", name));
+    out.open(format!("pub fn decode(allocator: std.mem.Allocator, data: []const u8{}) PbError!{} {{", decl, name));
     out.line("var pb_r = PbReader.init(data);");
-    out.line("return decodeFrom(allocator, &pb_r);");
+    out.line(format!("return decodeFrom(allocator, &pb_r{});", pass));
     out.close("}");
     out.line("");
 
     let mut body = Out::new("    ");
     body.push();
     body.push();
-    Decoder::new(p).emit_steps(&mut body);
-    out.open(format!("pub fn decodeFrom(allocator: std.mem.Allocator, pb_r: *PbReader) PbError!{} {{", name));
-    if !uses(&body.buf, "allocator") {
+    Decoder::new(p, zero_copy).emit_steps(&mut body);
+    out.open(format!("pub fn decodeFrom(allocator: std.mem.Allocator, pb_r: *PbReader{}) PbError!{} {{", decl, name));
+    touch(out, &body.buf);
+    // The errdefer below uses the allocator too.
+    if !uses(&body.buf, "allocator") && !(allocates && uses(&body.buf, "p")) {
         out.line("_ = allocator;");
-    }
-    if !uses(&body.buf, "pb_r") {
-        out.line("_ = pb_r;");
     }
     if uses(&body.buf, "p") {
         out.line(format!("var p: {} = .{{}};", name));
         if allocates {
             out.line("errdefer p.deinit(allocator);");
         }
-        if p.uses_align() {
+        if p.needs_start(false) {
             out.line("const pb_start = pb_r.positionBits();");
         }
     } else {
         out.line(format!("const p: {} = .{{}};", name));
     }
+    out.line(format!("try pb_r.enter(\"{}\");", name));
     out.pop();
     out.buf.push_str(&body.buf);
     out.push();
+    out.line("pb_r.leave();");
     out.line("return p;");
     out.close("}");
     out.line("");
 
     // encode
     out.line("/// Encode into a new buffer owned by the caller.");
-    out.open(format!("pub fn encode(self: *const {}, allocator: std.mem.Allocator) PbError![]u8 {{", name));
+    out.open(format!("pub fn encode(self: *const {}, allocator: std.mem.Allocator{}) PbError![]u8 {{", name, decl));
     out.line("var pb_w = PbWriter.init(allocator);");
     out.line("errdefer pb_w.deinit();");
-    out.line("try self.encodeTo(&pb_w);");
+    out.line(format!("try self.encodeTo(&pb_w{});", pass));
+    out.line("try pb_w.finish();");
     out.line("return pb_w.toOwnedSlice();");
     out.close("}");
     out.line("");
@@ -100,30 +170,27 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     body.push();
     body.push();
     for (m, e) in p.encode_calc_members() {
-        body.line(format!(
-            "const pbc_{}: {} = {};",
-            m.name,
-            scalar_type(&m.ty),
-            store_value(encoder.scope.expr(e), &m.ty)
-        ));
+        encoder.define_local(&mut body, m, e);
     }
     encoder.emit_steps(&mut body);
-    out.open(format!("pub fn encodeTo(self: *const {}, pb_w: *PbWriter) PbError!void {{", name));
+    out.open(format!("pub fn encodeTo(self: *const {}, pb_w: *PbWriter{}) PbError!void {{", name, decl));
+    touch(out, &body.buf);
     if uses(&body.buf, "p") {
         out.line("const p = self;");
     } else {
         out.line("_ = self;");
     }
-    if p.uses_align() {
+    if p.needs_start(true) {
         out.line("const pb_start = pb_w.positionBits();");
     }
-    if !uses(&body.buf, "pb_w") {
-        out.line("_ = pb_w;");
-    }
+    out.line(format!("try pb_w.enter(\"{}\");", name));
     out.pop();
     out.buf.push_str(&body.buf);
     out.push();
+    out.line("pb_w.leave();");
     out.close("}");
+    super::json::emit_packet_json(out, p);
+    super::stream::emit_streaming(out, module, p);
     out.close("};");
 }
 

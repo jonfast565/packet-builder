@@ -5,8 +5,10 @@
 // carry SNACs (a 10-byte header + a family/subtype specific body); most
 // SNAC bodies are chains of TLVs. Everything is big-endian.
 //
-// Decoding is layered the same way the protocol is:
-//   bytes --Flap--> payload --SnacHeader / typed SNAC--> TLVs --> values
+// Decoding a Flap decodes all of it: the FLAP channel picks the payload
+// type, and the SNAC family and subtype pick the body type (tagged unions,
+// `switch`). Lengths are derived, so encoders compute them.
+//   bytes --Flap--> Snac --body--> ServerReady / IcbmReceive / ... --> TLVs
 // See docs/oscar.md for a walkthrough.
 //
 // The protocol's magic numbers are named constants below; generated code
@@ -27,12 +29,15 @@ const Channel uint8 {
 }
 
 packet Flap be {
-  start uint8,              // always FLAP_START
-  channel uint8 : Channel,
+  start uint8 == FLAP_START,
+  channel uint8 : Channel strict,
   sequence uint16,          // per-direction sequence number
-  length uint16,            // payload size in bytes
-  payload bytes[length],
-  calc valid uint8 = start == FLAP_START and channel >= Channel.signon and channel <= Channel.keep_alive
+  length uint16 = sizeof(payload),
+  payload switch channel {
+    Channel.signon => signon FlapSignon,
+    Channel.snac => snac Snac,
+    _ => other bytes[]      // error, sign-off and keep-alive frames
+  } size length
 }
 
 const FLAP_VERSION uint32 = 1 "FlapSignon.version is always 1"
@@ -46,7 +51,7 @@ const LoginTlv uint16 {
 // Channel 1 payload (sign-on): protocol version, then TLVs such as
 // LoginTlv.auth_cookie.
 packet FlapSignon be {
-  version uint32,           // always FLAP_VERSION
+  version uint32 == FLAP_VERSION,
   tlvs Tlv[]
 }
 
@@ -55,12 +60,12 @@ packet FlapSignon be {
 // ---------------------------------------------------------------------
 packet Tlv be {
   type uint16,
-  length uint16,
+  length uint16 = len(value),
   value bytes[length]
 }
 
 // ---------------------------------------------------------------------
-// SNAC header: first 10 bytes of every channel 2 payload
+// SNAC: a 10-byte header, then a body picked by family and subtype
 // ---------------------------------------------------------------------
 const SnacFamily uint16 {
   service = 0x0001  "generic service controls",
@@ -74,7 +79,7 @@ const SnacFlag uint16 {
   more_replies = 0x0001      "more SNACs answer the same request",
 }
 
-packet SnacHeader be {
+packet Snac be {
   family uint16 : SnacFamily,
   subtype uint16,           // ServiceSubtype, AuthSubtype or IcbmSubtype, by family
   flags bitfield uint16 {
@@ -84,18 +89,24 @@ packet SnacHeader be {
   },
   request_id uint32,
   // Present only when has_version_info is set: an array of 0 or 1 entries.
-  version_info SnacVersionInfo[has_version_info]
+  version_info SnacVersionInfo[has_version_info],
+  // The selector combines family and subtype into one 32-bit number.
+  body switch family << 16 | subtype {
+    SnacFamily.service << 16 | ServiceSubtype.server_ready => server_ready ServerReady,
+    SnacFamily.service << 16 | ServiceSubtype.rate_info => rate_info RateInfo,
+    SnacFamily.service << 16 | ServiceSubtype.client_versions,
+    SnacFamily.service << 16 | ServiceSubtype.server_versions => family_versions FamilyVersions,
+    SnacFamily.auth << 16 | AuthSubtype.key_request => key_request AuthKeyRequest,
+    SnacFamily.auth << 16 | AuthSubtype.key_response => key_response AuthKeyResponse,
+    SnacFamily.icbm << 16 | IcbmSubtype.send => send IcbmSend,
+    SnacFamily.icbm << 16 | IcbmSubtype.receive => receive IcbmReceive,
+    _ => other bytes[]
+  }
 }
 
 packet SnacVersionInfo be {
-  length uint16,
+  length uint16 = len(tlvs),
   tlvs bytes[length]
-}
-
-// Any channel 2 payload, before looking at family/subtype.
-packet Snac be {
-  header SnacHeader,
-  body bytes[]
 }
 
 // ---------------------------------------------------------------------
@@ -110,7 +121,6 @@ const ServiceSubtype uint16 {
 
 // SNAC(01,03) server ready: the families this connection serves.
 packet ServerReady be {
-  header SnacHeader,
   families uint16[]
 }
 
@@ -121,7 +131,6 @@ packet FamilyVersion be {
 }
 
 packet FamilyVersions be {
-  header SnacHeader,
   versions FamilyVersion[]
 }
 
@@ -146,13 +155,12 @@ packet FamilySubtype be {
 
 packet RateGroup be {
   class_id uint16,
-  pair_count uint16,
+  pair_count uint16 = len(pairs),
   pairs FamilySubtype[pair_count]
 }
 
 packet RateInfo be {
-  header SnacHeader,
-  class_count uint16,
+  class_count uint16 = len(classes),
   classes RateClass[class_count],
   groups RateGroup[]
 }
@@ -167,14 +175,12 @@ const AuthSubtype uint16 {
 
 // SNAC(17,06) request an MD5 salt; LoginTlv.screen_name carries the screen name.
 packet AuthKeyRequest be {
-  header SnacHeader,
   tlvs Tlv[]
 }
 
 // SNAC(17,07) the salt to hash the password with.
 packet AuthKeyResponse be {
-  header SnacHeader,
-  key_length uint16,
+  key_length uint16 = len(key),
   key bytes[key_length]
 }
 
@@ -199,7 +205,6 @@ const IcbmTlv uint16 {
 
 // SNAC(04,06) send a message (client to server).
 packet IcbmSend be {
-  header SnacHeader,
   cookie bytes[8],          // random message id, echoed in acks
   channel uint16 : IcbmChannel,
   screen_name string(uint8),  // length-prefixed: one length byte, then the name
@@ -208,12 +213,11 @@ packet IcbmSend be {
 
 // SNAC(04,07) incoming message (server to client).
 packet IcbmReceive be {
-  header SnacHeader,
   cookie bytes[8],
   channel uint16 : IcbmChannel,
   screen_name string(uint8),
   warning_level uint16,     // sender's warning level in tenths of a percent
-  user_tlv_count uint16,
+  user_tlv_count uint16 = len(user_tlvs),
   user_tlvs Tlv[user_tlv_count],
   tlvs Tlv[],
   calc warning_percent float64 = warning_level / 10.0
@@ -229,8 +233,11 @@ const FragmentId uint8 {
 packet IcbmFragment be {
   id uint8 : FragmentId,
   version uint8,
-  length uint16,
-  data bytes[length]
+  length uint16 = sizeof(data),
+  data switch id {
+    FragmentId.text => text MessageText,
+    _ => other bytes[]       // FragmentId.capabilities, ...
+  } size length
 }
 
 packet IcbmMessage be {
@@ -249,3 +256,8 @@ packet MessageText be {
   charsubset uint16,
   text bytes[]
 }
+
+// A Wireshark dissector: `packet_builder dissector examples/oscar.packet -o out`
+// writes oscar.lua. TCP port 5190 is AIM's; frames split across segments are
+// reassembled, since a FLAP's length is in its header.
+dissector Flap { name "AIM OSCAR", abbrev "oscar", tcp.port 5190 }

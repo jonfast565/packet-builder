@@ -5,7 +5,7 @@ use super::cursor::Align;
 use super::types::type_label;
 use crate::ast::{Endianness, Span, TypeExpr, TypeNode};
 use crate::errors::Diagnostic;
-use crate::ir::model::{Codec, StrMode};
+use crate::ir::model::{Codec, PacketRef, StrMode};
 
 impl<'a> Ctx<'a> {
     pub fn codec_for(
@@ -37,7 +37,7 @@ impl<'a> Ctx<'a> {
                 if !aligned {
                     misaligned(self, "nested packets");
                 }
-                Codec::Packet(n.clone())
+                Codec::Packet(PacketRef::new(n))
             }
             TypeNode::Float32 | TypeNode::Float64 => {
                 if !aligned {
@@ -56,6 +56,15 @@ impl<'a> Ctx<'a> {
                 // string type was used where only integers are allowed.
                 self.diags.push(Diagnostic::new(format!("`{}` cannot have a string type here", name), span));
                 Codec::Bytes { nbytes: 1, endian }
+            }
+            TypeNode::Varint(kind) => {
+                if !aligned {
+                    misaligned(self, "variable-length integers");
+                }
+                if explicit {
+                    self.diags.push(Diagnostic::new(format!("varint `{}` cannot have a byte order", name), span));
+                }
+                Codec::Varint(*kind)
             }
             TypeNode::Bits { width, .. } => {
                 if aligned && width % 8 == 0 {
@@ -100,6 +109,14 @@ impl<'a> Ctx<'a> {
             self.diags.push(Diagnostic::new(format!("string `{}` cannot have a byte order", f.id), f.span));
         }
         match &f.expr {
+            TypeNode::CStr | TypeNode::Str if f.term.is_some() => {
+                let (bytes, optional) = f.term.clone().unwrap_or_default();
+                let term: Vec<u8> = bytes.iter().filter(|b| **b <= 255).map(|b| *b as u8).collect();
+                if term.is_empty() {
+                    self.diags.push(Diagnostic::new(format!("the terminator of `{}` is empty", f.id), f.span));
+                }
+                Codec::Str(StrMode::Terminated { term, optional })
+            }
             TypeNode::Char => Codec::Str(StrMode::Padded),
             TypeNode::Str => Codec::Str(StrMode::Exact),
             TypeNode::CStr | TypeNode::PrefixedStr { .. } if f.array.is_some() => {

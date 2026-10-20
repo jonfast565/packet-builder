@@ -6,12 +6,10 @@ Generate the parser first:
     PYTHONPATH=examples/out python3 examples/oscar_demo.py
 """
 
-import struct
-
 from packets import (
-    FLAP_START, Channel, Charset, Flap, FlapSignon, FragmentId, IcbmChannel,
-    IcbmMessage, IcbmReceive, IcbmSend, IcbmSubtype, IcbmTlv, MessageText,
-    PbError, PbReader, ServerReady, ServiceSubtype, SnacFamily, SnacHeader, Tlv,
+    Channel, Charset, Flap, FlapPayload, FragmentId, IcbmChannel, IcbmFragment,
+    IcbmFragmentData, IcbmMessage, IcbmSend, IcbmSubtype, IcbmTlv, MessageText,
+    PbReader, Snac, SnacBody, SnacFamily, Tlv,
 )
 
 # What a client receives right after connecting to a BOS server: the sign-on
@@ -38,52 +36,54 @@ def message_text(tlvs):
     for tlv in tlvs:
         if tlv.type == IcbmTlv.MESSAGE_DATA:
             for fragment in IcbmMessage.decode(tlv.value).fragments:
-                if fragment.id == FragmentId.TEXT:
-                    return MessageText.decode(fragment.data).text.decode("ascii")
+                if fragment.data.kind == "text":
+                    return fragment.data.value.text.decode("ascii")
     return None
 
 
 def main():
     reply = None
+    # Decoding a frame decodes all of it: the channel picks the payload type
+    # and the SNAC family/subtype the body type. A bad start byte or channel
+    # raises PbError.
     for frame in frames(STREAM):
-        if not frame.valid:
-            raise PbError("not a FLAP frame")
-        if frame.channel == Channel.SIGNON:
-            print("sign-on, protocol version", FlapSignon.decode(frame.payload).version)
-            continue
-        header = SnacHeader.decode(frame.payload)
-        kind = (header.family, header.subtype)
-        if kind == (SnacFamily.SERVICE, ServiceSubtype.SERVER_READY):
-            families = ServerReady.decode(frame.payload).families
-            print("server ready, families:", ", ".join("0x%04x" % f for f in families))
-        elif kind == (SnacFamily.ICBM, IcbmSubtype.RECEIVE):
-            im = IcbmReceive.decode(frame.payload)
-            sender = im.screen_name
-            print("message from %s (warning level %.1f%%): %s"
-                  % (sender, im.warning_percent, message_text(im.tlvs)))
-            reply = (frame.sequence, im.cookie, sender)
+        payload = frame.payload
+        if payload.kind == "signon":
+            print("sign-on, protocol version", payload.value.version)
+        elif payload.kind == "snac":
+            body = payload.value.body
+            if body.kind == "server_ready":
+                print("server ready, families:", ", ".join("0x%04x" % f for f in body.value.families))
+            elif body.kind == "receive":
+                im = body.value
+                sender = im.screen_name
+                print("message from %s (warning level %.1f%%): %s"
+                      % (sender, im.warning_percent, message_text(im.tlvs)))
+                reply = (frame.sequence, im.cookie, sender)
 
-    # Answer with SNAC(04,06) inside a FLAP frame.
+    # Answer with SNAC(04,06) inside a FLAP frame. Every length is derived
+    # (`length uint16 = len(payload)`), so the encoders fill them in, and
+    # FLAP's start byte defaults to FLAP_START.
     seq, cookie, sender = reply
     text = b"Hi from packet-builder!"
-    fragments = (struct.pack(">BBHB", FragmentId.CAPABILITIES, 0x01, 1, 0x01)
-                 + struct.pack(">BBHHH", FragmentId.TEXT, 0x01, 4 + len(text), Charset.ASCII, 0) + text)
+    fragments = IcbmMessage(fragments=[
+        IcbmFragment(id=FragmentId.CAPABILITIES, version=1, data=IcbmFragmentData("other", b"\x01")),
+        IcbmFragment(id=FragmentId.TEXT, version=1,
+                     data=IcbmFragmentData("text", MessageText(charset=Charset.ASCII, text=text))),
+    ]).encode()
     send = IcbmSend(
-        header=SnacHeader(family=SnacFamily.ICBM, subtype=IcbmSubtype.SEND, request_id=0x30),
         cookie=cookie,
         channel=IcbmChannel.PLAIN_TEXT,
         screen_name=sender,
-        tlvs=[Tlv(type=IcbmTlv.MESSAGE_DATA, length=len(fragments), value=fragments),
-              Tlv(type=IcbmTlv.STORE_OFFLINE, length=0, value=b"")],
+        tlvs=[Tlv(type=IcbmTlv.MESSAGE_DATA, value=fragments), Tlv(type=IcbmTlv.STORE_OFFLINE)],
     )
-    payload = send.encode()
-    out = Flap(start=FLAP_START, channel=Channel.SNAC, sequence=(seq + 1) & 0xFFFF,
-               length=len(payload), payload=payload)
+    snac = Snac(family=SnacFamily.ICBM, subtype=IcbmSubtype.SEND, request_id=0x30, body=SnacBody("send", send))
+    out = Flap(channel=Channel.SNAC, sequence=(seq + 1) & 0xFFFF, payload=FlapPayload("snac", snac))
     wire = out.encode()
     print("reply frame:", wire.hex())
 
     # Round trip: our own frame decodes back to the same message.
-    again = IcbmSend.decode(Flap.decode(wire).payload)
+    again = Flap.decode(wire).payload.value.body.value
     assert message_text(again.tlvs) == text.decode("ascii")
 
 

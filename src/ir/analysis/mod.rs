@@ -3,23 +3,38 @@
 //! - [`analyze`] (this file): packet names and dependency order.
 //! - `packet`: per-packet passes ([`PacketBuilder`](packet::PacketBuilder)).
 //! - `consts`: named constants and categories, and `: Category` tags.
+//! - `bitfield`: bitfield containers and their sub-fields.
+//! - `checks`: `== value`, `in lo..hi`, `strict` and `lenient` on fields.
+//! - `derive`: derived fields, their marks and the encode order.
+//! - `union`: tagged unions (`switch`) and windows (`size n`).
+//! - `repeat`: `until` and `term`, and string encodings.
+//! - `dissector`: `dissector` declarations.
+//! - `params`: packet parameters, arguments, `at` fields and the order
+//!   packets are analyzed in (recursion through arrays and `at`).
 //! - `context`: the member table and diagnostics shared by those passes.
 //! - `typecheck`, `codec`: expression and wire-format resolution.
 //! - `cursor`: what is known about the bit offset while laying out fields.
 //! - `types`: facts about source type names.
 
+mod bitfield;
+mod checks;
 mod codec;
 mod consts;
 mod context;
 mod cursor;
+mod derive;
+mod dissector;
 mod packet;
+mod params;
+mod repeat;
 mod typecheck;
 mod types;
+mod union;
 
 use std::collections::HashMap;
 
-use super::model::{Module, Packet};
-use crate::ast::{PacketExprList, PacketItem, TypeNode};
+use super::model::{Module, Packet, Step, Union, ValueType};
+use crate::ast::PacketExprList;
 use crate::errors::Diagnostic;
 
 /// Type names a packet may not take.
@@ -72,7 +87,7 @@ pub fn analyze(list: &PacketExprList) -> Result<Module, Vec<Diagnostic>> {
     }
 
     // Dependency order between packets (nested packets first), rejecting cycles.
-    let order = match packet_order(list, &by_name) {
+    let order = match params::packet_order(list, &by_name) {
         Ok(o) => o,
         Err(d) => {
             diags.extend(d);
@@ -80,10 +95,11 @@ pub fn analyze(list: &PacketExprList) -> Result<Module, Vec<Diagnostic>> {
         }
     };
 
+    let sigs = params::signatures(list, &mut diags);
     let consts = consts::ConstTable::build(list, &mut diags);
     let mut done = HashMap::<String, Packet>::new();
     for idx in order {
-        match packet::PacketBuilder::new(&list.packets[idx], &done, &consts).build() {
+        match packet::PacketBuilder::new(&list.packets[idx], &done, &sigs, &consts).build() {
             Ok(packet) => {
                 done.insert(packet.name.clone(), packet);
             }
@@ -95,52 +111,35 @@ pub fn analyze(list: &PacketExprList) -> Result<Module, Vec<Diagnostic>> {
         return Err(diags);
     }
 
-    let packets = list.packets.iter().map(|p| done.remove(&p.name).expect("analyzed")).collect();
-    Ok(Module { packets, constants: consts.constants, categories: consts.categories })
-}
-
-fn packet_order(list: &PacketExprList, by_name: &HashMap<String, usize>) -> Result<Vec<usize>, Vec<Diagnostic>> {
-    let mut diags = Vec::new();
-    let mut state = vec![0u8; list.packets.len()]; // 0 = new, 1 = visiting, 2 = done
-    let mut order = Vec::new();
-
-    fn visit(
-        i: usize,
-        list: &PacketExprList,
-        by_name: &HashMap<String, usize>,
-        state: &mut Vec<u8>,
-        order: &mut Vec<usize>,
-        diags: &mut Vec<Diagnostic>,
-    ) {
-        if state[i] == 2 {
-            return;
-        }
-        if state[i] == 1 {
-            diags.push(Diagnostic::new(
-                format!("packet `{}` contains itself", list.packets[i].name),
-                list.packets[i].span,
-            ));
-            return;
-        }
-        state[i] = 1;
-        for item in &list.packets[i].items {
-            if let PacketItem::Field(f) = item
-                && let TypeNode::Packet(name) = &f.expr
+    let packets: Vec<Packet> = list.packets.iter().map(|p| done.remove(&p.name).expect("analyzed")).collect();
+    let mut unions = Vec::new();
+    for p in &packets {
+        for s in &p.steps {
+            if let Step::Switch { member, arms, .. } = s
+                && let ValueType::Union(name) = &p.members[*member].ty
             {
-                match by_name.get(name) {
-                        Some(j) => visit(*j, list, by_name, state, order, diags),
-                        None => diags.push(Diagnostic::new(format!("unknown type `{}`", name), f.span).with_note(
-                            "built-in types are uint8..uint64, int8..int64, uN/iN, float32, float64, macaddress, datetime, bytes",
-                        )),
-                    }
+                unions.push(Union { name: name.clone(), arms: arms.clone() });
             }
         }
-        state[i] = 2;
-        order.push(i);
     }
-
-    for i in 0..list.packets.len() {
-        visit(i, list, by_name, &mut state, &mut order, &mut diags);
+    let taken: Vec<&str> =
+        packets.iter().map(|p| p.name.as_str()).chain(consts.categories.iter().map(|c| c.name.as_str())).collect();
+    for (i, p) in list.packets.iter().enumerate() {
+        for u in unions.iter().filter(|u| u.name.starts_with(&p.name)) {
+            if taken.contains(&u.name.as_str()) {
+                diags.push(Diagnostic::new(
+                    format!("the union type `{}` has the same name as a packet or category", u.name),
+                    list.packets[i].span,
+                ));
+            }
+        }
     }
-    if diags.is_empty() { Ok(order) } else { Err(diags) }
+    if !diags.is_empty() {
+        return Err(diags);
+    }
+    let dissectors = dissector::dissectors(list, &packets, &mut diags);
+    if !diags.is_empty() {
+        return Err(diags);
+    }
+    Ok(Module { packets, constants: consts.constants, categories: consts.categories, unions, dissectors })
 }

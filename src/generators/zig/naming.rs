@@ -1,6 +1,6 @@
 //! Zig identifiers, types and default values.
 
-use crate::generators::common::Dialect;
+use crate::generators::common::{Dialect, magic_literal};
 use crate::ir::{Member, Packet, ValueType};
 
 const KEYWORDS: &[&str] = &[
@@ -104,7 +104,7 @@ pub fn scalar_type(ty: &ValueType) -> String {
         ValueType::Int { width, signed } => format!("{}{}", if *signed { "i" } else { "u" }, width),
         ValueType::Float { width } => format!("f{}", width),
         ValueType::Mac => "[6]u8".into(),
-        ValueType::Packet(n) => n.clone(),
+        ValueType::Packet(n) | ValueType::Union(n) => n.clone(),
         ValueType::Str => "[]const u8".into(),
     }
 }
@@ -119,17 +119,23 @@ pub fn member_type(m: &Member) -> String {
 pub fn default_value(m: &Member) -> String {
     match (&m.array, &m.ty) {
         (Some(_), _) => "&.{}".into(),
-        (None, ValueType::Int { .. }) => "0".into(),
+        (None, ValueType::Int { .. }) => magic_literal(m).unwrap_or_else(|| "0".into()),
         (None, ValueType::Float { .. }) => "0".into(),
         (None, ValueType::Mac) => "[_]u8{0} ** 6".into(),
         (None, ValueType::Packet(_)) => ".{}".into(),
+        (None, ValueType::Union(n)) => format!("{}.pb_default", n),
         (None, ValueType::Str) => "\"\"".into(),
     }
 }
 
 /// Members that own heap memory (and so need deinit).
-pub fn owns_memory(m: &Member) -> bool {
-    m.array.is_some() || matches!(m.ty, ValueType::Packet(_) | ValueType::Str)
+/// Whether a decoded member owns memory `deinit` frees (zero-copy byte
+/// buffers are slices of the input).
+pub fn owns_memory(m: &Member, zero_copy: bool) -> bool {
+    if zero_copy && m.array.is_some() && m.ty.is_byte() {
+        return false;
+    }
+    m.array.is_some() || matches!(m.ty, ValueType::Packet(_) | ValueType::Str | ValueType::Union(_))
 }
 
 pub struct Zig;

@@ -2,7 +2,7 @@
 //!
 //!     cargo run -- generate examples/p3.packet -l rust -p packets -o examples/out
 //!     cp examples/p3_demo.rs examples/out/ && cd examples/out
-//!     rustc --edition 2021 p3_demo.rs && ./p3_demo
+//!     rustc --edition 2024 p3_demo.rs && ./p3_demo
 
 mod packets;
 
@@ -18,37 +18,22 @@ const STREAM: &str = concat!(
     "011d00011d000002000d",
 );
 
-/// CRC-16/ARC (poly 0x8005 reflected, init 0), as used by P3.
-fn crc16_arc(data: &[u8]) -> u16 {
-    let mut crc = 0u16;
-    for &byte in data {
-        crc ^= byte as u16;
-        for _ in 0..8 {
-            crc = if crc & 1 != 0 { (crc >> 1) ^ 0xA001 } else { crc >> 1 };
-        }
-    }
-    crc
-}
-
 fn main() -> Result<(), PbError> {
     let bytes: Vec<u8> =
         (0..STREAM.len() / 2).map(|i| u8::from_str_radix(&STREAM[2 * i..2 * i + 2], 16).unwrap()).collect();
 
+    // Decoding checks each packet's CRC: a corrupt packet is an error.
     let mut reader = PbReader::new(&bytes);
     while reader.remaining_bits() > 0 {
-        let start = reader.position_bits() / 8;
         let packet = P3Packet::decode_from(&mut reader)?;
-        let raw = &bytes[start..reader.position_bits() / 8];
-        let crc_ok = crc16_arc(&raw[3..raw.len() - 1]) == packet.crc;
-        println!("type 0x{:02x} tx 0x{:02x} valid {} crc ok {}", packet.r#type, packet.tx_seq, packet.valid, crc_ok);
+        println!("type 0x{:02x} tx 0x{:02x} crc 0x{:04x}", packet.r#type, packet.tx_seq, packet.crc);
 
-        match packet.r#type {
-            P3Type::INIT => {
-                let init = P3Init::decode(&packet.data)?;
+        // The packet type picks how the body is decoded.
+        match &packet.body {
+            P3PacketBody::Init(init) => {
                 println!("  INIT: platform {} version {}.{}", init.platform, init.client_major, init.client_minor);
             }
-            P3Type::DATA => {
-                let message = P3Message::decode(&packet.data)?;
+            P3PacketBody::Data(message) => {
                 let stream = FdoStream::decode(&message.atoms)?;
                 let names: Vec<String> = stream
                     .atoms
@@ -58,7 +43,7 @@ fn main() -> Result<(), PbError> {
                     .collect();
                 println!("  DATA {}: {} atoms, screen name {}", message.token, stream.atoms.len(), names[0]);
             }
-            other => println!("  control packet 0x{:02x}", other),
+            P3PacketBody::Control(_) => println!("  control packet 0x{:02x}", packet.r#type),
         }
     }
     Ok(())

@@ -1,10 +1,11 @@
 //! Expressions, from lowest to highest precedence:
-//! `or`, `and`, comparison, `+ -`, `* /`, `^`, primary.
+//! `or`, `and`, `not`, comparison, `|`, `xor`, `&`, `<< >>`, `+ -`, `* / %`,
+//! unary `-` `~`, `^`, primary.
 
 use pest::iterators::Pair;
 
 use super::Rule;
-use crate::ast::ExprNode;
+use crate::ast::{ExprNode, FieldRange};
 
 pub(super) fn parse_expr(parser_rule: Pair<Rule>) -> ExprNode {
     // entry: expr -> bool_or
@@ -45,8 +46,31 @@ fn parse_bool_or(parser_rule: Pair<Rule>) -> ExprNode {
 }
 
 fn parse_bool_and(parser_rule: Pair<Rule>) -> ExprNode {
-    // bool_and = { cmp ~ (and_kw ~ cmp )* }
-    left_assoc(parser_rule, Rule::cmp, parse_cmp, &[Rule::and_kw], |_, a, b| ExprNode::And(a, b))
+    // bool_and = { bool_not ~ (and_kw ~ bool_not )* }
+    left_assoc(parser_rule, Rule::bool_not, parse_bool_not, &[Rule::and_kw], |_, a, b| ExprNode::And(a, b))
+}
+
+/// A run of prefix operators applied right to left to `operand`.
+fn prefixed(ops: Vec<Rule>, operand: ExprNode) -> ExprNode {
+    ops.into_iter().rev().fold(operand, |e, op| match op {
+        Rule::not_kw => ExprNode::Not(Box::new(e)),
+        Rule::minus => ExprNode::Neg(Box::new(e)),
+        _ => ExprNode::BitNot(Box::new(e)),
+    })
+}
+
+fn parse_bool_not(parser_rule: Pair<Rule>) -> ExprNode {
+    // bool_not = { not_kw* ~ cmp }
+    let mut ops = Vec::new();
+    let mut operand = ExprNode::NoExpr;
+    for item in parser_rule.into_inner() {
+        match item.as_rule() {
+            Rule::not_kw => ops.push(Rule::not_kw),
+            Rule::cmp => operand = parse_cmp(item),
+            _ => {}
+        }
+    }
+    prefixed(ops, operand)
 }
 
 fn parse_cmp(parser_rule: Pair<Rule>) -> ExprNode {
@@ -56,7 +80,7 @@ fn parse_cmp(parser_rule: Pair<Rule>) -> ExprNode {
 
     for item in parser_rule.into_inner() {
         match item.as_rule() {
-            Rule::sum => terms.push(parse_sum(item)),
+            Rule::bit_or => terms.push(parse_bit_or(item)),
             Rule::gte | Rule::lte | Rule::gt | Rule::lt | Rule::eq | Rule::neq => ops.push(item.as_rule()),
             _ => {}
         }
@@ -80,6 +104,25 @@ fn parse_cmp(parser_rule: Pair<Rule>) -> ExprNode {
     terms.into_iter().next().unwrap_or(ExprNode::NoExpr)
 }
 
+fn parse_bit_or(parser_rule: Pair<Rule>) -> ExprNode {
+    left_assoc(parser_rule, Rule::bit_xor, parse_bit_xor, &[Rule::bor], |_, a, b| ExprNode::BitOr(a, b))
+}
+
+fn parse_bit_xor(parser_rule: Pair<Rule>) -> ExprNode {
+    left_assoc(parser_rule, Rule::bit_and, parse_bit_and, &[Rule::xor_kw], |_, a, b| ExprNode::BitXor(a, b))
+}
+
+fn parse_bit_and(parser_rule: Pair<Rule>) -> ExprNode {
+    left_assoc(parser_rule, Rule::shift, parse_shift, &[Rule::band], |_, a, b| ExprNode::BitAnd(a, b))
+}
+
+fn parse_shift(parser_rule: Pair<Rule>) -> ExprNode {
+    left_assoc(parser_rule, Rule::sum, parse_sum, &[Rule::shl, Rule::shr], |op, a, b| match op {
+        Rule::shl => ExprNode::Shl(a, b),
+        _ => ExprNode::Shr(a, b),
+    })
+}
+
 fn parse_sum(parser_rule: Pair<Rule>) -> ExprNode {
     // sum = { product ~ ((plus | minus) ~ product)* }
     left_assoc(parser_rule, Rule::product, parse_product, &[Rule::plus, Rule::minus], |op, a, b| match op {
@@ -89,11 +132,27 @@ fn parse_sum(parser_rule: Pair<Rule>) -> ExprNode {
 }
 
 fn parse_product(parser_rule: Pair<Rule>) -> ExprNode {
-    // product = { power ~ ((mult | div) ~ power)* }
-    left_assoc(parser_rule, Rule::power, parse_power, &[Rule::mult, Rule::div], |op, a, b| match op {
+    // product = { unary ~ ((mult | div | modulo) ~ unary)* }
+    let ops = [Rule::mult, Rule::div, Rule::modulo];
+    left_assoc(parser_rule, Rule::unary, parse_unary, &ops, |op, a, b| match op {
         Rule::mult => ExprNode::Mult(a, b),
-        _ => ExprNode::Div(a, b),
+        Rule::div => ExprNode::Div(a, b),
+        _ => ExprNode::Mod(a, b),
     })
+}
+
+fn parse_unary(parser_rule: Pair<Rule>) -> ExprNode {
+    // unary = { (minus | bnot)* ~ power }
+    let mut ops = Vec::new();
+    let mut operand = ExprNode::NoExpr;
+    for item in parser_rule.into_inner() {
+        match item.as_rule() {
+            Rule::minus | Rule::bnot => ops.push(item.as_rule()),
+            Rule::power => operand = parse_power(item),
+            _ => {}
+        }
+    }
+    prefixed(ops, operand)
 }
 
 fn parse_power(parser_rule: Pair<Rule>) -> ExprNode {
@@ -124,6 +183,7 @@ fn parse_primary(parser_rule: Pair<Rule>) -> ExprNode {
             Rule::guard_expression => parse_guard_expression(node),
             Rule::literal => parse_literal(node),
             Rule::function_call => parse_function_call(node),
+            Rule::range_call => parse_range_call(node),
             Rule::accessor => parse_accessor(node),
             Rule::inner_expr => parse_inner_expr(node),
             _ => ExprNode::NoExpr,
@@ -155,6 +215,29 @@ fn parse_function_call(parser_rule: Pair<Rule>) -> ExprNode {
         }
     }
     ExprNode::Call(fname, args)
+}
+
+fn parse_range_call(parser_rule: Pair<Rule>) -> ExprNode {
+    // range_call = { identifier ~ lparen ~ field_range ~ rparen }
+    let mut name = String::new();
+    let mut range = FieldRange::Whole;
+    for p in parser_rule.into_inner() {
+        match p.as_rule() {
+            Rule::identifier => name = p.as_str().to_string(),
+            Rule::field_range => {
+                let ids: Vec<String> = p
+                    .into_inner()
+                    .filter(|x| x.as_rule() == Rule::identifier)
+                    .map(|x| x.as_str().to_string())
+                    .collect();
+                if let Some(first) = ids.first() {
+                    range = FieldRange::Fields(first.clone(), ids.get(1).cloned());
+                }
+            }
+            _ => {}
+        }
+    }
+    ExprNode::RangeCall(name, range)
 }
 
 fn parse_accessor(parser_rule: Pair<Rule>) -> ExprNode {
@@ -221,7 +304,7 @@ fn parse_numeric_constant(parser_rule: Pair<Rule>) -> ExprNode {
         return ExprNode::Float64Value(s.parse::<f64>().expect("invalid float literal"));
     }
 
-    // Decimal (unsigned); note: grammar does not support unary '-'
+    // Decimal (unsigned); a leading '-' is the unary minus operator
     ExprNode::UnsignedInteger64Value(s.parse::<u64>().expect("invalid decimal literal"))
 }
 

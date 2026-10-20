@@ -5,64 +5,36 @@ use std::process::Command;
 
 use packet_builder::Language;
 use packet_builder::generators::go::field_name;
-use packet_builder::ir::{Member, Module, ValueType};
+use packet_builder::ir::Module;
 
 use super::{Case, Target, packet, quote, run, set_literal, which};
 
 pub struct GoTarget;
 
-fn value_expr(m: &Member, place: &str) -> String {
-    let elem = |v: &str| match &m.ty {
-        ValueType::Int { signed: true, .. } => format!("strconv.FormatInt(int64({}), 10)", v),
-        ValueType::Int { .. } => format!("strconv.FormatUint(uint64({}), 10)", v),
-        ValueType::Float { .. } => format!("strconv.FormatFloat(float64({}), 'g', -1, 64)", v),
-        ValueType::Mac => format!("hx({}[:])", v),
-        ValueType::Packet(n) => format!("dump{}(&{})", n, v),
-        ValueType::Str => format!("js({})", v),
-    };
-    match &m.array {
-        None => elem(place),
-        Some(_) if m.ty.is_byte() => format!("hx({})", place),
-        Some(_) => format!(
-            "func() string {{ parts := []string{{}}; for i := range {} {{ parts = append(parts, {}) }}; return \"[\" + strings.Join(parts, \",\") + \"]\" }}()",
-            place,
-            elem(&format!("{}[i]", place))
-        ),
-    }
-}
-
 impl Target for GoTarget {
-    fn language(&self) -> Language {
-        Language::Go
+    fn language(&self) -> Option<Language> {
+        Some(Language::Go)
     }
 
     fn unavailable(&self) -> Option<String> {
         which("go").is_none().then(|| "go not found on PATH".into())
     }
 
-    fn harness(&self, module: &Module, cases: &[Case]) -> String {
+    fn harness(&self, module: &Module, cases: &[Case], _zero_copy: bool) -> String {
         let mut s = String::from(
             "package main\n\nimport (\n\t\"encoding/hex\"\n\t\"encoding/json\"\n\t\"fmt\"\n\t\"strconv\"\n\t\"strings\"\n\n\t. \"harness/packets\"\n)\n\n",
         );
         s.push_str("var _ = strings.Join\n\n");
         s.push_str("func js(v string) string { b, _ := json.Marshal(v); return string(b) }\n\n");
+        s.push_str("func pbE(err error, pre string) string {\n\te := err.(*PbError)\n\treturn fmt.Sprintf(\"\\\"%serror\\\":%s,\\\"%skind\\\":%s,\\\"%spath\\\":%s\", pre, strconv.Quote(e.Error()), pre, js(e.Kind.String()), pre, js(e.Path))\n}\n\n");
         s.push_str("func hx(b []byte) string { return \"\\\"\" + hex.EncodeToString(b) + \"\\\"\" }\n\n");
-        for p in &module.packets {
-            let _ = writeln!(s, "func dump{}(p *{}) string {{", p.name, p.name);
-            s.push_str("\tparts := []string{}\n");
-            for m in &p.members {
-                let place = format!("p.{}", field_name(&m.name));
-                let _ = writeln!(s, "\tparts = append(parts, \"\\\"{}\\\":\"+{})", m.name, value_expr(m, &place));
-            }
-            s.push_str("\treturn \"{\" + strings.Join(parts, \",\") + \"}\"\n}\n\n");
-        }
         s.push_str("func main() {\n");
         for c in cases {
             let p = packet(module, &c.packet);
             s.push_str("\tfunc() {\n");
             let _ = writeln!(s, "\t\tdata, _ := hex.DecodeString({})", quote(&c.hex));
             let _ = writeln!(s, "\t\tp, err := Decode{}(data)", p.name);
-            s.push_str("\t\tif err != nil {\n\t\t\tfmt.Printf(\"{\\\"ok\\\":false,\\\"error\\\":%s}\\n\", strconv.Quote(err.Error()))\n\t\t\treturn\n\t\t}\n");
+            s.push_str("\t\tif err != nil {\n\t\t\tfmt.Printf(\"{\\\"ok\\\":false,%s}\\n\", pbE(err, \"\"))\n\t\t\treturn\n\t\t}\n");
             for (name, v) in &c.set {
                 let _ = writeln!(
                     s,
@@ -71,11 +43,21 @@ impl Target for GoTarget {
                     set_literal(v)
                 );
             }
-            let _ = writeln!(s, "\t\tv := dump{}(p)", p.name);
+            s.push_str("\t\tv := p.ToJSON()\n");
             s.push_str("\t\tb, err := p.Encode()\n");
-            s.push_str("\t\tif err != nil {\n\t\t\tfmt.Printf(\"{\\\"ok\\\":true,\\\"value\\\":%s,\\\"encode_error\\\":%s}\\n\", v, strconv.Quote(err.Error()))\n\t\t\treturn\n\t\t}\n");
+            s.push_str("\t\tif err != nil {\n\t\t\tfmt.Printf(\"{\\\"ok\\\":true,\\\"value\\\":%s,%s}\\n\", v, pbE(err, \"encode_\"))\n\t\t\treturn\n\t\t}\n");
             s.push_str("\t\tfmt.Printf(\"{\\\"ok\\\":true,\\\"value\\\":%s,\\\"encoded\\\":%s}\\n\", v, hx(b))\n");
             s.push_str("\t}()\n");
+            s.push_str("\tfunc() {\n");
+            let _ = writeln!(s, "\t\tdata, _ := hex.DecodeString({})", quote(&c.hex));
+            s.push_str("\t\ts := \"\"\n");
+            let _ = writeln!(s, "\t\tif p, n, err := TryDecode{}(data); err != nil {{", p.name);
+            s.push_str("\t\t\ts = `{\"try\":\"error\"`\n\t\t} else if p == nil {\n\t\t\ts = fmt.Sprintf(`{\"try\":\"incomplete\",\"n\":%d`, n)\n\t\t} else {\n\t\t\ts = fmt.Sprintf(`{\"try\":\"done\",\"n\":%d`, n)\n\t\t}\n");
+            if super::has_frame(module, p) {
+                let _ = writeln!(s, "\t\tif size, ok, err := FrameLen{}(data); err != nil {{", p.name);
+                s.push_str("\t\t\ts += `,\"frame\":\"error\"`\n\t\t} else if !ok {\n\t\t\ts += `,\"frame\":null`\n\t\t} else {\n\t\t\ts += fmt.Sprintf(`,\"frame\":%d`, size)\n\t\t}\n");
+            }
+            s.push_str("\t\tfmt.Println(s + \"}\")\n\t}()\n");
         }
         s.push_str("}\n");
         s

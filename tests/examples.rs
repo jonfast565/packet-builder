@@ -24,7 +24,7 @@ fn python_oscar_demo() {
         eprintln!("skipping: python3 not found");
         return;
     }
-    let dir = harness::work_dir(Language::Python, "oscar_demo");
+    let dir = harness::work_dir("python", "oscar_demo");
     generated(Language::Python, &dir);
     let out = harness::run(
         Command::new("python3").arg(fs::canonicalize("examples/oscar_demo.py").unwrap()).env("PYTHONPATH", &dir),
@@ -41,13 +41,13 @@ fn rust_oscar_demo() {
         eprintln!("skipping: rustc not found");
         return;
     }
-    let dir = harness::work_dir(Language::Rust, "oscar_demo");
+    let dir = harness::work_dir("rust", "oscar_demo");
     generated(Language::Rust, &dir);
     fs::copy("examples/oscar_demo.rs", dir.join("oscar_demo.rs")).unwrap();
     harness::run(
         Command::new("rustc").current_dir(&dir).args([
             "--edition",
-            "2021",
+            "2024",
             "-D",
             "warnings",
             "oscar_demo.rs",
@@ -68,7 +68,7 @@ fn python_p3_demo() {
         eprintln!("skipping: python3 not found");
         return;
     }
-    let dir = harness::work_dir(Language::Python, "p3_demo");
+    let dir = harness::work_dir("python", "p3_demo");
     generated_from("examples/p3.packet", Language::Python, &dir);
     let out = harness::run(
         Command::new("python3").arg(fs::canonicalize("examples/p3_demo.py").unwrap()).env("PYTHONPATH", &dir),
@@ -86,13 +86,13 @@ fn rust_p3_demo() {
         eprintln!("skipping: rustc not found");
         return;
     }
-    let dir = harness::work_dir(Language::Rust, "p3_demo");
+    let dir = harness::work_dir("rust", "p3_demo");
     generated_from("examples/p3.packet", Language::Rust, &dir);
     fs::copy("examples/p3_demo.rs", dir.join("p3_demo.rs")).unwrap();
     harness::run(
         Command::new("rustc").current_dir(&dir).args([
             "--edition",
-            "2021",
+            "2024",
             "-D",
             "warnings",
             "p3_demo.rs",
@@ -103,7 +103,7 @@ fn rust_p3_demo() {
     )
     .unwrap();
     let out = harness::run(&mut Command::new(dir.join("demo")), "p3 demo").unwrap();
-    assert!(out.contains("type 0x23 tx 0x7f valid 1 crc ok true"), "{}", out);
-    assert!(out.contains("type 0x20 tx 0x10 valid 1 crc ok true"), "{}", out);
+    assert!(out.contains("type 0x23 tx 0x7f crc 0xb35f"), "{}", out);
+    assert!(out.contains("type 0x20 tx 0x10 crc 0x6a0a"), "{}", out);
     assert!(out.contains("DATA Dd: 14 atoms, screen name someguy"), "{}", out);
 }

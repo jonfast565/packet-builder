@@ -1,0 +1,32 @@
+// Field checks (`== value`, `in lo..hi`, `: Category strict`), `lenient`
+// and `assert`. Used by tests/codegen.rs.
+
+const MAGIC uint16 = 0xbeef
+const Kind u4 { a = 1, b = 2, c = 9 }
+
+packet Checked be {
+  magic uint16 == MAGIC,
+  ttl uint8 in 1..64,
+  kind u4 : Kind strict,
+  level u4 in 2..12 lenient,
+  version uint8 == 2 lenient,
+  bits bitfield uint8 { mode u3 in 0..5, rest u5 == 0 },
+  len uint8,
+  data bytes[len],
+  assert len <= 4 "data is at most 4 bytes",
+  assert ttl != 13
+}
+
+// An assertion over a calculated field; encoders evaluate it up front.
+packet WithCalc be {
+  a uint8,
+  b uint8,
+  calc sum uint16 = a + b,
+  assert sum < 300 "sum too big"
+}
+
+// A big unsigned magic value and a negative signed one.
+packet Extremes le {
+  big uint64 == 0xfedcba9876543210,
+  neg int8 == -2
+}

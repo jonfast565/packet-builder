@@ -13,51 +13,42 @@
         "rx_seq": 127,
         "always_set": 1,
         "type": 35,
-        "data": "039d116180000000050f00001fb4b53ec00014d1032000000000040a0000014b070504ffff0000000000fffec8f718000001b207",
-        "stop": 13,
-        "valid": 1
-      }
-    },
-    {
-      "name": "captured INIT packet (typed)",
-      "packet": "P3InitPacket",
-      "hex": "5ab35f00377f7fa3039d116180000000050f00001fb4b53ec00014d1032000000000040a0000014b070504ffff0000000000fffec8f718000001b2070d",
-      "expect": {
-        "crc": 45919,
-        "type": 35,
-        "init": {
-          "platform": 3,
-          "client_major": 157,
-          "client_minor": 17,
-          "build_num": 97,
-          "machine_memory": 128,
-          "app_memory": 0,
-          "pc_type": 0,
-          "release_month": 5,
-          "release_day": 15,
-          "customer_class": 0,
-          "timestamp": 531936574,
-          "dos_major": 192,
-          "dos_minor": 0,
-          "session_flags": 5329,
-          "video_type": 3,
-          "cpu_type": 32,
-          "media_type": 0,
-          "windows_major": 4,
-          "windows_minor": 10,
-          "unknown1": 0,
-          "windows_mem_type": 1,
-          "horizontal_res": 19207,
-          "vertical_res": 1284,
-          "num_colors": 65535,
-          "filler1": 0,
-          "region": 0,
-          "language_1": 0,
-          "language_2": 65534,
-          "language_3": 51447,
-          "language_4": 6144,
-          "unknown2": 1,
-          "speed": 45575
+        "body": {
+          "kind": "init",
+          "value": {
+            "platform": 3,
+            "client_major": 157,
+            "client_minor": 17,
+            "build_num": 97,
+            "machine_memory": 128,
+            "app_memory": 0,
+            "pc_type": 0,
+            "release_month": 5,
+            "release_day": 15,
+            "customer_class": 0,
+            "timestamp": 531936574,
+            "dos_major": 192,
+            "dos_minor": 0,
+            "session_flags": 5329,
+            "video_type": 3,
+            "cpu_type": 32,
+            "media_type": 0,
+            "windows_major": 4,
+            "windows_minor": 10,
+            "unknown1": 0,
+            "windows_mem_type": 1,
+            "horizontal_res": 19207,
+            "vertical_res": 1284,
+            "num_colors": 65535,
+            "filler1": 0,
+            "region": 0,
+            "language_1": 0,
+            "language_2": 65534,
+            "language_3": 51447,
+            "language_4": 6144,
+            "unknown2": 1,
+            "speed": 45575
+          }
         },
         "stop": 13
       }
@@ -112,12 +103,18 @@
       "packet": "P3Packet",
       "hex": "5a6a0c00031011a40d",
       "expect": {
+        "sync": 90,
+        "crc": 27148,
         "length": 3,
         "tx_seq": 16,
         "rx_seq": 17,
+        "always_set": 1,
         "type": 36,
-        "data": "",
-        "valid": 1
+        "body": {
+          "kind": "control",
+          "value": ""
+        },
+        "stop": 13
       }
     },
     {
@@ -125,8 +122,18 @@
       "packet": "P3Packet",
       "hex": "5a26bc00037f10a60d",
       "expect": {
+        "sync": 90,
+        "crc": 9916,
+        "length": 3,
+        "tx_seq": 127,
+        "rx_seq": 16,
+        "always_set": 1,
         "type": 38,
-        "valid": 1
+        "body": {
+          "kind": "control",
+          "value": ""
+        },
+        "stop": 13
       }
     },
     {
@@ -134,8 +141,18 @@
       "packet": "P3Packet",
       "hex": "5a9a6c00031212a50d",
       "expect": {
+        "sync": 90,
+        "crc": 39532,
+        "length": 3,
+        "tx_seq": 18,
+        "rx_seq": 18,
+        "always_set": 1,
         "type": 37,
-        "valid": 1
+        "body": {
+          "kind": "control",
+          "value": ""
+        },
+        "stop": 13
       }
     },
     {
@@ -143,20 +160,20 @@
       "packet": "P3Packet",
       "hex": "5a6a0a0058107fa044640016000100010a0400000001010b040000000503010a736f6d65677579202020011d00011d00010a040000000203010970617373776f726431011d00010a0400000010010b0400000001011d00011d000002000d",
       "expect": {
-        "type": 32,
+        "sync": 90,
+        "crc": 27146,
         "length": 88,
-        "data": "44640016000100010a0400000001010b040000000503010a736f6d65677579202020011d00011d00010a040000000203010970617373776f726431011d00010a0400000010010b0400000001011d00011d00000200",
-        "valid": 1
-      }
-    },
-    {
-      "name": "Dd login DATA packet (typed)",
-      "packet": "P3DataPacket",
-      "hex": "5a6a0a0058107fa044640016000100010a0400000001010b040000000503010a736f6d65677579202020011d00011d00010a040000000203010970617373776f726431011d00010a0400000010010b0400000001011d00011d000002000d",
-      "expect": {
+        "tx_seq": 16,
+        "rx_seq": 127,
+        "always_set": 1,
         "type": 32,
-        "token": "Dd",
-        "atoms": "0016000100010a0400000001010b040000000503010a736f6d65677579202020011d00011d00010a040000000203010970617373776f726431011d00010a0400000010010b0400000001011d00011d00000200",
+        "body": {
+          "kind": "data",
+          "value": {
+            "token": "Dd",
+            "atoms": "0016000100010a0400000001010b040000000503010a736f6d65677579202020011d00011d00010a040000000203010970617373776f726431011d00010a0400000010010b0400000001011d00011d00000200"
+          }
+        },
         "stop": 13
       }
     },
@@ -298,6 +315,9 @@
       "expect": {
         "style": 3,
         "protocol": 1,
+        "atom": 5,
+        "arg_length": 0,
+        "arg": "",
         "uncompressed": 0
       }
     },
@@ -309,40 +329,46 @@
     },
     {
       "name": "SD go-ahead DATA packet without atoms",
-      "packet": "P3DataPacket",
+      "packet": "P3Packet",
       "hex": "5ab7f900051010a053440d",
       "expect": {
-        "token": "SD",
-        "atoms": "",
-        "length": 5
+        "sync": 90,
+        "crc": 47097,
+        "length": 5,
+        "tx_seq": 16,
+        "rx_seq": 16,
+        "always_set": 1,
+        "type": 32,
+        "body": {
+          "kind": "data",
+          "value": {
+            "token": "SD",
+            "atoms": ""
+          }
+        },
+        "stop": 13
       }
     },
     {
-      "name": "bad sync byte decodes but is flagged",
+      "name": "bad sync byte is rejected",
       "packet": "P3Packet",
       "hex": "5b6a0c00031011a40d",
-      "expect": {
-        "sync": 91,
-        "valid": 0
-      }
+      "error_kind": "constraint",
+      "error_path": "P3Packet.sync"
     },
     {
-      "name": "missing stop byte is flagged",
+      "name": "missing stop byte is rejected",
       "packet": "P3Packet",
       "hex": "5a6a0c00031011a40a",
-      "expect": {
-        "stop": 10,
-        "valid": 0
-      }
+      "error_kind": "constraint",
+      "error_path": "P3Packet.stop"
     },
     {
-      "name": "type byte without the high bit is flagged",
+      "name": "type byte without the high bit is rejected",
       "packet": "P3Packet",
       "hex": "5a6a0c00031011240d",
-      "expect": {
-        "always_set": 0,
-        "valid": 0
-      }
+      "error_kind": "constraint",
+      "error_path": "P3Packet.kind"
     },
     {
       "name": "length below 3 is rejected",
@@ -364,18 +390,19 @@
     },
     {
       "name": "DATA packet too short for its token",
-      "packet": "P3DataPacket",
+      "packet": "P3Packet",
       "hex": "5affa100047f7fa0440d",
       "error": true
     },
     {
-      "name": "length must match the data on encode",
+      "name": "length and CRC are computed on encode",
       "packet": "P3Packet",
       "hex": "5a6a0a0058107fa044640016000100010a0400000001010b040000000503010a736f6d65677579202020011d00011d00010a040000000203010970617373776f726431011d00010a0400000010010b0400000001011d00011d000002000d",
       "set": {
-        "length": 10
+        "length": 10,
+        "crc": 0
       },
-      "encode_error": true
+      "encoded": "5a6a0a0058107fa044640016000100010a0400000001010b040000000503010a736f6d65677579202020011d00011d00010a040000000203010970617373776f726431011d00010a0400000010010b0400000001011d00011d000002000d"
     },
     {
       "name": "7-bit type field on encode",
@@ -388,12 +415,19 @@
     },
     {
       "name": "token longer than two characters on encode",
-      "packet": "P3DataPacket",
-      "hex": "5a6a0a0058107fa044640016000100010a0400000001010b040000000503010a736f6d65677579202020011d00011d00010a040000000203010970617373776f726431011d00010a0400000010010b0400000001011d00011d000002000d",
+      "packet": "P3Message",
+      "hex": "44640016000100010a0400000001010b040000000503010a736f6d65677579202020011d00011d00010a040000000203010970617373776f726431011d00010a0400000010010b0400000001011d00011d00000200",
       "set": {
         "token": "Ddd"
       },
       "encode_error": true
+    },
+    {
+      "name": "CRC mismatch",
+      "packet": "P3Packet",
+      "hex": "5a6a0d00031011a40d",
+      "error_kind": "mismatch",
+      "error_path": "P3Packet.crc"
     }
   ]
 }

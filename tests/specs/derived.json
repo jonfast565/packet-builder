@@ -1,0 +1,382 @@
+{
+  "spec": "derived.packet",
+  "cases": [
+    {
+      "name": "value-derived lengths",
+      "packet": "Lengths",
+      "hex": "0002 aabb 02 0001 0002 03 616263",
+      "expect": {
+        "len": 2,
+        "data": "aabb",
+        "count": 2,
+        "name_len": 3,
+        "name": "abc"
+      }
+    },
+    {
+      "name": "derived lengths ignore what the struct holds",
+      "packet": "Lengths",
+      "hex": "0002 aabb 02 0001 0002 03 616263",
+      "set": {
+        "len": 9,
+        "count": 7,
+        "name_len": 1
+      }
+    },
+    {
+      "name": "count of a rest-of-input array",
+      "packet": "Counted",
+      "hex": "02 0001 0002",
+      "expect": {
+        "count": 2,
+        "items": [
+          1,
+          2
+        ]
+      }
+    },
+    {
+      "name": "wrong count",
+      "packet": "Counted",
+      "hex": "03 0001 0002",
+      "error_kind": "mismatch",
+      "error_path": "Counted.count"
+    },
+    {
+      "name": "count recomputed on encode",
+      "packet": "Counted",
+      "hex": "02 0001 0002",
+      "set": {
+        "count": 9
+      },
+      "encoded": "02 0001 0002"
+    },
+    {
+      "name": "sizes",
+      "packet": "Sizes",
+      "hex": "0007 03 04 aabbcc",
+      "expect": {
+        "total": 7,
+        "head": 3,
+        "body_at": 4,
+        "body": "aabbcc"
+      }
+    },
+    {
+      "name": "wrong total",
+      "packet": "Sizes",
+      "hex": "0007 02 04 aabbcc",
+      "error_kind": "mismatch",
+      "error_path": "Sizes.head"
+    },
+    {
+      "name": "total recomputed on encode",
+      "packet": "Sizes",
+      "hex": "0007 03 04 aabbcc",
+      "set": {
+        "total": 1,
+        "head": 9,
+        "body_at": 9
+      },
+      "encoded": "0007 03 04 aabbcc"
+    },
+    {
+      "name": "header checksum",
+      "packet": "Header",
+      "hex": "04 06 faf7 0102",
+      "expect": {
+        "len": 6,
+        "checksum": 64247,
+        "opts": "0102"
+      }
+    },
+    {
+      "name": "bad header checksum",
+      "packet": "Header",
+      "hex": "04 06 faf6 0102",
+      "error_kind": "mismatch",
+      "error_path": "Header.checksum"
+    },
+    {
+      "name": "checksum recomputed on encode",
+      "packet": "Header",
+      "hex": "04 06 faf7 0102",
+      "set": {
+        "checksum": 0
+      },
+      "encoded": "04 06 faf7 0102"
+    },
+    {
+      "name": "crc over a patched length",
+      "packet": "Framed",
+      "hex": "0121 0003 414243",
+      "expect": {
+        "crc": 289,
+        "length": 3,
+        "payload": "414243"
+      }
+    },
+    {
+      "name": "crc over a patched length, wrong crc",
+      "packet": "Framed",
+      "hex": "0122 0003 414243",
+      "error_kind": "mismatch",
+      "error_path": "Framed.crc"
+    },
+    {
+      "name": "derived bit field",
+      "packet": "BitLen",
+      "hex": "20 aabb",
+      "expect": {
+        "n": 2,
+        "items": "aabb"
+      }
+    },
+    {
+      "name": "derived bit field recomputed",
+      "packet": "BitLen",
+      "hex": "20 aabb",
+      "set": {
+        "n": 9
+      },
+      "encoded": "20 aabb"
+    },
+    {
+      "name": "patched bit field",
+      "packet": "BitSize",
+      "hex": "25 aa",
+      "expect": {
+        "size": 2,
+        "flags": 5,
+        "data": "aa"
+      }
+    },
+    {
+      "name": "patched bit field recomputed",
+      "packet": "BitSize",
+      "hex": "25 aa",
+      "set": {
+        "size": 7
+      },
+      "encoded": "25 aa"
+    },
+    {
+      "name": "lenient checksum keeps a wrong value",
+      "packet": "LenientSum",
+      "hex": "aabb00",
+      "expect": {
+        "sum": 0
+      },
+      "encoded": "aabb11"
+    },
+    {
+      "name": "derived value too large",
+      "packet": "SizeRange",
+      "hex": "00 01020304",
+      "encode_error_kind": "range",
+      "encode_error_path": "SizeRange.s"
+    },
+    {
+      "name": "assertion over a size",
+      "packet": "WireAssert",
+      "hex": "03 aabb",
+      "expect": {
+        "size": 3
+      }
+    },
+    {
+      "name": "assertion over a size fails",
+      "packet": "WireAssert",
+      "hex": "04 aabbcc",
+      "error_kind": "constraint",
+      "error_path": "WireAssert"
+    },
+    {
+      "name": "truncated derived field",
+      "packet": "Header",
+      "hex": "04",
+      "error_kind": "incomplete",
+      "error_path": "Header.len"
+    },
+    {
+      "name": "crc8 check value",
+      "packet": "CkCrc8",
+      "hex": "313233343536373839 f4",
+      "expect": {
+        "sum": 244
+      }
+    },
+    {
+      "name": "crc8 wrong value",
+      "packet": "CkCrc8",
+      "hex": "313233343536373839 00",
+      "error_kind": "mismatch",
+      "error_path": "CkCrc8.sum"
+    },
+    {
+      "name": "crc16_arc check value",
+      "packet": "CkCrc16Arc",
+      "hex": "313233343536373839 bb3d",
+      "expect": {
+        "sum": 47933
+      }
+    },
+    {
+      "name": "crc16_arc wrong value",
+      "packet": "CkCrc16Arc",
+      "hex": "313233343536373839 0000",
+      "error_kind": "mismatch",
+      "error_path": "CkCrc16Arc.sum"
+    },
+    {
+      "name": "crc16_ccitt_false check value",
+      "packet": "CkCrc16CcittFalse",
+      "hex": "313233343536373839 29b1",
+      "expect": {
+        "sum": 10673
+      }
+    },
+    {
+      "name": "crc16_ccitt_false wrong value",
+      "packet": "CkCrc16CcittFalse",
+      "hex": "313233343536373839 0000",
+      "error_kind": "mismatch",
+      "error_path": "CkCrc16CcittFalse.sum"
+    },
+    {
+      "name": "crc16_xmodem check value",
+      "packet": "CkCrc16Xmodem",
+      "hex": "313233343536373839 31c3",
+      "expect": {
+        "sum": 12739
+      }
+    },
+    {
+      "name": "crc16_xmodem wrong value",
+      "packet": "CkCrc16Xmodem",
+      "hex": "313233343536373839 0000",
+      "error_kind": "mismatch",
+      "error_path": "CkCrc16Xmodem.sum"
+    },
+    {
+      "name": "crc16_kermit check value",
+      "packet": "CkCrc16Kermit",
+      "hex": "313233343536373839 2189",
+      "expect": {
+        "sum": 8585
+      }
+    },
+    {
+      "name": "crc16_kermit wrong value",
+      "packet": "CkCrc16Kermit",
+      "hex": "313233343536373839 0000",
+      "error_kind": "mismatch",
+      "error_path": "CkCrc16Kermit.sum"
+    },
+    {
+      "name": "crc16_modbus check value",
+      "packet": "CkCrc16Modbus",
+      "hex": "313233343536373839 4b37",
+      "expect": {
+        "sum": 19255
+      }
+    },
+    {
+      "name": "crc16_modbus wrong value",
+      "packet": "CkCrc16Modbus",
+      "hex": "313233343536373839 0000",
+      "error_kind": "mismatch",
+      "error_path": "CkCrc16Modbus.sum"
+    },
+    {
+      "name": "crc32 check value",
+      "packet": "CkCrc32",
+      "hex": "313233343536373839 cbf43926",
+      "expect": {
+        "sum": 3421780262
+      }
+    },
+    {
+      "name": "crc32 wrong value",
+      "packet": "CkCrc32",
+      "hex": "313233343536373839 00000000",
+      "error_kind": "mismatch",
+      "error_path": "CkCrc32.sum"
+    },
+    {
+      "name": "crc32c check value",
+      "packet": "CkCrc32c",
+      "hex": "313233343536373839 e3069283",
+      "expect": {
+        "sum": 3808858755
+      }
+    },
+    {
+      "name": "crc32c wrong value",
+      "packet": "CkCrc32c",
+      "hex": "313233343536373839 00000000",
+      "error_kind": "mismatch",
+      "error_path": "CkCrc32c.sum"
+    },
+    {
+      "name": "internet check value",
+      "packet": "CkInternet",
+      "hex": "313233343536373839 f62a",
+      "expect": {
+        "sum": 63018
+      }
+    },
+    {
+      "name": "internet wrong value",
+      "packet": "CkInternet",
+      "hex": "313233343536373839 0000",
+      "error_kind": "mismatch",
+      "error_path": "CkInternet.sum"
+    },
+    {
+      "name": "fletcher16 check value",
+      "packet": "CkFletcher16",
+      "hex": "313233343536373839 1ede",
+      "expect": {
+        "sum": 7902
+      }
+    },
+    {
+      "name": "fletcher16 wrong value",
+      "packet": "CkFletcher16",
+      "hex": "313233343536373839 0000",
+      "error_kind": "mismatch",
+      "error_path": "CkFletcher16.sum"
+    },
+    {
+      "name": "sum8 check value",
+      "packet": "CkSum8",
+      "hex": "313233343536373839 dd",
+      "expect": {
+        "sum": 221
+      }
+    },
+    {
+      "name": "sum8 wrong value",
+      "packet": "CkSum8",
+      "hex": "313233343536373839 00",
+      "error_kind": "mismatch",
+      "error_path": "CkSum8.sum"
+    },
+    {
+      "name": "xor8 check value",
+      "packet": "CkXor8",
+      "hex": "313233343536373839 31",
+      "expect": {
+        "sum": 49
+      }
+    },
+    {
+      "name": "xor8 wrong value",
+      "packet": "CkXor8",
+      "hex": "313233343536373839 00",
+      "error_kind": "mismatch",
+      "error_path": "CkXor8.sum"
+    }
+  ]
+}

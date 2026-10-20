@@ -5,6 +5,7 @@ use pest::error::{Error, ErrorVariant, InputLocation};
 
 use crate::ast::Span;
 use crate::parser::Rule;
+use crate::sources::SourceMap;
 
 /// A semantic problem found after parsing (unknown field, misaligned type, ...).
 #[derive(Debug, Clone, PartialEq)]
@@ -29,7 +30,53 @@ impl Diagnostic {
 pub enum CompileError {
     Parse(Box<Error<Rule>>),
     Semantic(Vec<Diagnostic>),
+    /// The main file could not be read.
+    Load(String),
 }
+
+/// A pest error as a diagnostic, in a file starting at `base`.
+pub fn parse_diagnostic(e: &Error<Rule>, base: usize) -> Diagnostic {
+    let range = span_range(e);
+    Diagnostic::new(parse_message(e), Span { start: base + range.start, end: base + range.end })
+}
+
+fn parse_message(e: &Error<Rule>) -> String {
+    match &e.variant {
+        ErrorVariant::ParsingError { positives, .. } if !positives.is_empty() => {
+            let names = positives.iter().map(|r| friendly(*r)).collect::<Vec<_>>();
+            format!("expected {}", names.join(", "))
+        }
+        ErrorVariant::CustomError { message } => message.clone(),
+        _ => "parse error".to_string(),
+    }
+}
+
+/// An error from [`compile_file`](crate::compile_file), with the files read.
+pub struct FileError {
+    pub error: CompileError,
+    pub sources: SourceMap,
+}
+
+impl FileError {
+    /// Render with source snippets from whichever file each error is in.
+    pub fn render(&self) -> String {
+        self.error.render_sources(&self.sources)
+    }
+}
+
+impl fmt::Debug for FileError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self.error)
+    }
+}
+
+impl fmt::Display for FileError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.error)
+    }
+}
+
+impl std::error::Error for FileError {}
 
 impl From<Error<Rule>> for CompileError {
     fn from(e: Error<Rule>) -> Self {
@@ -41,6 +88,7 @@ impl fmt::Display for CompileError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             CompileError::Parse(e) => write!(f, "{}", e),
+            CompileError::Load(m) => write!(f, "{}", m),
             CompileError::Semantic(diags) => {
                 for (i, d) in diags.iter().enumerate() {
                     if i > 0 {
@@ -62,35 +110,37 @@ impl std::error::Error for CompileError {}
 impl CompileError {
     /// Render the error with source snippets (ariadne), suitable for a terminal.
     pub fn render(&self, src_name: &str, src: &str) -> String {
+        self.render_sources(&SourceMap::single(src_name, src))
+    }
+
+    /// Render with snippets from the file of each error.
+    pub fn render_sources(&self, sources: &SourceMap) -> String {
         let mut out = Vec::<u8>::new();
         match self {
+            CompileError::Load(m) => return format!("error: {}\n", m),
             CompileError::Parse(e) => {
+                let Some(file) = sources.files.first() else { return format!("{}\n", e) };
+                let name = file.name.as_str();
                 let range = span_range(e);
-                let message = match &e.variant {
-                    ErrorVariant::ParsingError { positives, .. } if !positives.is_empty() => {
-                        let names = positives.iter().map(|r| friendly(*r)).collect::<Vec<_>>();
-                        format!("expected {}", names.join(", "))
-                    }
-                    ErrorVariant::CustomError { message } => message.clone(),
-                    _ => "parse error".to_string(),
-                };
-                let _ = Report::build(ReportKind::Error, src_name, range.start)
+                let _ = Report::build(ReportKind::Error, name, range.start)
                     .with_message("Parse error")
-                    .with_label(Label::new((src_name, range)).with_message(message).with_color(Color::Red))
+                    .with_label(Label::new((name, range)).with_message(parse_message(e)).with_color(Color::Red))
                     .finish()
-                    .write((src_name, Source::from(src)), &mut out);
+                    .write((name, Source::from(file.text.as_str())), &mut out);
             }
             CompileError::Semantic(diags) => {
                 for d in diags {
-                    let end = d.span.end.max(d.span.start + 1).min(src.len().max(1));
-                    let mut report =
-                        Report::build(ReportKind::Error, src_name, d.span.start).with_message(&d.message).with_label(
-                            Label::new((src_name, d.span.start..end)).with_message(&d.message).with_color(Color::Red),
-                        );
+                    let Some(file) = sources.locate(d.span.start) else { continue };
+                    let (name, src) = (file.name.as_str(), file.text.as_str());
+                    let start = d.span.start - file.base;
+                    let end = (d.span.end.saturating_sub(file.base)).max(start + 1).min(src.len().max(1));
+                    let mut report = Report::build(ReportKind::Error, name, start)
+                        .with_message(&d.message)
+                        .with_label(Label::new((name, start..end)).with_message(&d.message).with_color(Color::Red));
                     if let Some(note) = &d.note {
                         report = report.with_note(note);
                     }
-                    let _ = report.finish().write((src_name, Source::from(src)), &mut out);
+                    let _ = report.finish().write((name, Source::from(src)), &mut out);
                 }
             }
         }

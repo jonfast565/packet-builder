@@ -1,13 +1,22 @@
 //! C# identifiers and types.
 
-use crate::generators::common::{Dialect, GenOptions, pascal_case};
-use crate::ir::{Member, Packet, ValueType, storage_for};
+use crate::generators::common::union::variant_name;
+use crate::generators::common::{Dialect, GenOptions, magic_literal, pascal_case};
+use crate::ir::{Arm, Member, Packet, ValueType, storage_for};
+
+/// The nested class for an arm of union `union`: it must differ from its
+/// `Value` property and from the union class.
+pub fn arm_class(union: &str, arm: &Arm) -> String {
+    let v = variant_name(arm);
+    if v == "Value" || v == union { format!("{}_", v) } else { v }
+}
 
 /// C# property name for a member of packet `packet`.
 pub fn prop_name(packet: &str, name: &str) -> String {
     let n = pascal_case(name);
     match n.as_str() {
-        "Decode" | "DecodeFrom" | "Encode" | "EncodeTo" | "GetType" | "ToString" | "Equals" | "GetHashCode" => {
+        "Decode" | "DecodeFrom" | "Encode" | "EncodeTo" | "GetType" | "ToString" | "Equals" | "GetHashCode"
+        | "ToJson" | "TryDecode" | "FrameLen" => {
             format!("{}_", n)
         }
         _ if n == packet => format!("{}_", n),
@@ -35,7 +44,7 @@ pub fn scalar_type(ty: &ValueType) -> String {
         ValueType::Float { width: 32 } => "float".into(),
         ValueType::Float { .. } => "double".into(),
         ValueType::Mac => "byte[]".into(),
-        ValueType::Packet(n) => n.clone(),
+        ValueType::Packet(n) | ValueType::Union(n) => n.clone(),
         ValueType::Str => "string".into(),
     }
 }
@@ -47,13 +56,19 @@ pub fn member_type(m: &Member) -> String {
     }
 }
 
+/// A byte buffer's type: an array, or (zero-copy) a view of the input.
+pub fn bytes_type(zero_copy: bool) -> &'static str {
+    if zero_copy { "ReadOnlyMemory<byte>" } else { "byte[]" }
+}
+
 pub fn default_value(m: &Member) -> Option<String> {
     match (&m.array, &m.ty) {
         (Some(_), ty) => Some(format!("Array.Empty<{}>()", scalar_type(ty))),
         (None, ValueType::Mac) => Some("new byte[6]".into()),
         (None, ValueType::Packet(n)) => Some(format!("new {}()", n)),
+        (None, ValueType::Union(n)) => Some(format!("{}.PbDefault()", n)),
         (None, ValueType::Str) => Some("\"\"".into()),
-        _ => None,
+        _ => magic_literal(m),
     }
 }
 

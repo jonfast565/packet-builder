@@ -2,9 +2,9 @@
 
 use super::context::Ctx;
 use super::types::field_value_type;
-use crate::ast::{ExprNode, PacketItem, Span};
+use crate::ast::{ExprNode, FieldRange, PacketItem, Span};
 use crate::errors::Diagnostic;
-use crate::ir::expr::{AggOp, ArithOp, CmpOp, Func, LogicOp, TExpr, Ty, coerce, numeric_join};
+use crate::ir::expr::{AggOp, ArithOp, Checksum, CmpOp, Func, LogicOp, Mark, TExpr, Ty, UnaryOp, coerce, numeric_join};
 use crate::ir::model::ValueType;
 
 impl<'a> Ctx<'a> {
@@ -37,6 +37,7 @@ impl<'a> Ctx<'a> {
             ValueType::Mac => Err(format!("`{}` is a mac address and cannot be used in an expression", name)),
             ValueType::Packet(_) => Err(format!("`{}` is a nested packet and cannot be used in an expression", name)),
             ValueType::Str => Err(format!("`{}` is a string and cannot be used in an expression", name)),
+            ValueType::Union(_) => Err(format!("`{}` is a union and cannot be used in an expression", name)),
         }
     }
 
@@ -47,6 +48,27 @@ impl<'a> Ctx<'a> {
             UnsignedInteger64Value(v) => TExpr::IntLit(*v as i64),
             Float64Value(v) => TExpr::FloatLit(*v),
             StringValue(_) => return Err("string literals are not supported in expressions".into()),
+            ValueReference(name, None) if name == "last" && self.last.is_some() => match &self.last {
+                Some(ValueType::Int { .. }) => TExpr::Last { field: None, ty: Ty::Int },
+                Some(ValueType::Float { .. }) => TExpr::Last { field: None, ty: Ty::Float },
+                Some(ValueType::Packet(n)) => {
+                    return Err(format!("`last` is a `{}`; name one of its fields, as in `last.kind`", n));
+                }
+                _ => return Err("`last` cannot be used in an expression here".into()),
+            },
+            QualifiedReference(group, field) if group == "last" && self.last.is_some() => {
+                let Some(ValueType::Packet(n)) = &self.last else {
+                    return Err("`last` is not a packet, so it has no fields".into());
+                };
+                let sig = self.sigs.get(n).ok_or_else(|| format!("unknown packet `{}`", n))?;
+                let mty =
+                    sig.fields.get(field).ok_or_else(|| format!("`{}` has no single-valued field `{}`", n, field))?;
+                let ty = self.scalar_ty(mty, field)?;
+                TExpr::Last { field: Some((n.clone(), field.clone())), ty }
+            }
+            ValueReference(name, None) if !self.names.contains_key(name) && self.param(name).is_some() => {
+                self.param(name).expect("checked")
+            }
             ValueReference(name, None) if !self.names.contains_key(name) && self.consts.single(name).is_some() => {
                 TExpr::IntLit(self.consts.single(name).expect("checked").value)
             }
@@ -107,13 +129,24 @@ impl<'a> Ctx<'a> {
                     other => return Err(format!("unknown function `{}`", other)),
                 }
             }
+            RangeCall(name, range) => self.range_call(name, range)?,
             GuardExpression(c, t, o) => {
                 let cond = coerce(self.typecheck(c)?, Ty::Bool);
                 let (t, o) = (self.typecheck(t)?, self.typecheck(o)?);
                 let ty = if t.ty() == Ty::Bool && o.ty() == Ty::Bool { Ty::Bool } else { numeric_join(t.ty(), o.ty()) };
                 TExpr::Guard { cond: Box::new(cond), then: Box::new(coerce(t, ty)), other: Box::new(coerce(o, ty)), ty }
             }
-            Plus(a, b) | Minus(a, b) | Mult(a, b) | Div(a, b) | Pow(a, b) => {
+            Plus(a, b)
+            | Minus(a, b)
+            | Mult(a, b)
+            | Div(a, b)
+            | Pow(a, b)
+            | Mod(a, b)
+            | Shl(a, b)
+            | Shr(a, b)
+            | BitAnd(a, b)
+            | BitOr(a, b)
+            | BitXor(a, b) => {
                 let (a, b) = (self.typecheck(a)?, self.typecheck(b)?);
                 let ty = numeric_join(a.ty(), b.ty());
                 let op = match e {
@@ -121,9 +154,30 @@ impl<'a> Ctx<'a> {
                     Minus(..) => ArithOp::Sub,
                     Mult(..) => ArithOp::Mul,
                     Div(..) => ArithOp::Div,
-                    _ => ArithOp::Pow,
+                    Pow(..) => ArithOp::Pow,
+                    Mod(..) => ArithOp::Mod,
+                    Shl(..) => ArithOp::Shl,
+                    Shr(..) => ArithOp::Shr,
+                    BitAnd(..) => ArithOp::BitAnd,
+                    BitOr(..) => ArithOp::BitOr,
+                    _ => ArithOp::BitXor,
                 };
+                if op.int_only() && ty == Ty::Float {
+                    return Err(format!("`{}` needs integer operands", arith_symbol(op)));
+                }
                 TExpr::Arith { op, a: Box::new(coerce(a, ty)), b: Box::new(coerce(b, ty)), ty }
+            }
+            Neg(a) | BitNot(a) => {
+                let a = self.typecheck(a)?;
+                let ty = numeric_join(a.ty(), Ty::Int);
+                let op = if matches!(e, Neg(_)) { UnaryOp::Neg } else { UnaryOp::BitNot };
+                if op == UnaryOp::BitNot && ty == Ty::Float {
+                    return Err("`~` needs an integer operand".into());
+                }
+                TExpr::Unary { op, e: Box::new(coerce(a, ty)), ty }
+            }
+            Not(a) => {
+                TExpr::Unary { op: UnaryOp::Not, e: Box::new(coerce(self.typecheck(a)?, Ty::Bool)), ty: Ty::Bool }
             }
             Gt(a, b) | Gte(a, b) | Lt(a, b) | Lte(a, b) | Equals(a, b) | NotEquals(a, b) => {
                 let (a, b) = (self.typecheck(a)?, self.typecheck(b)?);
@@ -147,6 +201,79 @@ impl<'a> Ctx<'a> {
         })
     }
 
+    /// `len(x)`, `sizeof(...)`, `offsetof(f)` and checksums.
+    fn range_call(&self, name: &str, range: &FieldRange) -> Result<TExpr, String> {
+        if name == "len" {
+            let FieldRange::Fields(field, None) = range else {
+                return Err("len takes one field: `len(items)`".into());
+            };
+            let idx = self.lookup(field)?;
+            let m = &self.members[idx];
+            if !self.is_array(idx) && m.ty != ValueType::Str {
+                return Err(format!("`{}` is not an array or a string, so it has no length", field));
+            }
+            return Ok(TExpr::Len { member: idx });
+        }
+        let algo = Checksum::from_name(name);
+        if algo.is_none() && name != "sizeof" && name != "offsetof" {
+            return Err(format!("unknown function `{}`", name));
+        }
+        if !self.allow_wire {
+            return Err(format!(
+                "`{}` depends on the encoded bytes, so it can only be used to derive a field (`name uint16 = {}(...)`)",
+                name, name
+            ));
+        }
+        let (from, to) = match range {
+            FieldRange::Whole => (Mark::PacketStart, Mark::PacketEnd),
+            FieldRange::Fields(a, b) => {
+                let first = self.wire_item(a)?;
+                let last = match b {
+                    Some(b) => self.wire_item(b)?,
+                    None => first,
+                };
+                if last < first {
+                    return Err(format!(
+                        "`{}` comes after `{}`; write the range in wire order",
+                        a,
+                        b.as_deref().unwrap_or("")
+                    ));
+                }
+                (Mark::Before(first), Mark::After(last))
+            }
+        };
+        Ok(match (name, algo) {
+            ("offsetof", _) => match range {
+                FieldRange::Fields(_, None) => TExpr::Size { from: Mark::PacketStart, to: from },
+                _ => return Err("offsetof takes one field: `offsetof(payload)`".into()),
+            },
+            ("sizeof", _) => TExpr::Size { from, to },
+            (_, Some(algo)) => TExpr::Checksum { algo, from, to, hole: None },
+            _ => unreachable!("checked above"),
+        })
+    }
+
+    /// The source item of a field that is on the wire (marks refer to items
+    /// until the layout pass maps them to steps).
+    fn wire_item(&self, name: &str) -> Result<usize, String> {
+        self.packet
+            .items
+            .iter()
+            .position(|it| match it {
+                PacketItem::Field(f) => f.id == name && name != "_",
+                PacketItem::Bitfield(b) => b.id == name,
+                PacketItem::Switch(sw) => sw.id == name,
+                _ => false,
+            })
+            .ok_or_else(|| {
+                if self.names.contains_key(name) {
+                    format!("`{}` is not a field on the wire (a bitfield member or a calculated field)", name)
+                } else {
+                    format!("unknown field `{}` in packet `{}`", name, self.packet.name)
+                }
+            })
+    }
+
     /// Arrays are known after pass 2; before that, look at the source.
     pub fn is_array(&self, idx: usize) -> bool {
         if self.members[idx].array.is_some() {
@@ -156,5 +283,21 @@ impl<'a> Ctx<'a> {
         self.packet.items.iter().any(
             |it| matches!(it, PacketItem::Field(f) if &f.id == name && f.array.is_some() && field_value_type(f) != ValueType::Str),
         )
+    }
+}
+
+fn arith_symbol(op: ArithOp) -> &'static str {
+    match op {
+        ArithOp::Add => "+",
+        ArithOp::Sub => "-",
+        ArithOp::Mul => "*",
+        ArithOp::Div => "/",
+        ArithOp::Pow => "^",
+        ArithOp::Mod => "%",
+        ArithOp::Shl => "<<",
+        ArithOp::Shr => ">>",
+        ArithOp::BitAnd => "&",
+        ArithOp::BitOr => "|",
+        ArithOp::BitXor => "xor",
     }
 }
