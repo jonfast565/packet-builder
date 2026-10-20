@@ -560,6 +560,13 @@ UDP expect.
 * A value that does not fit its field is a `range` error when encoding.
 * `lenient` turns off the check when decoding; encoding still computes the
   value.
+* `placeholder value` lets the field hold a fixed stand-in instead of the
+  computed value, as AOL 4.0 sends `**` where P3's CRC goes:
+  `crc uint16 = crc16_arc(length..body) placeholder 0x2a2a`. Decoding
+  accepts the computed value or the placeholder (anything else is still a
+  `mismatch`); encoding writes the placeholder when the field holds it and
+  computes the value otherwise, so decoded packets re-encode byte for byte.
+  The placeholder is a constant that fits the field.
 
 ### Imports
 

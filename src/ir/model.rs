@@ -401,6 +401,20 @@ impl Member {
         }
     }
 
+    /// The `placeholder` of a derived member: the derived expression is then
+    /// `when <stored value> == placeholder then placeholder otherwise ...`.
+    pub fn placeholder(&self) -> Option<i64> {
+        let TExpr::Guard { cond, then, .. } = self.derived_expr()? else { return None };
+        match (cond.as_ref(), then.as_ref()) {
+            (TExpr::Cmp { a, b, .. }, TExpr::IntLit(v))
+                if matches!(a.as_ref(), TExpr::Stored { .. }) && matches!(b.as_ref(), TExpr::IntLit(w) if w == v) =>
+            {
+                Some(*v)
+            }
+            _ => None,
+        }
+    }
+
     pub fn is_derived(&self) -> bool {
         matches!(self.kind, MemberKind::Derived(_))
     }

@@ -96,6 +96,7 @@ pub fn eval(e: &TExpr, env: &Env) -> Ev {
         TExpr::FloatLit(v) => Ev::F(*v),
         TExpr::Remaining => Ev::I(env.remaining.unwrap_or(0)),
         TExpr::Ref { member, ty } => scalar(&env.values[*member], *ty),
+        TExpr::Stored { member } => scalar(&env.values[*member], Ty::Int),
         TExpr::Index { member, index, ty } => {
             let i = eval(index, env).int();
             let items = elements(&env.values[*member]);

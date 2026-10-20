@@ -377,6 +377,40 @@
       "hex": "313233343536373839 00",
       "error_kind": "mismatch",
       "error_path": "CkXor8.sum"
+    },
+    {
+      "name": "placeholder: the computed value is accepted",
+      "packet": "Stamped",
+      "hex": "03aabbcc",
+      "expect": {
+        "count": 3,
+        "data": "aabbcc"
+      }
+    },
+    {
+      "name": "placeholder: the stand-in is accepted and re-encoded",
+      "packet": "Stamped",
+      "hex": "00aabbcc",
+      "expect": {
+        "count": 0,
+        "data": "aabbcc"
+      }
+    },
+    {
+      "name": "placeholder: any other value is a mismatch",
+      "packet": "Stamped",
+      "hex": "02aabbcc",
+      "error_kind": "mismatch",
+      "error_path": "Stamped.count"
+    },
+    {
+      "name": "placeholder: encoding computes the value unless the field holds the stand-in",
+      "packet": "Stamped",
+      "hex": "00aabbcc",
+      "set": {
+        "count": 9
+      },
+      "encoded": "03aabbcc"
     }
   ]
 }

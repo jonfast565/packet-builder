@@ -108,6 +108,10 @@ impl ExprLang for Scope<'_, C> {
         format!("((int64_t)(({} - {}) / 8))", to, from)
     }
 
+    fn stored(&self, member: usize) -> String {
+        format!("((int64_t){})", self.field(self.member(member)))
+    }
+
     fn remaining(&self) -> String {
         "pb_remaining_bytes(pb_r)".into()
     }

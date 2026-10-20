@@ -120,6 +120,7 @@ impl TreeBuilder {
         let mut category = None;
         let mut rules = FieldRules::default();
         let mut derive = None;
+        let mut placeholder = None;
         let mut window = None;
         let mut until = None;
         let mut term = None;
@@ -158,7 +159,11 @@ impl TreeBuilder {
                 Rule::category_tag => category = category_tag(field, &mut rules),
                 Rule::constraint => rules.constraint = constraint(field),
                 Rule::lenient_kw => rules.lenient = true,
-                Rule::derivation => derive = field.into_inner().find(|p| p.as_rule() == Rule::expr).map(parse_expr),
+                Rule::derivation => {
+                    let mut exprs = field.into_inner().filter(|p| p.as_rule() == Rule::expr).map(parse_expr);
+                    derive = exprs.next();
+                    placeholder = exprs.next();
+                }
                 _ => {}
             }
         }
@@ -176,6 +181,7 @@ impl TreeBuilder {
             align,
             category,
             derive,
+            placeholder,
             window,
             until,
             term,

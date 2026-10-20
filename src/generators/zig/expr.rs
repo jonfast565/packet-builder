@@ -89,6 +89,10 @@ impl ExprLang for Scope<'_, Zig> {
         format!("@as(i64, @intCast(({} - {}) / 8))", to, from)
     }
 
+    fn stored(&self, member: usize) -> String {
+        format!("pbI64({})", self.field(self.member(member)))
+    }
+
     fn remaining(&self) -> String {
         "pb_r.remainingBytes()".into()
     }

@@ -90,6 +90,7 @@ assert_kw  = @{ "assert" }
 in_kw      = @{ "in" ~ !(alnum | underscore) }
 strict_kw  = @{ "strict" ~ !(alnum | underscore) }
 lenient_kw = @{ "lenient" ~ !(alnum | underscore) }
+placeholder_kw = @{ "placeholder" ~ !(alnum | underscore) }
 dotdot     = @{ ".." }
 
 // Windows and unions. `switch` starts a field's type, so it is reserved;
@@ -292,7 +293,9 @@ arm_values = { expr ~ (comma ~ expr)* }
 
 // `length uint16 = len(payload)`: encoding computes the value; decoding
 // checks it.
-derivation = { assign ~ expr }
+// `= expr placeholder value`: encoders write `value` instead of the
+// computed one when the field holds it, and decoders accept it.
+derivation = { assign ~ expr ~ (placeholder_kw ~ expr)? }
 
 // `: Category` notes which named constants a field's values come from;
 // `strict` rejects any other value.

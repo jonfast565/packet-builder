@@ -110,6 +110,11 @@ impl ExprLang for Scope<'_, Python> {
         format!("(({} - {}) // 8)", to, from)
     }
 
+    fn stored(&self, member: usize) -> String {
+        let f = self.field(self.member(member));
+        if needs_wrap(&self.member(member).ty) { format!("_pb_wrap({})", f) } else { f }
+    }
+
     fn remaining(&self) -> String {
         "pb_r.remaining_bytes()".into()
     }

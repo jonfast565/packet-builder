@@ -123,6 +123,14 @@ fn calculated_fields_cannot_depend_on_themselves() {
 }
 
 #[test]
+fn placeholders_are_constants_that_fit() {
+    assert!(compile("packet P be { c uint16 = crc16_arc(d) placeholder 0x2a2a, d bytes[4] }").is_ok());
+    assert_error("packet P be { n uint8, c uint8 = len(d) placeholder n, d bytes[] }", "constant integer");
+    assert_error("packet P be { c uint8 = len(d) placeholder 256, d bytes[] }", "does not fit");
+    assert_error("packet P be { c int8 = len(d) placeholder -129, d bytes[] }", "does not fit");
+}
+
+#[test]
 fn remaining_is_only_for_calculated_fields() {
     assert_error("packet P { a uint8[remaining] }", "only be used in a calculated field");
     assert_error("packet P { n uint8, assert remaining > n }", "only be used in a calculated field");

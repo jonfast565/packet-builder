@@ -141,6 +141,10 @@ impl ExprLang for Scope<'_, Lua> {
         format!("(({} - {}) // 8)", to, from)
     }
 
+    fn stored(&self, member: usize) -> String {
+        self.field(self.member(member))
+    }
+
     fn remaining(&self) -> String {
         "r:remaining_bytes()".into()
     }

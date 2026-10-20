@@ -220,6 +220,9 @@ pub struct TypeExpr {
     pub category: Option<(String, Span)>,
     /// `= expr`: a derived field, computed when encoding.
     pub derive: Option<ExprNode>,
+    /// `placeholder value` after a derivation: a stand-in the field may hold
+    /// instead of the computed value.
+    pub placeholder: Option<ExprNode>,
     /// `size n [exact]`: the field occupies exactly n bytes.
     pub window: Option<WindowExpr>,
     /// `until expr`: an array ends after the element for which expr holds.

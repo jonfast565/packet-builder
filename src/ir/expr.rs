@@ -295,6 +295,12 @@ pub enum TExpr {
     /// or of the input, while decoding. Only calculated fields use it
     /// (encoders take their stored value instead).
     Remaining,
+    /// The value a derived member holds in the struct (decoded, or set by
+    /// the caller before encoding), never its encode-time local. Used for
+    /// `placeholder`; it adds no dependency.
+    Stored {
+        member: usize,
+    },
     /// Parameter `index` of the packet (`Packet::params`), as i64.
     Param {
         index: usize,
@@ -317,6 +323,7 @@ impl TExpr {
             | TExpr::Size { .. }
             | TExpr::Checksum { .. }
             | TExpr::Remaining
+            | TExpr::Stored { .. }
             | TExpr::Param { .. } => Ty::Int,
             TExpr::FloatLit(_) => Ty::Float,
             TExpr::Ref { ty, .. }
@@ -341,6 +348,7 @@ impl TExpr {
             | TExpr::Checksum { .. }
             | TExpr::Last { .. }
             | TExpr::Remaining
+            | TExpr::Stored { .. }
             | TExpr::Param { .. } => {}
             TExpr::Ref { member, .. } | TExpr::Aggregate { member, .. } | TExpr::Len { member } => out.push(*member),
             TExpr::Index { member, index, .. } => {

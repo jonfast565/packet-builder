@@ -88,3 +88,9 @@ packet CkInternet be { data bytes[9], sum uint16 = internet(data) }
 packet CkFletcher16 be { data bytes[9], sum uint16 = fletcher16(data) }
 packet CkSum8 be { data bytes[9], sum uint8 = sum8(data) }
 packet CkXor8 be { data bytes[9], sum uint8 = xor8(data) }
+
+// A derived value with a stand-in (`placeholder`): 0 means "not filled in".
+packet Stamped be {
+  count uint8 = len(data) placeholder 0,
+  data bytes[]
+}

@@ -106,6 +106,10 @@ impl ExprLang for Scope<'_, Rust> {
         format!("((({} - {}) / 8) as i64)", to, from)
     }
 
+    fn stored(&self, member: usize) -> String {
+        format!("({} as i64)", self.field(self.member(member)))
+    }
+
     fn remaining(&self) -> String {
         "pb_r.remaining_bytes()".into()
     }

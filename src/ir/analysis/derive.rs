@@ -5,9 +5,9 @@
 use std::collections::{HashMap, HashSet};
 
 use super::packet::PacketBuilder;
-use crate::ast::PacketItem;
+use crate::ast::{ExprNode, PacketItem, TypeExpr};
 use crate::errors::Diagnostic;
-use crate::ir::expr::{Mark, TExpr, Ty, coerce};
+use crate::ir::expr::{CmpOp, Mark, TExpr, Ty, coerce};
 use crate::ir::model::{Codec, Count, MemberKind, Step, StrMode, ValueType};
 
 /// What the analysis decides about a packet's derived fields.
@@ -70,6 +70,14 @@ fn topo(nodes: &[usize], before: impl Fn(usize) -> Vec<usize>) -> Result<Vec<usi
     Ok(out)
 }
 
+/// `e placeholder value`: when the field holds `value` (decoded, or set
+/// before encoding), that is its value; otherwise `e`. Decoders then accept
+/// either, and encoders write the placeholder only when the field holds it.
+fn with_placeholder(e: TExpr, member: usize, value: i64) -> TExpr {
+    let held = TExpr::Cmp { op: CmpOp::Eq, a: Box::new(TExpr::Stored { member }), b: Box::new(TExpr::IntLit(value)) };
+    TExpr::Guard { cond: Box::new(held), then: Box::new(TExpr::IntLit(value)), other: Box::new(e), ty: Ty::Int }
+}
+
 impl PacketBuilder<'_> {
     /// Pass 3b: the expressions of derived fields. Their marks refer to
     /// source items until `finish_derived` maps them to steps.
@@ -109,8 +117,37 @@ impl PacketBuilder<'_> {
                 self.ctx.diags.push(Diagnostic::new(format!("derived field `{}` uses its own value", f.id), f.span));
                 continue;
             }
+            if let Some(ph) = &f.placeholder {
+                let Some(value) = self.placeholder_value(ph, idx, f) else { continue };
+                t = with_placeholder(t, idx, value);
+            }
             self.ctx.members[idx].kind = MemberKind::Derived(t);
         }
+    }
+
+    /// The constant of `placeholder value`, which must fit the field.
+    fn placeholder_value(&mut self, e: &ExprNode, idx: usize, f: &TypeExpr) -> Option<i64> {
+        let value = self.ctx.check_expr(e, f.span)?.const_int();
+        let Some(value) = value else {
+            self.ctx
+                .diags
+                .push(Diagnostic::new(format!("the placeholder of `{}` must be a constant integer", f.id), f.span));
+            return None;
+        };
+        if let ValueType::Int { width, signed } = self.ctx.members[idx].ty {
+            let fits = if signed {
+                width >= 64 || (-(1i128 << (width - 1))..(1i128 << (width - 1))).contains(&(value as i128))
+            } else {
+                width >= 64 || (0..(1i128 << width)).contains(&(value as i128))
+            };
+            if !fits {
+                self.ctx
+                    .diags
+                    .push(Diagnostic::new(format!("the placeholder {} does not fit `{}`", value, f.id), f.span));
+                return None;
+            }
+        }
+        Some(value)
     }
 
     /// After layout: map marks to steps, check them, and decide the order of

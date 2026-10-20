@@ -79,6 +79,10 @@ impl ExprLang for Scope<'_, Go> {
         format!("pbSize({}, {})", from, to)
     }
 
+    fn stored(&self, member: usize) -> String {
+        format!("int64({})", self.field(self.member(member)))
+    }
+
     fn remaining(&self) -> String {
         "pbR.RemainingBytes()".into()
     }

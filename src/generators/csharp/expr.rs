@@ -86,6 +86,10 @@ impl ExprLang for Scope<'_, CSharp> {
         format!("(({} - {}) / 8)", to, from)
     }
 
+    fn stored(&self, member: usize) -> String {
+        format!("((long){})", self.field(self.member(member)))
+    }
+
     fn remaining(&self) -> String {
         "pbR.RemainingBytes".into()
     }
