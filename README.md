@@ -57,6 +57,9 @@ cargo run -- gen examples/oscar.packet -p aim -o out           # file stem / Go 
 cargo run -- gen examples/oscar.packet -l python --stdout      # print instead of writing files
 cargo run -- check examples/*.packet                   # validate only
 cargo run -- layout tests/specs/types.packet -k CStruct
+cargo run -- decode examples/oscar.packet -k Flap --hex "2a01 1f3a 0004 00000001"
+cargo run -- decode examples/oscar.packet -k Flap --all --hex "..."   # frames back to back
+cargo run -- decode examples/oscar.packet -k Flap --pcap capture.pcapng --offset 54 --json
 cargo run -- languages
 cargo run -- --help
 ```
@@ -88,7 +91,26 @@ Error: uint16 `b` starts 3 bit(s) into a byte; standard integer types must be by
    │ Note: use a uN type for integers that live in the bit stream, or add `_ uN` padding before this field
 ```
 
-The crate is also a library: `packet_builder::generate(source, Language::Go, &GenOptions::default())`.
+`decode` runs a description directly, without generating code, and prints
+what each field holds (category names included), or where decoding stopped:
+
+```
+$ cargo run -- decode examples/oscar.packet -k Flap --hex "2a01 1f3a 0004 00000001"
+Flap
+  start: 42 (0x2a)
+  channel: 1 (Channel.signon)
+  sequence: 7994 (0x1f3a)
+  length: 4
+  payload: 00000001 (4 bytes)
+  valid (calculated): 1
+```
+
+Input comes from `--hex`, a raw `--file`, or a `--pcap` capture (pcap or
+pcapng; every frame is decoded). `--offset` skips lower-layer headers.
+
+The crate is also a library: `packet_builder::generate(source, Language::Go, &GenOptions::default())`,
+and `packet_builder::ir::interp::{decode, encode}` decode and encode with a
+compiled module directly.
 
 ## Language reference
 
@@ -288,15 +310,24 @@ packet Flap be {
 * literals: `42`, `0x2a`, `0b1010`, `1.5`
 * named constants `FLAP_START`, `Channel.snac`
 * field references `x`, array elements `x[i]`, `sumof x`, `productof x`
-* `+ - * / ^`, comparisons `== != <> < <= > >=` (not chained), `and`, `or`
+* arithmetic `+ - * / % ^` (power), unary `-`
+* bitwise `&`, `|`, `xor`, `~`, shifts `<<` `>>`
+* comparisons `== != <> < <= > >=` (not chained), `and`, `or`, `not`
 * `when cond then a otherwise b`
 * `sqrt(x)`, `min(a, b)`, `max(a, b)`
 
+From loosest to tightest: `or`, `and`, `not`, comparisons, `|`, `xor`, `&`,
+`<< >>`, `+ -`, `* / %`, unary `-` and `~`, `^`. So `a & 0xf == 3` compares
+`a & 0xf`, and `-2 ^ 2` is `-4`.
+
 Integer arithmetic is 64-bit two's complement with wrap-around. Integer
-division truncates toward zero, and division by zero gives 0. An out-of-range
-array index gives 0. If any operand is a float the operation is done in
-`float64`, and comparisons yield 1 or 0. Every backend implements exactly
-these semantics, and the test suite checks that they agree.
+division truncates toward zero, `%` keeps the sign of the dividend, and
+dividing by zero gives 0 for both. `>>` is an arithmetic shift; shifting by a
+negative count gives 0, and by 64 or more gives 0 (`<<`) or the sign (`>>`).
+An out-of-range array index gives 0. If any operand is a float the operation
+is done in `float64`, and comparisons yield 1 or 0; `%`, shifts and bitwise
+operators need integers. Every backend implements exactly these semantics,
+and the test suite checks that they agree.
 
 ## Generated API
 
@@ -306,12 +337,35 @@ and encode into a shared writer. Decoding ignores trailing bytes.
 
 | language | decode | encode | errors |
 |----------|--------|--------|--------|
-| C | `P_decode(&p, data, len)`, `P_decode_from(&p, &reader)`; release with `P_free(&p)` | `P_encode(&p, &buf, &len)` (caller `free`s), `P_encode_to(&p, &writer)` | `PB_OK` / negative `PB_ERR_*`, `pb_strerror(rc)` |
+| C | `P_decode(&p, data, len)`, `P_decode_from(&p, &reader)`; release with `P_free(&p)` | `P_encode(&p, &buf, &len)` (caller `free`s), `P_encode_to(&p, &writer)` | `PB_OK` / negative `PB_ERR_*`, `pb_strerror(rc)`; details on the reader/writer |
 | Rust | `P::decode(&data)?`, `P::decode_from(&mut PbReader::new(&data))?` | `p.encode()?`, `p.encode_to(&mut writer)?` | `Result<_, PbError>` |
 | Go | `DecodeP(data)`, `p.DecodeFrom(NewPbReader(data))` | `p.Encode()`, `p.EncodeTo(w)` | `error` (`*PbError`) |
 | Python | `P.decode(data)`, `P.decode_from(PbReader(data))` | `p.encode()`, `p.encode_to(w)` | raises `PbError` |
 | C# | `P.Decode(data)`, `P.DecodeFrom(new PbReader(data))` | `p.Encode()`, `p.EncodeTo(w)` | throws `PbException` |
 | Zig | `P.decode(allocator, data)`, `P.decodeFrom(allocator, &reader)`; release with `p.deinit(allocator)` | `p.encode(allocator)`, `p.encodeTo(&writer)` | `PbError!T` |
+
+### Errors
+
+Every error has a **kind**, the **path** of the field it happened in
+(`Snac.tlvs[3].length`) and the **bit offset** of the reader or writer:
+
+| kind | meaning |
+|------|---------|
+| incomplete | the input ended before the packet did; also says how many more bits are needed at least, so a stream reader knows to wait for more data |
+| invalid | malformed data: a negative length, a field that overruns its window, nesting deeper than 64 packets, ... |
+| range | a value does not fit in its field (encoding) |
+| text | a string is not valid text, or contains a NUL where none is allowed |
+| mismatch | an array's length does not match its length expression (encoding) |
+| constraint | a value breaks a declared constraint |
+
+| language | kind | path, offset |
+|----------|------|--------------|
+| C | the return code: `PB_ERR_INCOMPLETE`, `PB_ERR_INVALID`, `PB_ERR_RANGE`, `PB_ERR_TEXT`, `PB_ERR_MISMATCH`, `PB_ERR_CONSTRAINT`, `PB_ERR_NOMEM` | after `P_decode_from(&p, &r)`: `r.err.bit_offset`, `r.err.needed_bits`, `pb_reader_path(&r, buf, n)`, `pb_reader_describe(&r, buf, n)` (the writer has the same) |
+| Rust | `e.kind` (`PbErrorKind::Incomplete`, ...) | `e.path`, `e.bit_offset`, `e.needed_bits`; `Display` shows all three |
+| Go | `err.(*PbError).Kind` (`PbIncomplete`, ...) | `.Path`, `.BitOffset`, `.NeededBits` |
+| Python | `e.kind` (`PbError.INCOMPLETE`, ...) | `e.path`, `e.bit_offset`, `e.needed_bits` |
+| C# | `e.Kind` (`PbErrorKind.Incomplete`, ...) | `e.Path`, `e.BitOffset`, `e.NeededBits` |
+| Zig | the error (`error.Incomplete`, `error.Invalid`, `error.Range`, `error.InvalidText`, `error.Mismatch`, `error.Constraint`, `error.OutOfMemory`) | `reader.trace.diag` (`bit_offset`, `needed_bits`), `reader.trace.writePath(writer)` |
 
 Named constants are exported with their declared type:
 
@@ -348,7 +402,9 @@ cargo test
   the results with the expectations. Every vector is also replayed truncated
   at every length and with random bit flips. Any outcome is accepted there as
   long as the decoder fails cleanly, which, with sanitizers in C and a
-  leak-checking allocator in Zig, covers the error paths.
+  leak-checking allocator in Zig, covers the error paths. The same vectors
+  also run through the reference interpreter (`ir::interp`), which needs no
+  toolchain.
 * `tests/examples.rs` runs the OSCAR and P3 demo programs.
 
 Languages whose toolchain is missing are skipped with a message. Set
@@ -362,7 +418,8 @@ A spec file looks like this:
   "cases": [
     { "name": "flags", "packet": "Flags8", "hex": "b0",
       "expect": { "one": 1, "two": 1, "three": 4 } },
-    { "name": "truncated", "packet": "Flags16", "hex": "a8", "error": true },
+    { "name": "truncated", "packet": "Flags16", "hex": "a8",
+      "error_kind": "incomplete", "error_path": "Flags16.ctl" },
     { "name": "too wide", "packet": "Flags8", "hex": "b0",
       "set": { "two": 4 }, "encode_error": true },
     { "name": "padding dropped", "packet": "Flags8", "hex": "b3",
@@ -373,4 +430,6 @@ A spec file looks like this:
 `expect` lists decoded members (nested packets as objects, arrays as lists,
 byte buffers as hex). `set` overwrites members (dotted paths reach into nested
 packets) before re-encoding. Unless `encoded` or an error is given, re-encoding
-must reproduce the input exactly.
+must reproduce the input exactly. `"error": true` accepts any decode error;
+`error_kind` and `error_path` (and `encode_error_kind`, `encode_error_path`)
+also check what the error reports.

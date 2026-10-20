@@ -31,8 +31,25 @@ pub trait StepEmitter {
     /// An integer container split into sub-fields.
     fn bitfield(&self, out: &mut Out, container: &Codec, container_width: u32, parts: &[BitPart]);
 
+    /// Record which field the following statements read or write, so errors
+    /// can name it (`pb_r.at("length")`).
+    fn locate(&self, out: &mut Out, field: &str);
+
+    /// The wire name of a step's field (`_` for padding), if it has one.
+    fn step_field<'s>(&'s self, step: &'s Step) -> Option<&'s str> {
+        match step {
+            Step::Field { member: Some(mi), .. } => Some(&self.packet().members[*mi].name),
+            Step::Field { member: None, .. } => Some("_"),
+            Step::Bitfield { name, .. } => Some(name),
+            Step::Calc { .. } | Step::Align { .. } => None,
+        }
+    }
+
     fn emit_step(&self, out: &mut Out, step: &Step) {
         let members = &self.packet().members;
+        if let Some(field) = self.step_field(step) {
+            self.locate(out, field);
+        }
         match step {
             Step::Align { bytes } => self.align(out, *bytes),
             Step::Calc { member } => {
@@ -49,7 +66,7 @@ pub trait StepEmitter {
             Step::Field { member: Some(mi), ty, codec, array: Some(count) } => {
                 self.array(out, &members[*mi], ty, codec, count)
             }
-            Step::Bitfield { container, container_width, parts } => {
+            Step::Bitfield { container, container_width, parts, .. } => {
                 self.bitfield(out, container, *container_width, parts)
             }
         }

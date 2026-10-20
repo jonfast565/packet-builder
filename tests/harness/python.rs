@@ -27,8 +27,8 @@ fn value_expr(m: &Member, place: &str) -> String {
 }
 
 impl Target for PythonTarget {
-    fn language(&self) -> Language {
-        Language::Python
+    fn language(&self) -> Option<Language> {
+        Some(Language::Python)
     }
 
     fn unavailable(&self) -> Option<String> {
@@ -37,6 +37,7 @@ impl Target for PythonTarget {
 
     fn harness(&self, module: &Module, cases: &[Case]) -> String {
         let mut s = String::from("import json\nfrom packets import *\n\n");
+        s.push_str("def pb_e(e, pre):\n    return ',' + ','.join('\"%s%s\":%s' % (pre, k, json.dumps(v)) for k, v in (('error', str(e)), ('kind', e.kind), ('path', e.path)))\n\n");
         s.push_str("def hx(b):\n    return '\"' + bytes(b).hex() + '\"'\n\n");
         for p in &module.packets {
             let _ = writeln!(s, "def dump_{}(p):", p.name);
@@ -53,7 +54,7 @@ impl Target for PythonTarget {
             s.push_str("    try:\n");
             let _ = writeln!(s, "        p = {}.decode(bytes.fromhex({}))", p.name, quote(&c.hex));
             s.push_str(
-                "    except PbError as e:\n        print(json.dumps({'ok': False, 'error': str(e)}))\n        return\n",
+                "    except PbError as e:\n        print('{\"ok\":false' + pb_e(e, '') + '}')\n        return\n",
             );
             for (name, v) in &c.set {
                 let _ = writeln!(
@@ -65,7 +66,7 @@ impl Target for PythonTarget {
             }
             let _ = writeln!(s, "    v = dump_{}(p)", p.name);
             s.push_str("    try:\n        b = p.encode()\n");
-            s.push_str("    except PbError as e:\n        print('{\"ok\":true,\"value\":' + v + ',\"encode_error\":' + json.dumps(str(e)) + '}')\n        return\n");
+            s.push_str("    except PbError as e:\n        print('{\"ok\":true,\"value\":' + v + pb_e(e, 'encode_') + '}')\n        return\n");
             s.push_str("    print('{\"ok\":true,\"value\":' + v + ',\"encoded\":' + hx(b) + '}')\n\n");
         }
         for i in 0..cases.len() {

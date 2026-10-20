@@ -2,7 +2,7 @@
 
 use super::naming::Python;
 use crate::generators::common::{Dialect, ExprLang, Scope};
-use crate::ir::{AggOp, ArithOp, Func, LogicOp, Ty, ValueType};
+use crate::ir::{AggOp, ArithOp, Func, LogicOp, Ty, UnaryOp, ValueType};
 
 /// u64 values must wrap to i64 to match the other languages.
 fn needs_wrap(ty: &ValueType) -> bool {
@@ -54,6 +54,7 @@ impl ExprLang for Scope<'_, Python> {
                 ArithOp::Mul => format!("({} * {})", a, b),
                 ArithOp::Div => format!("_pb_fdiv({}, {})", a, b),
                 ArithOp::Pow => format!("_pb_fpow({}, {})", a, b),
+                _ => unreachable!("integer-only operator on floats"),
             };
         }
         match op {
@@ -62,6 +63,21 @@ impl ExprLang for Scope<'_, Python> {
             ArithOp::Mul => format!("_pb_wrap({} * {})", a, b),
             ArithOp::Div => format!("_pb_div({}, {})", a, b),
             ArithOp::Pow => format!("_pb_pow({}, {})", a, b),
+            ArithOp::Mod => format!("_pb_mod({}, {})", a, b),
+            ArithOp::Shl => format!("_pb_shl({}, {})", a, b),
+            ArithOp::Shr => format!("_pb_shr({}, {})", a, b),
+            ArithOp::BitAnd => format!("({} & {})", a, b),
+            ArithOp::BitOr => format!("({} | {})", a, b),
+            ArithOp::BitXor => format!("({} ^ {})", a, b),
+        }
+    }
+
+    fn unary(&self, op: UnaryOp, e: String, ty: Ty) -> String {
+        match (op, ty) {
+            (UnaryOp::Neg, Ty::Float) => format!("(-{})", e),
+            (UnaryOp::Neg, _) => format!("_pb_wrap(-{})", e),
+            (UnaryOp::BitNot, _) => format!("(~{})", e),
+            (UnaryOp::Not, _) => format!("(not {})", e),
         }
     }
 

@@ -122,3 +122,57 @@ fn generated_code_exports_constants() {
     let out = bin().args(["gen", "examples/oscar.packet", "-l", "c", "--stdout"]).output().unwrap();
     assert!(String::from_utf8_lossy(&out.stdout).contains("#define CHANNEL_SNAC ((uint8_t)2u)"));
 }
+
+#[test]
+fn decode_prints_a_tree() {
+    let out = bin()
+        .args(["decode", "examples/oscar.packet", "-k", "Flap", "--hex", "2a01 1f3a 0004 00000001"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("channel: 1 (Channel.signon)"), "{}", text);
+    assert!(text.contains("payload: 00000001 (4 bytes)"), "{}", text);
+}
+
+#[test]
+fn decode_json_stream() {
+    let out = bin()
+        .args(["decode", "examples/oscar.packet", "-k", "Flap", "--all", "--json"])
+        .args(["--hex", "2a01 1f3a 0004 00000001 2a05 0001 0000"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let lines: Vec<String> = String::from_utf8_lossy(&out.stdout).lines().map(str::to_string).collect();
+    assert_eq!(lines.len(), 2, "{:?}", lines);
+    assert!(lines[1].contains("\"channel\":5"), "{:?}", lines);
+}
+
+#[test]
+fn decode_reports_where_it_failed() {
+    let out = bin()
+        .args(["decode", "tests/specs/features.packet", "-k", "Container", "--hex", "11 0001 00 0002 05 aa"])
+        .output();
+    let out = out.unwrap();
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("Container.items[0].value: unexpected end of data"), "{}", err);
+}
+
+#[test]
+fn decode_reads_captures() {
+    let dir = out_dir("decode_pcap");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("frames.pcap");
+    let frames = vec![hex("2a011f3a000400000001"), hex("2a0500010000")];
+    std::fs::write(&path, packet_builder::pcap::write(packet_builder::pcap::LINKTYPE_USER0, &frames)).unwrap();
+    let out = bin().args(["decode", "examples/oscar.packet", "-k", "Flap", "--pcap"]).arg(&path).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("frame 1:") && text.contains("frame 2:"), "{}", text);
+    assert!(text.contains("channel: 5 (Channel.keep_alive)"), "{}", text);
+}
+
+fn hex(s: &str) -> Vec<u8> {
+    (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
+}

@@ -2,39 +2,200 @@
 
 var _ = math.Sqrt
 var _ = utf8.Valid
+var _ = strings.Builder{}
+
+// PbErrorKind says what went wrong while decoding or encoding.
+type PbErrorKind int
+
+const (
+	// PbIncomplete: the input ended before the packet did; NeededBits more would help.
+	PbIncomplete PbErrorKind = iota + 1
+	// PbInvalid: malformed data (a bad length, nesting too deep, ...).
+	PbInvalid
+	// PbRange: a value does not fit in its field.
+	PbRange
+	// PbText: a string is not valid text, or contains a NUL where none is allowed.
+	PbText
+	// PbMismatch: a length, derived field or checksum does not match the data.
+	PbMismatch
+	// PbConstraint: a value breaks a declared constraint.
+	PbConstraint
+)
+
+func (k PbErrorKind) String() string {
+	switch k {
+	case PbIncomplete:
+		return "incomplete"
+	case PbInvalid:
+		return "invalid"
+	case PbRange:
+		return "range"
+	case PbText:
+		return "text"
+	case PbMismatch:
+		return "mismatch"
+	case PbConstraint:
+		return "constraint"
+	}
+	return "unknown"
+}
 
 // PbError is returned when data cannot be decoded or a value cannot be encoded.
-type PbError struct{ Msg string }
+type PbError struct {
+	Kind PbErrorKind
+	Msg  string
+	// Path is where it happened: Packet.field[index].field.
+	Path       string
+	BitOffset  int
+	NeededBits int // for PbIncomplete
+}
 
-func (e *PbError) Error() string { return e.Msg }
+func (e *PbError) Error() string {
+	if e.Path == "" {
+		return fmt.Sprintf("%s (at bit %d)", e.Msg, e.BitOffset)
+	}
+	return fmt.Sprintf("%s: %s (at bit %d)", e.Path, e.Msg, e.BitOffset)
+}
 
-func pbErrorf(format string, args ...any) error {
-	return &PbError{Msg: fmt.Sprintf(format, args...)}
+// PbMaxDepth is the deepest packet nesting accepted.
+const PbMaxDepth = 64
+
+type pbFrame struct {
+	packet, field string
+	index         int
+}
+
+// pbTrace holds the packets being decoded or encoded, innermost last, each
+// with the field it is working on: the path reported in errors.
+type pbTrace struct{ frames []pbFrame }
+
+func (t *pbTrace) enter(packet string) bool {
+	t.frames = append(t.frames, pbFrame{packet, "", -1})
+	return len(t.frames) <= PbMaxDepth
+}
+
+func (t *pbTrace) leave() {
+	if len(t.frames) > 0 {
+		t.frames = t.frames[:len(t.frames)-1]
+	}
+}
+
+func (t *pbTrace) at(field string) {
+	if n := len(t.frames); n > 0 {
+		t.frames[n-1].field = field
+		t.frames[n-1].index = -1
+	}
+}
+
+func (t *pbTrace) atIndex(i int) {
+	if n := len(t.frames); n > 0 {
+		t.frames[n-1].index = i
+	}
+}
+
+func (t *pbTrace) path() string {
+	var b strings.Builder
+	if len(t.frames) > 0 {
+		b.WriteString(t.frames[0].packet)
+	}
+	for _, f := range t.frames {
+		if f.field == "" {
+			break
+		}
+		b.WriteString(".")
+		b.WriteString(f.field)
+		if f.index >= 0 {
+			fmt.Fprintf(&b, "[%d]", f.index)
+		}
+	}
+	return b.String()
 }
 
 // PbReader reads integers of any bit width (MSB-first) and byte-aligned
 // values. The first error is sticky: later reads return zero values.
 type PbReader struct {
-	data []byte
-	pos  int // in bits
-	err  error
+	data  []byte
+	pos   int // in bits
+	limit int // end of the readable data in bits (a window inside data)
+	err   error
+	tr    pbTrace
 }
 
-func NewPbReader(data []byte) *PbReader { return &PbReader{data: data} }
+func NewPbReader(data []byte) *PbReader { return &PbReader{data: data, limit: len(data) * 8} }
 
 func (r *PbReader) Err() error { return r.err }
 
-func (r *PbReader) RemainingBits() int { return len(r.data)*8 - r.pos }
+func (r *PbReader) RemainingBits() int { return r.limit - r.pos }
+
+func (r *PbReader) PositionBits() int { return r.pos }
+
+// Fail records the first error at the current position.
+func (r *PbReader) Fail(kind PbErrorKind, format string, args ...any) {
+	if r.err == nil {
+		r.err = &PbError{Kind: kind, Msg: fmt.Sprintf(format, args...), Path: r.tr.path(), BitOffset: r.pos}
+	}
+}
+
+// short records that bits more bits are needed than are left: incomplete
+// input at the top level, invalid data inside a window.
+func (r *PbReader) short(bits int, what string) {
+	if r.err != nil {
+		return
+	}
+	if r.limit == len(r.data)*8 {
+		r.Fail(PbIncomplete, "unexpected end of data: %s needs %d more bit(s), %d left", what, bits, r.RemainingBits())
+		r.err.(*PbError).NeededBits = bits - r.RemainingBits()
+	} else {
+		r.Fail(PbInvalid, "%s needs %d bit(s) but its window has %d left", what, bits, r.RemainingBits())
+	}
+}
 
 func (r *PbReader) need(bits int) bool {
 	if r.err != nil {
 		return false
 	}
 	if bits < 0 || bits > r.RemainingBits() {
-		r.err = pbErrorf("unexpected end of data: need %d more bit(s) at bit offset %d, have %d", bits, r.pos, r.RemainingBits())
+		r.short(bits, "the field")
 		return false
 	}
 	return true
+}
+
+func (r *PbReader) Enter(packet string) {
+	if !r.tr.enter(packet) {
+		r.Fail(PbInvalid, "packets nested more than %d deep", PbMaxDepth)
+	}
+}
+
+func (r *PbReader) Leave()          { r.tr.leave() }
+func (r *PbReader) At(field string) { r.tr.at(field) }
+func (r *PbReader) AtIndex(i int)   { r.tr.atIndex(i) }
+
+// PushLimit restricts reading to the next n bytes and returns the previous
+// limit for PopLimit.
+func (r *PbReader) PushLimit(n int64) int {
+	saved := r.limit
+	if r.err != nil {
+		return saved
+	}
+	if n < 0 {
+		r.Fail(PbInvalid, "negative size %d", n)
+		return saved
+	}
+	if n > int64(r.RemainingBits()/8) {
+		r.short(int(n)*8, "the window")
+		return saved
+	}
+	r.limit = r.pos + int(n)*8
+	return saved
+}
+
+// PopLimit skips what is left of the current window and restores saved.
+func (r *PbReader) PopLimit(saved int) {
+	if r.err == nil {
+		r.pos = r.limit
+	}
+	r.limit = saved
 }
 
 func (r *PbReader) ReadBits(width int) uint64 {
@@ -97,15 +258,13 @@ func (r *PbReader) SkipBits(bits int) {
 	}
 }
 
-func (r *PbReader) PositionBits() int { return r.pos }
-
 // ReadCString returns the bytes before a NUL terminator and consumes it.
-func (r *PbReader) ReadCString(field string) []byte {
+func (r *PbReader) ReadCString() []byte {
 	if r.err != nil {
 		return nil
 	}
 	start := r.pos >> 3
-	for i := start; i < len(r.data); i++ {
+	for i := start; i < r.limit>>3; i++ {
 		if r.data[i] == 0 {
 			r.pos = (i + 1) * 8
 			out := make([]byte, i-start)
@@ -113,12 +272,12 @@ func (r *PbReader) ReadCString(field string) []byte {
 			return out
 		}
 	}
-	r.err = pbErrorf("unexpected end of data: string `%s` has no NUL terminator", field)
+	r.short(r.RemainingBits()+8, "the NUL-terminated string")
 	return nil
 }
 
 // Text validates raw as UTF-8; untilNul cuts it at the first NUL byte.
-func (r *PbReader) Text(raw []byte, untilNul bool, field string) string {
+func (r *PbReader) Text(raw []byte, untilNul bool) string {
 	if untilNul {
 		for i, b := range raw {
 			if b == 0 {
@@ -128,22 +287,26 @@ func (r *PbReader) Text(raw []byte, untilNul bool, field string) string {
 		}
 	}
 	if r.err == nil && !utf8.Valid(raw) {
-		r.err = pbErrorf("invalid UTF-8 in string field `%s`", field)
+		r.Fail(PbText, "invalid UTF-8")
 	}
 	return string(raw)
 }
 
 // Count validates a decoded element count against the data that is left.
-func (r *PbReader) Count(n int64, elemBits int, field string) int {
+func (r *PbReader) Count(n int64, elemBits int) int {
 	if r.err != nil {
 		return 0
 	}
 	if n < 0 {
-		r.err = pbErrorf("negative length %d for field `%s`", n, field)
+		r.Fail(PbInvalid, "negative length %d", n)
 		return 0
 	}
 	if elemBits > 0 && n > int64(r.RemainingBits()/elemBits) {
-		r.err = pbErrorf("length %d for field `%s` exceeds the remaining data", n, field)
+		bits := n * int64(elemBits)
+		if bits/int64(elemBits) != n || bits > int64(^uint(0)>>1) {
+			bits = int64(^uint(0) >> 1)
+		}
+		r.short(int(bits), fmt.Sprintf("length %d", n))
 		return 0
 	}
 	return int(n)
@@ -155,6 +318,7 @@ type PbWriter struct {
 	buf []byte
 	pos int // in bits
 	err error
+	tr  pbTrace
 }
 
 func NewPbWriter() *PbWriter { return &PbWriter{} }
@@ -165,22 +329,40 @@ func (w *PbWriter) Bytes() []byte { return w.buf }
 
 func (w *PbWriter) PositionBits() int { return w.pos }
 
-func (w *PbWriter) CheckFits(length int, size int64, field string) {
-	if w.err == nil && int64(length) > size {
-		w.err = pbErrorf("string field `%s` is %d byte(s), longer than its size %d", field, length, size)
+// Fail records the first error at the current position.
+func (w *PbWriter) Fail(kind PbErrorKind, format string, args ...any) {
+	if w.err == nil {
+		w.err = &PbError{Kind: kind, Msg: fmt.Sprintf(format, args...), Path: w.tr.path(), BitOffset: w.pos}
 	}
 }
 
-func (w *PbWriter) CheckUTF8(s string, field string) {
-	if w.err == nil && !utf8.ValidString(s) {
-		w.err = pbErrorf("invalid UTF-8 in string field `%s`", field)
+func (w *PbWriter) Enter(packet string) {
+	if !w.tr.enter(packet) {
+		w.Fail(PbInvalid, "packets nested more than %d deep", PbMaxDepth)
 	}
 }
 
-func (w *PbWriter) CheckNoNul(data []byte, field string) {
+func (w *PbWriter) Leave()          { w.tr.leave() }
+func (w *PbWriter) At(field string) { w.tr.at(field) }
+func (w *PbWriter) AtIndex(i int)   { w.tr.atIndex(i) }
+
+func (w *PbWriter) CheckFits(length int, size int64) {
+	if int64(length) > size {
+		w.Fail(PbRange, "%d byte(s) do not fit in %d", length, size)
+	}
+}
+
+func (w *PbWriter) CheckUTF8(s string) {
+	if !utf8.ValidString(s) {
+		w.Fail(PbText, "invalid UTF-8")
+	}
+}
+
+func (w *PbWriter) CheckNoNul(data []byte) {
 	for _, b := range data {
-		if w.err == nil && b == 0 {
-			w.err = pbErrorf("string field `%s` contains a NUL byte", field)
+		if b == 0 {
+			w.Fail(PbText, "the string contains a NUL byte")
+			return
 		}
 	}
 }
@@ -227,21 +409,21 @@ func (w *PbWriter) WriteZeroBits(bits int64) {
 	}
 }
 
-func (w *PbWriter) CheckLen(actual int, expected int64, field string) {
-	if w.err == nil && int64(actual) != expected {
-		w.err = pbErrorf("field `%s` has %d element(s) but its length expression says %d", field, actual, expected)
+func (w *PbWriter) CheckLen(actual int, expected int64) {
+	if int64(actual) != expected {
+		w.Fail(PbMismatch, "%d element(s) but the length expression says %d", actual, expected)
 	}
 }
 
-func (w *PbWriter) CheckU(v uint64, width int, field string) {
-	if w.err == nil && width < 64 && v>>uint(width) != 0 {
-		w.err = pbErrorf("value %d does not fit in %d bit(s) for field `%s`", v, width, field)
+func (w *PbWriter) CheckU(v uint64, width int) {
+	if width < 64 && v>>uint(width) != 0 {
+		w.Fail(PbRange, "value %d does not fit in %d bit(s)", v, width)
 	}
 }
 
-func (w *PbWriter) CheckI(v int64, width int, field string) {
-	if w.err == nil && width < 64 && (v < -(int64(1)<<uint(width-1)) || v > (int64(1)<<uint(width-1))-1) {
-		w.err = pbErrorf("value %d does not fit in %d signed bit(s) for field `%s`", v, width, field)
+func (w *PbWriter) CheckI(v int64, width int) {
+	if width < 64 && (v < -(int64(1)<<uint(width-1)) || v > (int64(1)<<uint(width-1))-1) {
+		w.Fail(PbRange, "value %d does not fit in %d signed bit(s)", v, width)
 	}
 }
 
@@ -308,6 +490,30 @@ func pbDiv(a, b int64) int64 {
 }
 
 func pbFDiv(a, b float64) float64 { return a / b }
+
+func pbMod(a, b int64) int64 {
+	if b == 0 {
+		return 0
+	}
+	return a % b
+}
+
+func pbShl(a, b int64) int64 {
+	if b < 0 || b > 63 {
+		return 0
+	}
+	return a << uint(b)
+}
+
+func pbShr(a, b int64) int64 {
+	if b < 0 {
+		return 0
+	}
+	if b > 63 {
+		b = 63
+	}
+	return a >> uint(b)
+}
 
 func pbPow(base, exp int64) int64 {
 	if exp < 0 {

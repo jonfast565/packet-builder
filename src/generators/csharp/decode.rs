@@ -47,6 +47,10 @@ impl StepEmitter for Decoder<'_> {
         self.scope.packet
     }
 
+    fn locate(&self, out: &mut Out, field: &str) {
+        out.line(format!("pbR.At(\"{}\");", field));
+    }
+
     fn align(&self, out: &mut Out, bytes: u64) {
         out.line(format!("pbR.SkipBits(Pb.Pad(pbR.PositionBits - pbStart, {}));", bytes * 8))
     }
@@ -57,18 +61,14 @@ impl StepEmitter for Decoder<'_> {
 
     fn string(&self, out: &mut Out, m: &Member, mode: &StrMode, array: Option<&Count>) {
         let raw = match (mode, array) {
-            (StrMode::CString, _) => format!("pbR.ReadCString(\"{}\")", m.name),
-            (StrMode::Prefixed { prefix, .. }, _) => format!(
-                "pbR.ReadBytes(pbR.Count(unchecked((long){}), 8, \"{}\"))",
-                read_elem(prefix, &PREFIX_LEN),
-                m.name
-            ),
-            (_, Some(Count::Expr(e))) => {
-                format!("pbR.ReadBytes(pbR.Count({}, 8, \"{}\"))", self.scope.expr(e), m.name)
+            (StrMode::CString, _) => "pbR.ReadCString()".to_string(),
+            (StrMode::Prefixed { prefix, .. }, _) => {
+                format!("pbR.ReadBytes(pbR.Count(unchecked((long){}), 8))", read_elem(prefix, &PREFIX_LEN))
             }
+            (_, Some(Count::Expr(e))) => format!("pbR.ReadBytes(pbR.Count({}, 8))", self.scope.expr(e)),
             _ => "pbR.ReadBytes(pbR.RemainingBits / 8)".to_string(),
         };
-        out.line(format!("{} = Pb.Utf8({}, {}, \"{}\");", self.scope.field(m), raw, *mode == StrMode::Padded, m.name));
+        out.line(format!("{} = pbR.Utf8({}, {});", self.scope.field(m), raw, *mode == StrMode::Padded));
     }
 
     fn padding(&self, out: &mut Out, codec: &Codec, array: Option<&Count>) {
@@ -76,7 +76,7 @@ impl StepEmitter for Decoder<'_> {
         match array {
             None => out.line(format!("pbR.SkipBits({});", bits)),
             Some(Count::Expr(e)) => {
-                out.line(format!("pbR.SkipBits((long)pbR.Count({}, {}, \"_\") * {});", self.scope.expr(e), bits, bits))
+                out.line(format!("pbR.SkipBits((long)pbR.Count({}, {}) * {});", self.scope.expr(e), bits, bits))
             }
             Some(Count::Remaining) => out.line("pbR.SkipBits(pbR.RemainingBits);"),
         }
@@ -91,14 +91,18 @@ impl StepEmitter for Decoder<'_> {
         let ebits = codec.min_elem_bits();
         match count {
             Count::Expr(e) => {
-                let n = format!("pbR.Count({}, {}, \"{}\")", self.scope.expr(e), ebits, m.name);
+                let n = format!("pbR.Count({}, {})", self.scope.expr(e), ebits);
                 if ty.is_byte() {
                     out.line(format!("{} = pbR.ReadBytes({});", target, n));
                 } else {
                     out.open("{");
                     out.line(format!("int pbN = {};", n));
                     out.line(format!("var pbA = new {}[pbN];", scalar_type(ty)));
-                    out.line(format!("for (int pbI = 0; pbI < pbN; pbI++) pbA[pbI] = {};", read_elem(codec, ty)));
+                    out.line("for (int pbI = 0; pbI < pbN; pbI++)");
+                    out.open("{");
+                    out.line("pbR.AtIndex(pbI);");
+                    out.line(format!("pbA[pbI] = {};", read_elem(codec, ty)));
+                    out.close("}");
                     out.line(format!("{} = pbA;", target));
                     out.close("}");
                 }
@@ -109,7 +113,11 @@ impl StepEmitter for Decoder<'_> {
                 } else {
                     out.open("{");
                     out.line(format!("var pbL = new List<{}>();", scalar_type(ty)));
-                    out.line(format!("while (pbR.RemainingBits > 0) pbL.Add({});", read_elem(codec, ty)));
+                    out.line("while (pbR.RemainingBits > 0)");
+                    out.open("{");
+                    out.line("pbR.AtIndex(pbL.Count);");
+                    out.line(format!("pbL.Add({});", read_elem(codec, ty)));
+                    out.close("}");
                     out.line(format!("{} = pbL.ToArray();", target));
                     out.close("}");
                 }

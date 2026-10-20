@@ -42,9 +42,9 @@ def packets(stream):
         packet = P3Packet.decode_from(reader)
         raw = stream[start:reader.position_bits() // 8]
         if not packet.valid:
-            raise PbError("not a P3 packet")
+            raise PbError(PbError.CONSTRAINT, "not a P3 packet")
         if crc16_arc(raw[3:-1]) != packet.crc:
-            raise PbError("CRC mismatch")
+            raise PbError(PbError.MISMATCH, "CRC mismatch")
         yield packet
 
 

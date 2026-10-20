@@ -342,7 +342,7 @@ impl<'a> PacketBuilder<'a> {
             offset += m.width;
         }
         self.cursor.advance(cwidth as u64, Some(cwidth as u64), 1);
-        self.steps.push(Step::Bitfield { container: codec, container_width: cwidth, parts });
+        self.steps.push(Step::Bitfield { name: b.id.clone(), container: codec, container_width: cwidth, parts });
     }
 
     /// Pass 5: final checks, then the packet.

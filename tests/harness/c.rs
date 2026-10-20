@@ -47,8 +47,8 @@ fn dump_member(s: &mut String, p: &Packet, m: &Member) {
 }
 
 impl Target for CTarget {
-    fn language(&self) -> Language {
-        Language::C
+    fn language(&self) -> Option<Language> {
+        Some(Language::C)
     }
 
     fn unavailable(&self) -> Option<String> {
@@ -60,8 +60,10 @@ impl Target for CTarget {
             "#define PACKETS_IMPLEMENTATION\n#include \"packets.h\"\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n\n",
         );
         s.push_str("__attribute__((unused)) static char *dupstr(const char *s) { size_t n = strlen(s); char *d = malloc(n + 1); memcpy(d, s, n + 1); return d; }\n");
-        s.push_str("__attribute__((unused)) static void js(const char *s, size_t n) { putchar('\"'); for (size_t i = 0; i < n; i++) { unsigned char c = (unsigned char)s[i]; if (c == '\"' || c == '\\\\') printf(\"\\\\%c\", c); else if (c < 0x20) printf(\"\\\\u%04x\", c); else putchar(c); } putchar('\"'); }\n");
+        s.push_str("static void js(const char *s, size_t n) { putchar('\"'); for (size_t i = 0; i < n; i++) { unsigned char c = (unsigned char)s[i]; if (c == '\"' || c == '\\\\') printf(\"\\\\%c\", c); else if (c < 0x20) printf(\"\\\\u%04x\", c); else putchar(c); } putchar('\"'); }\n");
         s.push_str("static void hx(const uint8_t *b, size_t n) { printf(\"\\\"\"); for (size_t i = 0; i < n; i++) printf(\"%02x\", b[i]); printf(\"\\\"\"); }\n");
+        s.push_str("static const char *kindname(int rc) { switch (rc) { case PB_ERR_INCOMPLETE: return \"incomplete\"; case PB_ERR_INVALID: return \"invalid\"; case PB_ERR_RANGE: return \"range\"; case PB_ERR_TEXT: return \"text\"; case PB_ERR_MISMATCH: return \"mismatch\"; case PB_ERR_CONSTRAINT: return \"constraint\"; default: return \"other\"; } }\n");
+        s.push_str("static void err(const char *pre, int rc, const char *desc, const char *path) { printf(\"\\\"%serror\\\":\", pre); js(desc, strlen(desc)); printf(\",\\\"%skind\\\":\\\"%s\\\",\\\"%spath\\\":\", pre, kindname(rc), pre); js(path, strlen(path)); }\n");
         s.push_str("static size_t unhex(const char *h, uint8_t *out) { size_t n = strlen(h) / 2; for (size_t i = 0; i < n; i++) { unsigned v; sscanf(h + 2 * i, \"%2x\", &v); out[i] = (uint8_t)v; } return n; }\n\n");
         for p in &module.packets {
             let _ = writeln!(s, "static void dump_{}(const {} *p);", p.name, p.name);
@@ -84,12 +86,13 @@ impl Target for CTarget {
             s.push_str("    {\n");
             let _ = writeln!(s, "        size_t n = unhex({}, data);", quote(&c.hex));
             let _ = writeln!(s, "        {} p;", p.name);
-            s.push_str("        uint8_t *out = NULL; size_t out_len = 0; int rc;\n");
+            s.push_str("        int rc; pb_reader r; pb_writer w; char desc[512], path[256];\n");
             // Copy into an exact-size heap buffer so ASan catches over-reads.
             s.push_str("        uint8_t *in = malloc(n ? n : 1); memcpy(in, data, n);\n");
-            let _ = writeln!(s, "        rc = {}_decode(&p, in, n);", p.name);
+            s.push_str("        pb_reader_init(&r, in, n);\n");
+            let _ = writeln!(s, "        rc = {}_decode_from(&p, &r);", p.name);
             s.push_str("        free(in);\n");
-            s.push_str("        if (rc != PB_OK) { printf(\"{\\\"ok\\\":false,\\\"error\\\":\\\"%s\\\"}\\n\", pb_strerror(rc)); }\n");
+            s.push_str("        if (rc != PB_OK) { printf(\"{\\\"ok\\\":false,\"); err(\"\", rc, pb_reader_describe(&r, desc, sizeof desc), pb_reader_path(&r, path, sizeof path)); printf(\"}\\n\"); }\n");
             s.push_str("        else {\n");
             for (name, v) in &c.set {
                 let path = super::accessor(module, p, name, |_, m| ident(&m.name));
@@ -112,13 +115,13 @@ impl Target for CTarget {
             }
             s.push_str("            printf(\"{\\\"ok\\\":true,\\\"value\\\":\");\n");
             let _ = writeln!(s, "            dump_{}(&p);", p.name);
-            let _ = writeln!(s, "            rc = {}_encode(&p, &out, &out_len);", p.name);
+            s.push_str("            pb_writer_init(&w);\n");
+            let _ = writeln!(s, "            rc = {}_encode_to(&p, &w);", p.name);
             s.push_str(
-                "            if (rc != PB_OK) printf(\",\\\"encode_error\\\":\\\"%s\\\"}\\n\", pb_strerror(rc));\n",
+                "            if (rc != PB_OK) { printf(\",\"); err(\"encode_\", rc, pb_writer_describe(&w, desc, sizeof desc), pb_writer_path(&w, path, sizeof path)); printf(\"}\\n\"); }\n",
             );
-            s.push_str(
-                "            else { printf(\",\\\"encoded\\\":\"); hx(out, out_len); printf(\"}\\n\"); free(out); }\n",
-            );
+            s.push_str("            else { printf(\",\\\"encoded\\\":\"); hx(w.buf, w.len); printf(\"}\\n\"); }\n");
+            s.push_str("            pb_writer_free(&w);\n");
             let _ = writeln!(s, "            {}_free(&p);", p.name);
             s.push_str("        }\n    }\n");
         }

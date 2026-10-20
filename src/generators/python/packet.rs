@@ -27,11 +27,13 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     out.close("");
     out.line("@classmethod");
     out.open(format!("def decode_from(cls, pb_r) -> \"{}\":", p.name));
+    out.line(format!("pb_r.enter(\"{}\")", p.name));
     out.line("p = cls()");
     if p.uses_align() {
         out.line("pb_start = pb_r.position_bits()");
     }
     Decoder::new(p).emit_steps(out);
+    out.line("pb_r.leave()");
     out.line("return p");
     out.close("");
 
@@ -41,6 +43,7 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     out.line("return pb_w.finish()");
     out.close("");
     out.open("def encode_to(self, pb_w) -> None:");
+    out.line(format!("pb_w.enter(\"{}\")", p.name));
     out.line("p = self");
     if p.uses_align() {
         out.line("pb_start = pb_w.position_bits()");
@@ -50,6 +53,7 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
         out.line(format!("pbc_{} = {}", m.name, store_value(encoder.scope.expr(e), &m.ty)));
     }
     encoder.emit_steps(out);
+    out.line("pb_w.leave()");
     out.close("");
     out.pop();
 }

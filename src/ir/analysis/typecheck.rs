@@ -4,7 +4,7 @@ use super::context::Ctx;
 use super::types::field_value_type;
 use crate::ast::{ExprNode, PacketItem, Span};
 use crate::errors::Diagnostic;
-use crate::ir::expr::{AggOp, ArithOp, CmpOp, Func, LogicOp, TExpr, Ty, coerce, numeric_join};
+use crate::ir::expr::{AggOp, ArithOp, CmpOp, Func, LogicOp, TExpr, Ty, UnaryOp, coerce, numeric_join};
 use crate::ir::model::ValueType;
 
 impl<'a> Ctx<'a> {
@@ -113,7 +113,17 @@ impl<'a> Ctx<'a> {
                 let ty = if t.ty() == Ty::Bool && o.ty() == Ty::Bool { Ty::Bool } else { numeric_join(t.ty(), o.ty()) };
                 TExpr::Guard { cond: Box::new(cond), then: Box::new(coerce(t, ty)), other: Box::new(coerce(o, ty)), ty }
             }
-            Plus(a, b) | Minus(a, b) | Mult(a, b) | Div(a, b) | Pow(a, b) => {
+            Plus(a, b)
+            | Minus(a, b)
+            | Mult(a, b)
+            | Div(a, b)
+            | Pow(a, b)
+            | Mod(a, b)
+            | Shl(a, b)
+            | Shr(a, b)
+            | BitAnd(a, b)
+            | BitOr(a, b)
+            | BitXor(a, b) => {
                 let (a, b) = (self.typecheck(a)?, self.typecheck(b)?);
                 let ty = numeric_join(a.ty(), b.ty());
                 let op = match e {
@@ -121,9 +131,30 @@ impl<'a> Ctx<'a> {
                     Minus(..) => ArithOp::Sub,
                     Mult(..) => ArithOp::Mul,
                     Div(..) => ArithOp::Div,
-                    _ => ArithOp::Pow,
+                    Pow(..) => ArithOp::Pow,
+                    Mod(..) => ArithOp::Mod,
+                    Shl(..) => ArithOp::Shl,
+                    Shr(..) => ArithOp::Shr,
+                    BitAnd(..) => ArithOp::BitAnd,
+                    BitOr(..) => ArithOp::BitOr,
+                    _ => ArithOp::BitXor,
                 };
+                if op.int_only() && ty == Ty::Float {
+                    return Err(format!("`{}` needs integer operands", arith_symbol(op)));
+                }
                 TExpr::Arith { op, a: Box::new(coerce(a, ty)), b: Box::new(coerce(b, ty)), ty }
+            }
+            Neg(a) | BitNot(a) => {
+                let a = self.typecheck(a)?;
+                let ty = numeric_join(a.ty(), Ty::Int);
+                let op = if matches!(e, Neg(_)) { UnaryOp::Neg } else { UnaryOp::BitNot };
+                if op == UnaryOp::BitNot && ty == Ty::Float {
+                    return Err("`~` needs an integer operand".into());
+                }
+                TExpr::Unary { op, e: Box::new(coerce(a, ty)), ty }
+            }
+            Not(a) => {
+                TExpr::Unary { op: UnaryOp::Not, e: Box::new(coerce(self.typecheck(a)?, Ty::Bool)), ty: Ty::Bool }
             }
             Gt(a, b) | Gte(a, b) | Lt(a, b) | Lte(a, b) | Equals(a, b) | NotEquals(a, b) => {
                 let (a, b) = (self.typecheck(a)?, self.typecheck(b)?);
@@ -156,5 +187,21 @@ impl<'a> Ctx<'a> {
         self.packet.items.iter().any(
             |it| matches!(it, PacketItem::Field(f) if &f.id == name && f.array.is_some() && field_value_type(f) != ValueType::Str),
         )
+    }
+}
+
+fn arith_symbol(op: ArithOp) -> &'static str {
+    match op {
+        ArithOp::Add => "+",
+        ArithOp::Sub => "-",
+        ArithOp::Mul => "*",
+        ArithOp::Div => "/",
+        ArithOp::Pow => "^",
+        ArithOp::Mod => "%",
+        ArithOp::Shl => "<<",
+        ArithOp::Shr => ">>",
+        ArithOp::BitAnd => "&",
+        ArithOp::BitOr => "|",
+        ArithOp::BitXor => "xor",
     }
 }

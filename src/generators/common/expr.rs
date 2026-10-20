@@ -1,7 +1,7 @@
 //! Expression emission: [`emit_expr`] walks a [`TExpr`] and asks an
 //! [`ExprLang`] for the target-language spelling of each node (Visitor).
 
-use crate::ir::{AggOp, ArithOp, CmpOp, Func, LogicOp, TExpr, Ty};
+use crate::ir::{AggOp, ArithOp, CmpOp, Func, LogicOp, TExpr, Ty, UnaryOp};
 
 /// Whether an expression is evaluated while decoding (every member lives in
 /// the target struct) or while encoding (calculated members are locals).
@@ -23,7 +23,11 @@ pub trait ExprLang {
     /// Element `index` (an i64 expression) of an array member; 0 if out of range.
     fn index(&self, member: usize, index: String, ty: Ty) -> String;
     fn aggregate(&self, member: usize, op: AggOp, ty: Ty) -> String;
+    /// Binary arithmetic. The integer-only operators (`ArithOp::int_only`)
+    /// are never called with `Ty::Float`.
     fn arith(&self, op: ArithOp, a: String, b: String, ty: Ty) -> String;
+    /// `-x` (wrapping for integers), `~x` (integers) or `not x` (booleans).
+    fn unary(&self, op: UnaryOp, e: String, ty: Ty) -> String;
     fn cmp(&self, op: CmpOp, a: String, b: String) -> String {
         format!("({} {} {})", a, cmp_symbol(op), b)
     }
@@ -62,5 +66,6 @@ pub fn emit_expr<L: ExprLang + ?Sized>(l: &L, e: &TExpr) -> String {
         }
         TExpr::Call { func, args, ty } => l.call(*func, args.iter().map(|a| emit_expr(l, a)).collect(), *ty),
         TExpr::Convert { e, to } => l.convert(emit_expr(l, e), e.ty(), *to),
+        TExpr::Unary { op, e, ty } => l.unary(*op, emit_expr(l, e), *ty),
     }
 }

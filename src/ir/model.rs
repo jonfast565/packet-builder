@@ -284,8 +284,8 @@ impl Codec {
 pub enum Step {
     /// A stored member, or padding when `member` is None.
     Field { member: Option<usize>, ty: ValueType, codec: Codec, array: Option<Count> },
-    /// An integer container split into sub-fields.
-    Bitfield { container: Codec, container_width: u32, parts: Vec<BitPart> },
+    /// An integer container split into sub-fields; `name` is the container's.
+    Bitfield { name: String, container: Codec, container_width: u32, parts: Vec<BitPart> },
     /// Evaluate a calculated member (decode only).
     Calc { member: usize },
     /// Skip (decode) or zero-fill (encode) to the next multiple of `bytes`

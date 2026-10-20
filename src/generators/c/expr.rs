@@ -2,7 +2,7 @@
 
 use super::naming::{C, helper_suffix, len_ident, scalar_type};
 use crate::generators::common::{Dialect, ExprLang, Scope};
-use crate::ir::{AggOp, ArithOp, Func, Ty, ValueType, storage_for};
+use crate::ir::{AggOp, ArithOp, Func, Ty, UnaryOp, ValueType, storage_for};
 
 impl Scope<'_, C> {
     /// The element count of array member `member`.
@@ -52,6 +52,7 @@ impl ExprLang for Scope<'_, C> {
                 ArithOp::Mul => format!("({} * {})", a, b),
                 ArithOp::Div => format!("({} / {})", a, b),
                 ArithOp::Pow => format!("pow({}, {})", a, b),
+                _ => unreachable!("integer-only operator on floats"),
             };
         }
         let f = match op {
@@ -60,8 +61,23 @@ impl ExprLang for Scope<'_, C> {
             ArithOp::Mul => "pb_mul",
             ArithOp::Div => "pb_div",
             ArithOp::Pow => "pb_pow",
+            ArithOp::Mod => "pb_mod",
+            ArithOp::Shl => "pb_shl",
+            ArithOp::Shr => "pb_shr",
+            ArithOp::BitAnd => return format!("({} & {})", a, b),
+            ArithOp::BitOr => return format!("({} | {})", a, b),
+            ArithOp::BitXor => return format!("({} ^ {})", a, b),
         };
         format!("{}({}, {})", f, a, b)
+    }
+
+    fn unary(&self, op: UnaryOp, e: String, ty: Ty) -> String {
+        match (op, ty) {
+            (UnaryOp::Neg, Ty::Float) => format!("(-{})", e),
+            (UnaryOp::Neg, _) => format!("pb_neg({})", e),
+            (UnaryOp::BitNot, _) => format!("(~{})", e),
+            (UnaryOp::Not, _) => format!("(!{})", e),
+        }
     }
 
     fn guard(&self, cond: String, then: String, other: String, _ty: Ty) -> String {

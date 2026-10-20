@@ -50,6 +50,10 @@ impl StepEmitter for Decoder<'_> {
         self.scope.packet
     }
 
+    fn locate(&self, out: &mut Out, field: &str) {
+        out.line(format!("pb_at(&pb_r->tr, \"{}\");", field));
+    }
+
     fn align(&self, out: &mut Out, bytes: u64) {
         out.line(format!("PB_TRY(pb_skip_bits(pb_r, pb_pad(pb_reader_position(pb_r) - pb_start, {})));", bytes * 8))
     }
@@ -120,6 +124,7 @@ impl StepEmitter for Decoder<'_> {
                     out.line(format!("PB_TRY(pb_read_bytes(pb_r, {}, pb_n));", target));
                 } else {
                     out.open("for (pb_i = 0; pb_i < pb_n; pb_i++) {");
+                    out.line("pb_at_index(&pb_r->tr, pb_i);");
                     read_elem(out, codec, ty, &format!("{}[pb_i]", target));
                     out.close("}");
                 }
@@ -129,6 +134,7 @@ impl StepEmitter for Decoder<'_> {
                 out.open("for (pb_i = 0; pb_remaining_bits(pb_r) > 0; pb_i++) {");
                 out.line(format!("PB_TRY(pb_grow((void **)&{}, &pb_cap, pb_i + 1, sizeof *{}));", target, target));
                 out.line(format!("{} = pb_i + 1;", len));
+                out.line("pb_at_index(&pb_r->tr, pb_i);");
                 read_elem(out, codec, ty, &format!("{}[pb_i]", target));
                 out.close("}");
                 out.open(format!("if (!{}) {{", target));

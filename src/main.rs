@@ -33,8 +33,45 @@ enum Command {
         #[arg(short = 'k', long = "packet")]
         packets: Vec<String>,
     },
+    /// Decode bytes with a packet description and print the fields.
+    Decode(DecodeArgs),
     /// List the supported target languages.
     Languages,
+}
+
+#[derive(Args)]
+struct DecodeArgs {
+    /// Packet description file.
+    input: PathBuf,
+
+    /// The packet to decode.
+    #[arg(short = 'k', long = "packet")]
+    packet: String,
+
+    /// The bytes as hex (spaces and colons are ignored).
+    #[arg(long, required_unless_present_any = ["file", "pcap"], conflicts_with_all = ["file", "pcap"])]
+    hex: Option<String>,
+
+    /// A file holding the raw bytes.
+    #[arg(long, conflicts_with = "pcap")]
+    file: Option<PathBuf>,
+
+    /// A pcap or pcapng capture; every frame is decoded.
+    #[arg(long)]
+    pcap: Option<PathBuf>,
+
+    /// Skip this many bytes at the start of each input (54 skips Ethernet,
+    /// IPv4 and TCP headers without options).
+    #[arg(long, default_value_t = 0)]
+    offset: usize,
+
+    /// Decode packets back to back until the input ends (a stream of frames).
+    #[arg(long)]
+    all: bool,
+
+    /// Print JSON, one object per decoded packet, instead of a tree.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Args)]
@@ -73,6 +110,7 @@ fn main() -> ExitCode {
         Command::Generate(args) => generate(args),
         Command::Check { inputs } => check(&inputs),
         Command::Layout { input, packets } => layout(&input, &packets),
+        Command::Decode(args) => decode(args),
         Command::Languages => {
             for l in Language::ALL {
                 println!("{:<8} .{}", l.name(), l.extension());
@@ -208,4 +246,80 @@ fn print_constants(module: &packet_builder::ir::Module) {
         }
     }
     println!();
+}
+
+fn parse_hex(text: &str) -> Result<Vec<u8>, String> {
+    let digits: String = text.chars().filter(|c| !c.is_whitespace() && *c != ':').collect();
+    let digits = digits.strip_prefix("0x").unwrap_or(&digits);
+    if !digits.len().is_multiple_of(2) {
+        return Err("hex input has an odd number of digits".into());
+    }
+    (0..digits.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&digits[i..i + 2], 16).map_err(|_| format!("invalid hex `{}`", &digits[i..i + 2])))
+        .collect()
+}
+
+fn decode(args: DecodeArgs) -> Result<(), String> {
+    use packet_builder::ir::interp;
+
+    let module = load(&args.input)?;
+    if !module.packets.iter().any(|p| p.name == args.packet) {
+        return Err(format!("no packet named `{}` in {}", args.packet, args.input.display()));
+    }
+    let read = |path: &Path| fs::read(path).map_err(|e| format!("cannot read {}: {}", path.display(), e));
+    let inputs: Vec<(String, Vec<u8>)> = if let Some(hex) = &args.hex {
+        vec![(String::new(), parse_hex(hex)?)]
+    } else if let Some(path) = &args.file {
+        vec![(String::new(), read(path)?)]
+    } else {
+        let path = args.pcap.as_ref().expect("clap requires an input");
+        let frames = packet_builder::pcap::read(&read(path)?).map_err(|e| format!("{}: {}", path.display(), e))?;
+        frames.into_iter().enumerate().map(|(i, f)| (format!("frame {}", i + 1), f.data)).collect()
+    };
+
+    let mut failed = false;
+    for (label, data) in inputs {
+        let data = data.get(args.offset..).unwrap_or(&[]);
+        let mut r = interp::Reader::new(data);
+        let mut n = 0;
+        let mut ok = true;
+        loop {
+            let at = r.position_bits() / 8;
+            let heading = match (label.is_empty(), args.all) {
+                (true, false) => String::new(),
+                (true, true) => format!("packet {} at byte {}", n + 1, at),
+                (false, false) => label.clone(),
+                (false, true) => format!("{}, packet {} at byte {}", label, n + 1, at),
+            };
+            match interp::decode_from(&module, &args.packet, &mut r) {
+                Ok(v) if args.json => println!("{}", v.to_json()),
+                Ok(v) => {
+                    if !heading.is_empty() {
+                        println!("{}:", heading);
+                    }
+                    print!("{}", interp::render(&module, &v));
+                }
+                Err(e) => {
+                    let prefix = if heading.is_empty() { String::new() } else { format!("{}: ", heading) };
+                    eprintln!("{}error: {}", prefix, e);
+                    ok = false;
+                    break;
+                }
+            }
+            n += 1;
+            if !args.all || r.remaining_bits() == 0 {
+                break;
+            }
+        }
+        failed |= !ok;
+        let left = r.remaining_bits() / 8;
+        if ok && !args.all && left > 0 && !args.json {
+            println!("({} trailing byte(s) not decoded)", left);
+        }
+        if !args.json {
+            println!();
+        }
+    }
+    if failed { Err(String::new()) } else { Ok(()) }
 }

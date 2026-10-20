@@ -122,8 +122,8 @@ const MAGIC uint16 = 0xbeef "starts a Tagged packet; notes may contain */ and <t
 const DOUBLE_MAGIC uint32 = MAGIC * 2
 const BITS uint8 = 0b1010
 const U64_MAX uint64 = 0xffffffffffffffff
-const I64_MIN int64 = 0 - 9223372036854775807 - 1
-const NEGATIVE int8 = 0 - 128
+const I64_MIN int64 = -9223372036854775807 - 1
+const NEGATIVE int8 = -128
 
 const Kind u3 {
   none = 0,
@@ -144,3 +144,25 @@ packet Tagged be {
   calc is_error uint8 = kind == Kind.error,
   calc doubled uint32 = DOUBLE_MAGIC + BITS
 }
+
+// Modulo, shifts, bitwise and unary operators.
+packet Operators be {
+  a int16,
+  b uint8,
+  calc rem int16 = a % 7,
+  calc low uint8 = a & 0xff,
+  calc high uint8 = (a >> 8) & 0xff,
+  calc either uint16 = b << 8 | 0x0f,
+  calc flipped uint8 = b xor 0xff,
+  calc negated int16 = -a,
+  calc inverted int16 = ~a,
+  calc nonzero uint8 = not b == 0,
+  calc wide uint8 = 1 << 64,
+  calc sign int8 = a >> 70,
+  calc zero int16 = a % 0,
+  calc prec uint8 = 1 + 2 * 3 & 4 | 8,
+  calc neg_pow int16 = -2 ^ 2,
+  calc folded int8 = MINUS_TWO * 3
+}
+
+const MINUS_TWO int8 = -2

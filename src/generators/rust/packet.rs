@@ -31,11 +31,13 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     out.close("}");
     out.line("");
     out.open(format!("pub fn decode_from(pb_r: &mut PbReader) -> Result<{}, PbError> {{", name));
+    out.line(format!("pb_r.enter(\"{}\")?;", name));
     out.line(format!("let mut p = {}::default();", name));
     if p.uses_align() {
         out.line("let pb_start = pb_r.position_bits();");
     }
     Decoder::new(p).emit_steps(out);
+    out.line("pb_r.leave();");
     out.line("Ok(p)");
     out.close("}");
     out.line("");
@@ -48,6 +50,7 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     out.close("}");
     out.line("");
     out.open("pub fn encode_to(&self, pb_w: &mut PbWriter) -> Result<(), PbError> {");
+    out.line(format!("pb_w.enter(\"{}\")?;", name));
     out.line("let p = self;");
     if p.uses_align() {
         out.line("let pb_start = pb_w.position_bits();");
@@ -62,6 +65,7 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
         ));
     }
     encoder.emit_steps(out);
+    out.line("pb_w.leave();");
     out.line("Ok(())");
     out.close("}");
 

@@ -7,6 +7,7 @@ pub mod generators;
 pub mod ir;
 mod language;
 pub mod parser;
+pub mod pcap;
 
 pub use errors::CompileError;
 pub use generators::common::GenOptions;

@@ -27,11 +27,13 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     out.line("");
     out.line(format!("public static {} DecodeFrom(PbReader pbR)", name));
     out.open("{");
+    out.line(format!("pbR.Enter(\"{}\");", name));
     out.line(format!("var p = new {}();", name));
     if p.uses_align() {
         out.line("long pbStart = pbR.PositionBits;");
     }
     Decoder::new(p).emit_steps(out);
+    out.line("pbR.Leave();");
     out.line("return p;");
     out.close("}");
     out.line("");
@@ -44,6 +46,7 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     out.line("");
     out.line("public void EncodeTo(PbWriter pbW)");
     out.open("{");
+    out.line(format!("pbW.Enter(\"{}\");", name));
     out.line("var p = this;");
     if p.uses_align() {
         out.line("long pbStart = pbW.PositionBits;");
@@ -53,6 +56,7 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
         out.line(format!("{} pbc_{} = {};", scalar_type(&m.ty), m.name, store_value(encoder.scope.expr(e), &m.ty)));
     }
     encoder.emit_steps(out);
+    out.line("pbW.Leave();");
     out.close("}");
     out.close("}");
 }

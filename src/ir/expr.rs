@@ -14,6 +14,80 @@ pub enum ArithOp {
     Mul,
     Div,
     Pow,
+    /// Remainder with the sign of the dividend; `x % 0` is 0. Integers only.
+    Mod,
+    /// `<<`: a count outside 0..=63 gives 0. Integers only.
+    Shl,
+    /// `>>`: arithmetic shift; a count above 63 gives 0 or -1 (by sign), a
+    /// negative count gives 0. Integers only.
+    Shr,
+    BitAnd,
+    BitOr,
+    BitXor,
+}
+
+impl ArithOp {
+    /// Operators that only apply to integers.
+    pub fn int_only(self) -> bool {
+        matches!(self, ArithOp::Mod | ArithOp::Shl | ArithOp::Shr | ArithOp::BitAnd | ArithOp::BitOr | ArithOp::BitXor)
+    }
+
+    /// The operator applied to two i64 values with the documented semantics.
+    pub fn apply(self, a: i64, b: i64) -> i64 {
+        match self {
+            ArithOp::Add => a.wrapping_add(b),
+            ArithOp::Sub => a.wrapping_sub(b),
+            ArithOp::Mul => a.wrapping_mul(b),
+            ArithOp::Div => {
+                if b == 0 {
+                    0
+                } else {
+                    a.wrapping_div(b)
+                }
+            }
+            ArithOp::Pow => {
+                if b < 0 {
+                    0
+                } else {
+                    a.wrapping_pow(b.min(u32::MAX as i64) as u32)
+                }
+            }
+            ArithOp::Mod => {
+                if b == 0 {
+                    0
+                } else {
+                    a.wrapping_rem(b)
+                }
+            }
+            ArithOp::Shl => {
+                if (0..64).contains(&b) {
+                    a.wrapping_shl(b as u32)
+                } else {
+                    0
+                }
+            }
+            ArithOp::Shr => {
+                if b < 0 {
+                    0
+                } else {
+                    a >> b.min(63)
+                }
+            }
+            ArithOp::BitAnd => a & b,
+            ArithOp::BitOr => a | b,
+            ArithOp::BitXor => a ^ b,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnaryOp {
+    /// `-x` (wrapping).
+    Neg,
+    /// `~x`, integers only.
+    BitNot,
+    /// `not x` on a boolean.
+    Not,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -100,6 +174,11 @@ pub enum TExpr {
         e: Box<TExpr>,
         to: Ty,
     },
+    Unary {
+        op: UnaryOp,
+        e: Box<TExpr>,
+        ty: Ty,
+    },
 }
 
 impl TExpr {
@@ -112,7 +191,8 @@ impl TExpr {
             | TExpr::Aggregate { ty, .. }
             | TExpr::Arith { ty, .. }
             | TExpr::Guard { ty, .. }
-            | TExpr::Call { ty, .. } => *ty,
+            | TExpr::Call { ty, .. }
+            | TExpr::Unary { ty, .. } => *ty,
             TExpr::Cmp { .. } | TExpr::Logic { .. } => Ty::Bool,
             TExpr::Convert { to, .. } => *to,
         }
@@ -137,7 +217,7 @@ impl TExpr {
                 other.deps(out);
             }
             TExpr::Call { args, .. } => args.iter().for_each(|a| a.deps(out)),
-            TExpr::Convert { e, .. } => e.deps(out),
+            TExpr::Convert { e, .. } | TExpr::Unary { e, .. } => e.deps(out),
         }
     }
 
@@ -145,28 +225,9 @@ impl TExpr {
     pub fn const_int(&self) -> Option<i64> {
         match self {
             TExpr::IntLit(v) => Some(*v),
-            TExpr::Arith { op, a, b, ty: Ty::Int } => {
-                let (a, b) = (a.const_int()?, b.const_int()?);
-                Some(match op {
-                    ArithOp::Add => a.wrapping_add(b),
-                    ArithOp::Sub => a.wrapping_sub(b),
-                    ArithOp::Mul => a.wrapping_mul(b),
-                    ArithOp::Div => {
-                        if b == 0 {
-                            0
-                        } else {
-                            a.wrapping_div(b)
-                        }
-                    }
-                    ArithOp::Pow => {
-                        if b < 0 {
-                            0
-                        } else {
-                            a.wrapping_pow(b.min(u32::MAX as i64) as u32)
-                        }
-                    }
-                })
-            }
+            TExpr::Arith { op, a, b, ty: Ty::Int } => Some(op.apply(a.const_int()?, b.const_int()?)),
+            TExpr::Unary { op: UnaryOp::Neg, e, ty: Ty::Int } => Some(e.const_int()?.wrapping_neg()),
+            TExpr::Unary { op: UnaryOp::BitNot, e, .. } => Some(!e.const_int()?),
             _ => None,
         }
     }

@@ -34,6 +34,19 @@ pub enum ExprNode {
     Mult(Box<ExprNode>, Box<ExprNode>),
     Div(Box<ExprNode>, Box<ExprNode>),
     Pow(Box<ExprNode>, Box<ExprNode>),
+    Mod(Box<ExprNode>, Box<ExprNode>),
+
+    // bitwise
+    Shl(Box<ExprNode>, Box<ExprNode>),
+    Shr(Box<ExprNode>, Box<ExprNode>),
+    BitAnd(Box<ExprNode>, Box<ExprNode>),
+    BitOr(Box<ExprNode>, Box<ExprNode>),
+    BitXor(Box<ExprNode>, Box<ExprNode>),
+
+    // unary: -x, ~x, not x
+    Neg(Box<ExprNode>),
+    BitNot(Box<ExprNode>),
+    Not(Box<ExprNode>),
 
     // comparisons
     Gt(Box<ExprNode>, Box<ExprNode>),

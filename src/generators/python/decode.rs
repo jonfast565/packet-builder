@@ -37,6 +37,10 @@ impl StepEmitter for Decoder<'_> {
         self.scope.packet
     }
 
+    fn locate(&self, out: &mut Out, field: &str) {
+        out.line(format!("pb_r.at(\"{}\")", field));
+    }
+
     fn align(&self, out: &mut Out, bytes: u64) {
         out.line(format!("pb_r.skip_bits(_pb_pad(pb_r.position_bits() - pb_start, {}))", bytes * 8))
     }
@@ -47,17 +51,15 @@ impl StepEmitter for Decoder<'_> {
 
     fn string(&self, out: &mut Out, m: &Member, mode: &StrMode, array: Option<&Count>) {
         let raw = match (mode, array) {
-            (StrMode::CString, _) => format!("pb_r.read_cstring(\"{}\")", m.name),
+            (StrMode::CString, _) => "pb_r.read_cstring()".to_string(),
             (StrMode::Prefixed { prefix, .. }, _) => {
-                format!("pb_r.read_bytes(_pb_count({}, 8, pb_r, \"{}\"))", read_elem(prefix, &PREFIX_LEN), m.name)
+                format!("pb_r.read_bytes(pb_r.count({}, 8))", read_elem(prefix, &PREFIX_LEN))
             }
-            (_, Some(Count::Expr(e))) => {
-                format!("pb_r.read_bytes(_pb_count({}, 8, pb_r, \"{}\"))", self.scope.expr(e), m.name)
-            }
+            (_, Some(Count::Expr(e))) => format!("pb_r.read_bytes(pb_r.count({}, 8))", self.scope.expr(e)),
             _ => "pb_r.read_bytes(pb_r.remaining_bits() // 8)".to_string(),
         };
         let raw = if *mode == StrMode::Padded { format!("_pb_until_nul({})", raw) } else { raw };
-        out.line(format!("p.{} = _pb_utf8({}, \"{}\")", ident(&m.name), raw, m.name));
+        out.line(format!("p.{} = pb_r.utf8({})", ident(&m.name), raw));
     }
 
     fn padding(&self, out: &mut Out, codec: &Codec, array: Option<&Count>) {
@@ -65,7 +67,7 @@ impl StepEmitter for Decoder<'_> {
         match array {
             None => out.line(format!("pb_r.skip_bits({})", bits)),
             Some(Count::Expr(e)) => {
-                out.line(format!("pb_r.skip_bits(_pb_count({}, {}, pb_r, \"_\") * {})", self.scope.expr(e), bits, bits))
+                out.line(format!("pb_r.skip_bits(pb_r.count({}, {}) * {})", self.scope.expr(e), bits, bits))
             }
             Some(Count::Remaining) => out.line("pb_r.skip_bits(pb_r.remaining_bits())"),
         }
@@ -80,11 +82,15 @@ impl StepEmitter for Decoder<'_> {
         let ebits = codec.min_elem_bits();
         match count {
             Count::Expr(e) => {
-                let n = format!("_pb_count({}, {}, pb_r, \"{}\")", self.scope.expr(e), ebits, m.name);
+                let n = format!("pb_r.count({}, {})", self.scope.expr(e), ebits);
                 if ty.is_byte() {
                     out.line(format!("{} = pb_r.read_bytes({})", target, n));
                 } else {
-                    out.line(format!("{} = [{} for _ in range({})]", target, read_elem(codec, ty), n));
+                    out.line(format!("{} = []", target));
+                    out.open(format!("for pb_i in range({}):", n));
+                    out.line("pb_r.at_index(pb_i)");
+                    out.line(format!("{}.append({})", target, read_elem(codec, ty)));
+                    out.pop();
                 }
             }
             Count::Remaining => {
@@ -93,6 +99,7 @@ impl StepEmitter for Decoder<'_> {
                 } else {
                     out.line(format!("{} = []", target));
                     out.open("while pb_r.remaining_bits() > 0:");
+                    out.line(format!("pb_r.at_index(len({}))", target));
                     out.line(format!("{}.append({})", target, read_elem(codec, ty)));
                     out.pop();
                 }

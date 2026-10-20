@@ -2,7 +2,7 @@
 
 use super::naming::{Zig, scalar_type};
 use crate::generators::common::{ExprLang, Scope};
-use crate::ir::{AggOp, ArithOp, Func, LogicOp, Ty, ValueType};
+use crate::ir::{AggOp, ArithOp, Func, LogicOp, Ty, UnaryOp, ValueType};
 
 impl ExprLang for Scope<'_, Zig> {
     fn int_lit(&self, v: i64) -> String {
@@ -45,6 +45,21 @@ impl ExprLang for Scope<'_, Zig> {
             (ArithOp::Mul, _) => format!("({} *% {})", a, b),
             (ArithOp::Div, _) => format!("pbDiv({}, {})", a, b),
             (ArithOp::Pow, _) => format!("pbPow({}, {})", a, b),
+            (ArithOp::Mod, _) => format!("pbMod({}, {})", a, b),
+            (ArithOp::Shl, _) => format!("pbShl({}, {})", a, b),
+            (ArithOp::Shr, _) => format!("pbShr({}, {})", a, b),
+            (ArithOp::BitAnd, _) => format!("({} & {})", a, b),
+            (ArithOp::BitOr, _) => format!("({} | {})", a, b),
+            (ArithOp::BitXor, _) => format!("({} ^ {})", a, b),
+        }
+    }
+
+    fn unary(&self, op: UnaryOp, e: String, ty: Ty) -> String {
+        match (op, ty) {
+            (UnaryOp::Neg, Ty::Float) => format!("(-{})", e),
+            (UnaryOp::Neg, _) => format!("(0 -% {})", e),
+            (UnaryOp::BitNot, _) => format!("(~{})", e),
+            (UnaryOp::Not, _) => format!("(!{})", e),
         }
     }
 

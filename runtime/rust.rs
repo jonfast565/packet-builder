@@ -1,25 +1,109 @@
 // ---- packet-builder runtime -------------------------------------------------
 
+/// What went wrong while decoding or encoding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PbErrorKind {
+    /// The input ended before the packet did; `needed_bits` more would help.
+    Incomplete,
+    /// The data is malformed: a bad length, a missing terminator inside a
+    /// window, nesting that is too deep, ...
+    Invalid,
+    /// A value does not fit in its field.
+    Range,
+    /// A string is not valid text, or contains a NUL where none is allowed.
+    Text,
+    /// A length, derived field or checksum does not match the data.
+    Mismatch,
+    /// A value breaks a declared constraint.
+    Constraint,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PbError(pub String);
+pub struct PbError {
+    pub kind: PbErrorKind,
+    pub message: String,
+    /// Where it happened: `Packet.field[index].field`.
+    pub path: String,
+    pub bit_offset: usize,
+    /// For `Incomplete`: the least number of extra input bits needed.
+    pub needed_bits: usize,
+}
 
 impl std::fmt::Display for PbError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
+        if self.path.is_empty() {
+            write!(f, "{} (at bit {})", self.message, self.bit_offset)
+        } else {
+            write!(f, "{}: {} (at bit {})", self.path, self.message, self.bit_offset)
+        }
     }
 }
 
 impl std::error::Error for PbError {}
 
+/// Nested packets deeper than this are rejected.
+pub const PB_MAX_DEPTH: usize = 64;
+
+/// The packets being decoded or encoded, innermost last, each with the field
+/// it is working on: the path reported in errors.
+#[derive(Debug, Clone, Default)]
+struct PbTrace {
+    frames: Vec<(&'static str, &'static str, Option<usize>)>,
+}
+
+impl PbTrace {
+    fn enter(&mut self, packet: &'static str) -> bool {
+        self.frames.push((packet, "", None));
+        self.frames.len() <= PB_MAX_DEPTH
+    }
+
+    fn leave(&mut self) {
+        self.frames.pop();
+    }
+
+    fn at(&mut self, field: &'static str) {
+        if let Some(f) = self.frames.last_mut() {
+            f.1 = field;
+            f.2 = None;
+        }
+    }
+
+    fn at_index(&mut self, index: usize) {
+        if let Some(f) = self.frames.last_mut() {
+            f.2 = Some(index);
+        }
+    }
+
+    fn path(&self) -> String {
+        let mut out = String::new();
+        if let Some(first) = self.frames.first() {
+            out.push_str(first.0);
+        }
+        for (_, field, index) in &self.frames {
+            if field.is_empty() {
+                break;
+            }
+            out.push('.');
+            out.push_str(field);
+            if let Some(i) = index {
+                out.push_str(&format!("[{}]", i));
+            }
+        }
+        out
+    }
+}
+
 /// Reads integers of any bit width (MSB-first) and byte-aligned values.
 pub struct PbReader<'a> {
     data: &'a [u8],
-    pos: usize, // in bits
+    pos: usize,   // in bits
+    limit: usize, // end of the readable data in bits (a window inside `data`)
+    trace: PbTrace,
 }
 
 impl<'a> PbReader<'a> {
     pub fn new(data: &'a [u8]) -> Self {
-        PbReader { data, pos: 0 }
+        PbReader { data, pos: 0, limit: data.len() * 8, trace: PbTrace::default() }
     }
 
     pub fn position_bits(&self) -> usize {
@@ -27,17 +111,78 @@ impl<'a> PbReader<'a> {
     }
 
     pub fn remaining_bits(&self) -> usize {
-        self.data.len() * 8 - self.pos
+        self.limit - self.pos
+    }
+
+    /// Whether reads stop at the real end of the input (not at a window).
+    fn at_top(&self) -> bool {
+        self.limit == self.data.len() * 8
+    }
+
+    pub fn error(&self, kind: PbErrorKind, message: String) -> PbError {
+        PbError { kind, message, path: self.trace.path(), bit_offset: self.pos, needed_bits: 0 }
+    }
+
+    /// `bits` more bits are needed than are left.
+    fn short(&self, bits: usize, what: &str) -> PbError {
+        if self.at_top() {
+            let mut e = self.error(
+                PbErrorKind::Incomplete,
+                format!("unexpected end of data: {} needs {} more bit(s), {} left", what, bits, self.remaining_bits()),
+            );
+            e.needed_bits = bits - self.remaining_bits();
+            e
+        } else {
+            self.error(
+                PbErrorKind::Invalid,
+                format!("{} needs {} bit(s) but its window has {} left", what, bits, self.remaining_bits()),
+            )
+        }
     }
 
     fn need(&self, bits: usize) -> Result<(), PbError> {
-        if bits > self.remaining_bits() {
-            return Err(PbError(format!(
-                "unexpected end of data: need {} more bit(s) at bit offset {}, have {}",
-                bits, self.pos, self.remaining_bits()
-            )));
+        if bits > self.remaining_bits() { Err(self.short(bits, "the field")) } else { Ok(()) }
+    }
+
+    pub fn enter(&mut self, packet: &'static str) -> Result<(), PbError> {
+        if self.trace.enter(packet) {
+            Ok(())
+        } else {
+            Err(self.error(PbErrorKind::Invalid, format!("packets nested more than {} deep", PB_MAX_DEPTH)))
         }
-        Ok(())
+    }
+
+    pub fn leave(&mut self) {
+        self.trace.leave();
+    }
+
+    pub fn at(&mut self, field: &'static str) {
+        self.trace.at(field);
+    }
+
+    pub fn at_index(&mut self, index: usize) {
+        self.trace.at_index(index);
+    }
+
+    /// Restrict reading to the next `bytes` bytes; returns the previous limit
+    /// for `pop_limit`.
+    pub fn push_limit(&mut self, bytes: i64) -> Result<usize, PbError> {
+        if bytes < 0 {
+            return Err(self.error(PbErrorKind::Invalid, format!("negative size {}", bytes)));
+        }
+        let bits = (bytes as u64).saturating_mul(8);
+        if bits > self.remaining_bits() as u64 {
+            return Err(self.short(bits as usize, "the window"));
+        }
+        let saved = self.limit;
+        self.limit = self.pos + bits as usize;
+        Ok(saved)
+    }
+
+    /// Skip what is left of the current window and restore `saved`.
+    pub fn pop_limit(&mut self, saved: usize) {
+        self.pos = self.limit;
+        self.limit = saved;
     }
 
     pub fn read_bits(&mut self, width: u32) -> Result<u64, PbError> {
@@ -87,15 +232,31 @@ impl<'a> PbReader<'a> {
     }
 
     /// Bytes up to (not including) a NUL terminator, which is consumed.
-    pub fn read_cstring(&mut self, field: &str) -> Result<Vec<u8>, PbError> {
+    pub fn read_cstring(&mut self) -> Result<Vec<u8>, PbError> {
         let start = self.pos >> 3;
-        match self.data[start..].iter().position(|b| *b == 0) {
+        match self.data[start..self.limit >> 3].iter().position(|b| *b == 0) {
             Some(n) => {
                 self.pos += (n + 1) * 8;
                 Ok(self.data[start..start + n].to_vec())
             }
-            None => Err(PbError(format!("unexpected end of data: string `{}` has no NUL terminator", field))),
+            None => Err(self.short(self.remaining_bits() + 8, "the NUL-terminated string")),
         }
+    }
+
+    /// Validate a decoded element count against the data that is left.
+    pub fn count(&self, n: i64, elem_bits: u64) -> Result<usize, PbError> {
+        if n < 0 {
+            return Err(self.error(PbErrorKind::Invalid, format!("negative length {}", n)));
+        }
+        if elem_bits > 0 && n as u64 > self.remaining_bits() as u64 / elem_bits {
+            let bits = (n as u64).saturating_mul(elem_bits).min(usize::MAX as u64) as usize;
+            return Err(self.short(bits, &format!("length {}", n)));
+        }
+        Ok(n as usize)
+    }
+
+    pub fn utf8(&self, raw: Vec<u8>) -> Result<String, PbError> {
+        String::from_utf8(raw).map_err(|_| self.error(PbErrorKind::Text, "invalid UTF-8".into()))
     }
 }
 
@@ -104,6 +265,7 @@ impl<'a> PbReader<'a> {
 pub struct PbWriter {
     buf: Vec<u8>,
     pos: usize, // in bits
+    trace: PbTrace,
 }
 
 impl PbWriter {
@@ -113,6 +275,30 @@ impl PbWriter {
 
     pub fn position_bits(&self) -> usize {
         self.pos
+    }
+
+    pub fn error(&self, kind: PbErrorKind, message: String) -> PbError {
+        PbError { kind, message, path: self.trace.path(), bit_offset: self.pos, needed_bits: 0 }
+    }
+
+    pub fn enter(&mut self, packet: &'static str) -> Result<(), PbError> {
+        if self.trace.enter(packet) {
+            Ok(())
+        } else {
+            Err(self.error(PbErrorKind::Invalid, format!("packets nested more than {} deep", PB_MAX_DEPTH)))
+        }
+    }
+
+    pub fn leave(&mut self) {
+        self.trace.leave();
+    }
+
+    pub fn at(&mut self, field: &'static str) {
+        self.trace.at(field);
+    }
+
+    pub fn at_index(&mut self, index: usize) {
+        self.trace.at_index(index);
     }
 
     pub fn write_bits(&mut self, value: u64, width: u32) {
@@ -154,6 +340,50 @@ impl PbWriter {
     pub fn finish(self) -> Vec<u8> {
         self.buf
     }
+
+    pub fn check_fits(&self, len: usize, size: i64) -> Result<(), PbError> {
+        if size < 0 || len as u64 > size as u64 {
+            return Err(self.error(PbErrorKind::Range, format!("{} byte(s) do not fit in {}", len, size)));
+        }
+        Ok(())
+    }
+
+    pub fn check_no_nul(&self, bytes: &[u8]) -> Result<(), PbError> {
+        if bytes.contains(&0) {
+            return Err(self.error(PbErrorKind::Text, "the string contains a NUL byte".into()));
+        }
+        Ok(())
+    }
+
+    pub fn check_len(&self, actual: usize, expected: i64) -> Result<(), PbError> {
+        if expected < 0 || actual as u64 != expected as u64 {
+            return Err(self.error(
+                PbErrorKind::Mismatch,
+                format!("{} element(s) but the length expression says {}", actual, expected),
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn check_u(&self, v: u64, width: u32) -> Result<(), PbError> {
+        if width < 64 && v >> width != 0 {
+            return Err(self.error(PbErrorKind::Range, format!("value {} does not fit in {} bit(s)", v, width)));
+        }
+        Ok(())
+    }
+
+    pub fn check_i(&self, v: i64, width: u32) -> Result<(), PbError> {
+        if width < 64 {
+            let lo = -(1i64 << (width - 1));
+            let hi = (1i64 << (width - 1)) - 1;
+            if v < lo || v > hi {
+                return Err(
+                    self.error(PbErrorKind::Range, format!("value {} does not fit in {} signed bit(s)", v, width))
+                );
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Padding needed after `offset` bits to reach a multiple of `unit` bits.
@@ -161,29 +391,11 @@ fn pb_pad(offset: usize, unit: usize) -> usize {
     (unit - offset % unit) % unit
 }
 
-fn pb_utf8(raw: Vec<u8>, field: &str) -> Result<String, PbError> {
-    String::from_utf8(raw).map_err(|_| PbError(format!("invalid UTF-8 in string field `{}`", field)))
-}
-
 fn pb_until_nul(mut raw: Vec<u8>) -> Vec<u8> {
     if let Some(n) = raw.iter().position(|b| *b == 0) {
         raw.truncate(n);
     }
     raw
-}
-
-fn pb_check_fits(len: usize, size: i64, field: &str) -> Result<(), PbError> {
-    if size < 0 || len as u64 > size as u64 {
-        return Err(PbError(format!("string field `{}` is {} byte(s), longer than its size {}", field, len, size)));
-    }
-    Ok(())
-}
-
-fn pb_check_no_nul(bytes: &[u8], field: &str) -> Result<(), PbError> {
-    if bytes.contains(&0) {
-        return Err(PbError(format!("string field `{}` contains a NUL byte", field)));
-    }
-    Ok(())
 }
 
 fn pb_sext(v: u64, width: u32) -> i64 {
@@ -208,6 +420,18 @@ fn pb_div(a: i64, b: i64) -> i64 {
     if b == 0 { 0 } else { a.wrapping_div(b) }
 }
 
+fn pb_mod(a: i64, b: i64) -> i64 {
+    if b == 0 { 0 } else { a.wrapping_rem(b) }
+}
+
+fn pb_shl(a: i64, b: i64) -> i64 {
+    if (0..64).contains(&b) { a.wrapping_shl(b as u32) } else { 0 }
+}
+
+fn pb_shr(a: i64, b: i64) -> i64 {
+    if b < 0 { 0 } else { a >> b.min(63) }
+}
+
 fn pb_pow(base: i64, exp: i64) -> i64 {
     if exp < 0 {
         return 0;
@@ -221,46 +445,6 @@ fn pb_pow(base: i64, exp: i64) -> i64 {
         exp >>= 1;
     }
     acc
-}
-
-/// Validate a decoded element count against the data that is left.
-fn pb_count(n: i64, elem_bits: u64, r: &PbReader, field: &str) -> Result<usize, PbError> {
-    if n < 0 {
-        return Err(PbError(format!("negative length {} for field `{}`", n, field)));
-    }
-    if elem_bits > 0 && n as u64 > r.remaining_bits() as u64 / elem_bits {
-        return Err(PbError(format!(
-            "length {} for field `{}` exceeds the remaining data", n, field
-        )));
-    }
-    Ok(n as usize)
-}
-
-fn pb_check_len(actual: usize, expected: i64, field: &str) -> Result<(), PbError> {
-    if expected < 0 || actual as u64 != expected as u64 {
-        return Err(PbError(format!(
-            "field `{}` has {} element(s) but its length expression says {}", field, actual, expected
-        )));
-    }
-    Ok(())
-}
-
-fn pb_check_u(v: u64, width: u32, field: &str) -> Result<(), PbError> {
-    if width < 64 && v >> width != 0 {
-        return Err(PbError(format!("value {} does not fit in {} bit(s) for field `{}`", v, width, field)));
-    }
-    Ok(())
-}
-
-fn pb_check_i(v: i64, width: u32, field: &str) -> Result<(), PbError> {
-    if width < 64 {
-        let lo = -(1i64 << (width - 1));
-        let hi = (1i64 << (width - 1)) - 1;
-        if v < lo || v > hi {
-            return Err(PbError(format!("value {} does not fit in {} signed bit(s) for field `{}`", v, width, field)));
-        }
-    }
-    Ok(())
 }
 
 // ---- generated packets ------------------------------------------------------

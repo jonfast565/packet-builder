@@ -64,9 +64,6 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     if !uses(&body.buf, "allocator") {
         out.line("_ = allocator;");
     }
-    if !uses(&body.buf, "pb_r") {
-        out.line("_ = pb_r;");
-    }
     if uses(&body.buf, "p") {
         out.line(format!("var p: {} = .{{}};", name));
         if allocates {
@@ -78,9 +75,11 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     } else {
         out.line(format!("const p: {} = .{{}};", name));
     }
+    out.line(format!("try pb_r.enter(\"{}\");", name));
     out.pop();
     out.buf.push_str(&body.buf);
     out.push();
+    out.line("pb_r.leave();");
     out.line("return p;");
     out.close("}");
     out.line("");
@@ -117,12 +116,11 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     if p.uses_align() {
         out.line("const pb_start = pb_w.positionBits();");
     }
-    if !uses(&body.buf, "pb_w") {
-        out.line("_ = pb_w;");
-    }
+    out.line(format!("try pb_w.enter(\"{}\");", name));
     out.pop();
     out.buf.push_str(&body.buf);
     out.push();
+    out.line("pb_w.leave();");
     out.close("}");
     out.close("};");
 }

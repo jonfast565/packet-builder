@@ -1,22 +1,142 @@
 // ---- packet-builder runtime -------------------------------------------------
 
-pub const PbError = error{ EndOfData, InvalidLength, InvalidText, OutOfMemory };
+/// Incomplete: the input ended before the packet did. Invalid: malformed
+/// data (a bad length, nesting too deep, ...). Range: a value does not fit
+/// in its field. InvalidText: a string is not valid text. Mismatch: a length,
+/// derived field or checksum does not match the data. Constraint: a value
+/// breaks a declared constraint. The reader or writer's `trace.diag` says
+/// where the first one happened.
+pub const PbError = error{ Incomplete, Invalid, Range, InvalidText, Mismatch, Constraint, OutOfMemory };
+
+/// The deepest packet nesting accepted.
+pub const PB_MAX_DEPTH = 64;
+
+pub const PbFrame = struct {
+    packet: []const u8 = "",
+    field: []const u8 = "",
+    index: ?usize = null,
+};
+
+/// Where the first error happened: frames[0..depth] of the trace, the bit
+/// position, and (for Incomplete) how many more input bits are needed.
+pub const PbDiag = struct {
+    failed: bool = false,
+    bit_offset: usize = 0,
+    needed_bits: usize = 0,
+    depth: usize = 0,
+};
+
+/// The packets being decoded or encoded, innermost last, each with the field
+/// it is working on: the path reported in errors.
+pub const PbTrace = struct {
+    frames: [PB_MAX_DEPTH]PbFrame = undefined,
+    depth: usize = 0,
+    diag: PbDiag = .{},
+
+    fn fail(self: *PbTrace, err: PbError, pos: usize, needed_bits: usize) PbError {
+        if (!self.diag.failed) {
+            self.diag = .{ .failed = true, .bit_offset = pos, .needed_bits = needed_bits, .depth = self.depth };
+        }
+        return err;
+    }
+
+    fn enter(self: *PbTrace, packet: []const u8, pos: usize) PbError!void {
+        if (self.depth >= PB_MAX_DEPTH) return self.fail(PbError.Invalid, pos, 0);
+        self.frames[self.depth] = .{ .packet = packet };
+        self.depth += 1;
+    }
+
+    fn leave(self: *PbTrace) void {
+        if (self.depth > 0) self.depth -= 1;
+    }
+
+    fn at(self: *PbTrace, field: []const u8) void {
+        self.frames[self.depth - 1].field = field;
+        self.frames[self.depth - 1].index = null;
+    }
+
+    fn atIndex(self: *PbTrace, index: usize) void {
+        self.frames[self.depth - 1].index = index;
+    }
+
+    /// Write `Packet.field[index].field` for the first error.
+    pub fn writePath(self: *const PbTrace, w: anytype) !void {
+        if (self.diag.depth == 0) return;
+        try w.writeAll(self.frames[0].packet);
+        for (self.frames[0..self.diag.depth]) |f| {
+            if (f.field.len == 0) break;
+            try w.print(".{s}", .{f.field});
+            if (f.index) |i| try w.print("[{d}]", .{i});
+        }
+    }
+};
 
 /// Reads integers of any bit width (MSB-first) and byte-aligned values.
 pub const PbReader = struct {
     data: []const u8,
     pos: usize = 0, // in bits
+    limit: usize, // end of the readable data in bits (a window inside data)
+    trace: PbTrace = .{},
 
     pub fn init(data: []const u8) PbReader {
-        return .{ .data = data };
+        return .{ .data = data, .limit = data.len * 8 };
     }
 
     pub fn remainingBits(self: *const PbReader) usize {
-        return self.data.len * 8 - self.pos;
+        return self.limit - self.pos;
     }
 
-    fn need(self: *const PbReader, bits: usize) PbError!void {
-        if (bits > self.remainingBits()) return PbError.EndOfData;
+    pub fn positionBits(self: *const PbReader) usize {
+        return self.pos;
+    }
+
+    pub fn fail(self: *PbReader, err: PbError) PbError {
+        return self.trace.fail(err, self.pos, 0);
+    }
+
+    /// `bits` more bits are needed than are left: incomplete input at the
+    /// top level, invalid data inside a window.
+    fn short(self: *PbReader, bits: usize) PbError {
+        if (self.limit == self.data.len * 8) {
+            return self.trace.fail(PbError.Incomplete, self.pos, bits - self.remainingBits());
+        }
+        return self.trace.fail(PbError.Invalid, self.pos, 0);
+    }
+
+    fn need(self: *PbReader, bits: usize) PbError!void {
+        if (bits > self.remainingBits()) return self.short(bits);
+    }
+
+    pub fn enter(self: *PbReader, packet: []const u8) PbError!void {
+        return self.trace.enter(packet, self.pos);
+    }
+
+    pub fn leave(self: *PbReader) void {
+        self.trace.leave();
+    }
+
+    pub fn at(self: *PbReader, field: []const u8) void {
+        self.trace.at(field);
+    }
+
+    pub fn atIndex(self: *PbReader, index: usize) void {
+        self.trace.atIndex(index);
+    }
+
+    /// Restrict reading to the next `n` bytes; returns the previous limit.
+    pub fn pushLimit(self: *PbReader, n: i64) PbError!usize {
+        if (n < 0) return self.fail(PbError.Invalid);
+        const bytes: u64 = @intCast(n);
+        if (bytes > self.remainingBits() / 8) return self.short(@intCast(@min(bytes * 8, std.math.maxInt(usize))));
+        const saved = self.limit;
+        self.limit = self.pos + @as(usize, @intCast(bytes)) * 8;
+        return saved;
+    }
+
+    /// Skip what is left of the current window and restore `saved`.
+    pub fn popLimit(self: *PbReader, saved: usize) void {
+        self.pos = self.limit;
+        self.limit = saved;
     }
 
     pub fn readBits(self: *PbReader, width: u7) PbError!u64 {
@@ -50,7 +170,7 @@ pub const PbReader = struct {
 
     /// Copy `n` bytes into a new allocation owned by the caller.
     pub fn readBytes(self: *PbReader, allocator: std.mem.Allocator, n: usize) PbError![]u8 {
-        if (n > self.remainingBits() / 8) return PbError.EndOfData;
+        if (n > self.remainingBits() / 8) return self.short(n * 8);
         const start = self.pos >> 3;
         const out = try allocator.dupe(u8, self.data[start .. start + n]);
         self.pos += n * 8;
@@ -69,19 +189,15 @@ pub const PbReader = struct {
         self.pos += bits;
     }
 
-    pub fn positionBits(self: *const PbReader) usize {
-        return self.pos;
-    }
-
     /// `n` bytes of UTF-8 text, cut at the first NUL when `until_nul` is set.
     pub fn readText(self: *PbReader, allocator: std.mem.Allocator, n: usize, until_nul: bool) PbError![]u8 {
-        if (n > self.remainingBits() / 8) return PbError.EndOfData;
+        if (n > self.remainingBits() / 8) return self.short(n * 8);
         const start = self.pos >> 3;
         var raw = self.data[start .. start + n];
         if (until_nul) {
             if (std.mem.indexOfScalar(u8, raw, 0)) |end| raw = raw[0..end];
         }
-        if (!std.unicode.utf8ValidateSlice(raw)) return PbError.InvalidText;
+        if (!std.unicode.utf8ValidateSlice(raw)) return self.fail(PbError.InvalidText);
         const out = try allocator.dupe(u8, raw);
         self.pos += n * 8;
         return out;
@@ -90,18 +206,23 @@ pub const PbReader = struct {
     /// UTF-8 text before a NUL terminator; the terminator is consumed.
     pub fn readCText(self: *PbReader, allocator: std.mem.Allocator) PbError![]u8 {
         const start = self.pos >> 3;
-        const end = std.mem.indexOfScalarPos(u8, self.data, start, 0) orelse return PbError.EndOfData;
+        const window = self.data[0 .. self.limit >> 3];
+        const end = std.mem.indexOfScalarPos(u8, window, start, 0) orelse return self.short(self.remainingBits() + 8);
         const raw = self.data[start..end];
-        if (!std.unicode.utf8ValidateSlice(raw)) return PbError.InvalidText;
+        if (!std.unicode.utf8ValidateSlice(raw)) return self.fail(PbError.InvalidText);
         const out = try allocator.dupe(u8, raw);
         self.pos = (end + 1) * 8;
         return out;
     }
 
     /// Validate a decoded element count against the data that is left.
-    pub fn count(self: *const PbReader, n: i64, elem_bits: u64) PbError!usize {
-        if (n < 0) return PbError.InvalidLength;
-        if (elem_bits > 0 and @as(u64, @intCast(n)) > self.remainingBits() / elem_bits) return PbError.InvalidLength;
+    pub fn count(self: *PbReader, n: i64, elem_bits: u64) PbError!usize {
+        if (n < 0) return self.fail(PbError.Invalid);
+        const un: u64 = @intCast(n);
+        if (elem_bits > 0 and un > self.remainingBits() / elem_bits) {
+            const bits = std.math.mul(u64, un, elem_bits) catch std.math.maxInt(u64);
+            return self.short(@intCast(@min(bits, std.math.maxInt(usize))));
+        }
         return @intCast(n);
     }
 };
@@ -110,6 +231,7 @@ pub const PbReader = struct {
 pub const PbWriter = struct {
     buf: std.ArrayList(u8),
     pos: usize = 0, // in bits
+    trace: PbTrace = .{},
 
     pub fn init(allocator: std.mem.Allocator) PbWriter {
         return .{ .buf = std.ArrayList(u8).init(allocator) };
@@ -125,6 +247,26 @@ pub const PbWriter = struct {
 
     pub fn positionBits(self: *const PbWriter) usize {
         return self.pos;
+    }
+
+    pub fn fail(self: *PbWriter, err: PbError) PbError {
+        return self.trace.fail(err, self.pos, 0);
+    }
+
+    pub fn enter(self: *PbWriter, packet: []const u8) PbError!void {
+        return self.trace.enter(packet, self.pos);
+    }
+
+    pub fn leave(self: *PbWriter) void {
+        self.trace.leave();
+    }
+
+    pub fn at(self: *PbWriter, field: []const u8) void {
+        self.trace.at(field);
+    }
+
+    pub fn atIndex(self: *PbWriter, index: usize) void {
+        self.trace.atIndex(index);
     }
 
     pub fn writeBits(self: *PbWriter, value: u64, width: u7) PbError!void {
@@ -159,24 +301,28 @@ pub const PbWriter = struct {
         while (left > 32) : (left -= 32) try self.writeBits(0, 32);
         if (left > 0) try self.writeBits(0, @intCast(left));
     }
+
+    pub fn checkText(self: *PbWriter, s: []const u8, allow_nul: bool) PbError!void {
+        if (!allow_nul and std.mem.indexOfScalar(u8, s, 0) != null) return self.fail(PbError.InvalidText);
+        if (!std.unicode.utf8ValidateSlice(s)) return self.fail(PbError.InvalidText);
+    }
+
+    pub fn checkFits(self: *PbWriter, len: usize, size: i64) PbError!void {
+        if (size < 0 or len > @as(u64, @intCast(size))) return self.fail(PbError.Range);
+    }
+
+    pub fn checkPrefix(self: *PbWriter, len: usize, width: u7) PbError!void {
+        if (width < 64 and (len >> @intCast(width)) != 0) return self.fail(PbError.Range);
+    }
+
+    pub fn checkLen(self: *PbWriter, actual: usize, expected: i64) PbError!void {
+        if (expected < 0 or actual != @as(u64, @intCast(expected))) return self.fail(PbError.Mismatch);
+    }
 };
 
 /// Padding needed after `offset` bits to reach a multiple of `unit` bits.
 fn pbPad(offset: usize, unit: usize) usize {
     return (unit - offset % unit) % unit;
-}
-
-fn pbCheckText(s: []const u8, allow_nul: bool) PbError!void {
-    if (!allow_nul and std.mem.indexOfScalar(u8, s, 0) != null) return PbError.InvalidText;
-    if (!std.unicode.utf8ValidateSlice(s)) return PbError.InvalidText;
-}
-
-fn pbCheckFits(len: usize, size: i64) PbError!void {
-    if (size < 0 or len > @as(u64, @intCast(size))) return PbError.InvalidLength;
-}
-
-fn pbCheckPrefix(len: usize, width: u7) PbError!void {
-    if (width < 64 and (len >> @intCast(width)) != 0) return PbError.InvalidLength;
 }
 
 /// Reinterpret the low bits of a raw value as `T` (sign comes from `T`).
@@ -223,6 +369,21 @@ fn pbDiv(a: i64, b: i64) i64 {
     return @divTrunc(a, b);
 }
 
+fn pbMod(a: i64, b: i64) i64 {
+    if (b == 0 or b == -1) return 0;
+    return @rem(a, b);
+}
+
+fn pbShl(a: i64, b: i64) i64 {
+    if (b < 0 or b > 63) return 0;
+    return a << @intCast(b);
+}
+
+fn pbShr(a: i64, b: i64) i64 {
+    if (b < 0) return 0;
+    return a >> @intCast(@min(b, 63));
+}
+
 fn pbPow(base: i64, exp: i64) i64 {
     if (exp < 0) return 0;
     var acc: i64 = 1;
@@ -262,10 +423,6 @@ fn pbProdF(s: anytype) f64 {
     var acc: f64 = 1;
     for (s) |v| acc *= pbF64(v);
     return acc;
-}
-
-fn pbCheckLen(actual: usize, expected: i64) PbError!void {
-    if (expected < 0 or actual != @as(u64, @intCast(expected))) return PbError.InvalidLength;
 }
 
 // ---- generated packets ------------------------------------------------------

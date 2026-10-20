@@ -2,7 +2,7 @@
 
 use super::naming::{Rust, scalar_type};
 use crate::generators::common::{ExprLang, Scope};
-use crate::ir::{AggOp, ArithOp, Func, Ty, ValueType, storage_for};
+use crate::ir::{AggOp, ArithOp, Func, Ty, UnaryOp, ValueType, storage_for};
 
 impl ExprLang for Scope<'_, Rust> {
     fn int_lit(&self, v: i64) -> String {
@@ -47,6 +47,7 @@ impl ExprLang for Scope<'_, Rust> {
                 ArithOp::Mul => format!("({} * {})", a, b),
                 ArithOp::Div => format!("({} / {})", a, b),
                 ArithOp::Pow => format!("{}.powf({})", a, b),
+                _ => unreachable!("integer-only operator on floats"),
             };
         }
         match op {
@@ -55,6 +56,20 @@ impl ExprLang for Scope<'_, Rust> {
             ArithOp::Mul => format!("{}.wrapping_mul({})", a, b),
             ArithOp::Div => format!("pb_div({}, {})", a, b),
             ArithOp::Pow => format!("pb_pow({}, {})", a, b),
+            ArithOp::Mod => format!("pb_mod({}, {})", a, b),
+            ArithOp::Shl => format!("pb_shl({}, {})", a, b),
+            ArithOp::Shr => format!("pb_shr({}, {})", a, b),
+            ArithOp::BitAnd => format!("({} & {})", a, b),
+            ArithOp::BitOr => format!("({} | {})", a, b),
+            ArithOp::BitXor => format!("({} ^ {})", a, b),
+        }
+    }
+
+    fn unary(&self, op: UnaryOp, e: String, ty: Ty) -> String {
+        match (op, ty) {
+            (UnaryOp::Neg, Ty::Float) => format!("(-{})", e),
+            (UnaryOp::Neg, _) => format!("{}.wrapping_neg()", e),
+            (UnaryOp::BitNot, _) | (UnaryOp::Not, _) => format!("(!{})", e),
         }
     }
 

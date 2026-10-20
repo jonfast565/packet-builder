@@ -5,14 +5,14 @@ use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitt
 use crate::ir::{BitPart, Codec, Count, Member, Packet, StrMode, ValueType};
 
 /// Statements that write one element held in `v`.
-fn write_elem(out: &mut Out, codec: &Codec, ty: &ValueType, v: &str, field: &str) {
+fn write_elem(out: &mut Out, codec: &Codec, ty: &ValueType, v: &str) {
     if let ValueType::Int { width, signed } = ty
         && ty.needs_range_check()
     {
         if *signed {
-            out.line(format!("pb_check_i({} as i64, {}, \"{}\")?;", v, width, field));
+            out.line(format!("pb_w.check_i({} as i64, {})?;", v, width));
         } else {
-            out.line(format!("pb_check_u({} as u64, {}, \"{}\")?;", v, width, field));
+            out.line(format!("pb_w.check_u({} as u64, {})?;", v, width));
         }
     }
     match codec {
@@ -47,6 +47,10 @@ impl StepEmitter for Encoder<'_> {
         self.scope.packet
     }
 
+    fn locate(&self, out: &mut Out, field: &str) {
+        out.line(format!("pb_w.at(\"{}\");", field));
+    }
+
     fn align(&self, out: &mut Out, bytes: u64) {
         out.line(format!("pb_w.write_zero_bits(pb_pad(pb_w.position_bits() - pb_start, {}));", bytes * 8))
     }
@@ -56,23 +60,23 @@ impl StepEmitter for Encoder<'_> {
         out.line(format!("let pb_b = p.{}.as_bytes();", ident(&m.name)));
         match (mode, array) {
             (StrMode::CString, _) => {
-                out.line(format!("pb_check_no_nul(pb_b, \"{}\")?;", m.name));
+                out.line("pb_w.check_no_nul(pb_b)?;");
                 out.line("pb_w.write_bytes(pb_b);");
                 out.line("pb_w.write_bytes(&[0]);");
             }
             (StrMode::Prefixed { prefix, width }, _) => {
-                out.line(format!("pb_check_u(pb_b.len() as u64, {}, \"{}\")?;", width, m.name));
-                write_elem(out, prefix, &PREFIX_LEN, "pb_b.len()", &m.name);
+                out.line(format!("pb_w.check_u(pb_b.len() as u64, {})?;", width));
+                write_elem(out, prefix, &PREFIX_LEN, "pb_b.len()");
                 out.line("pb_w.write_bytes(pb_b);");
             }
             (StrMode::Padded, Some(Count::Expr(e))) => {
                 out.line(format!("let pb_n = {};", self.scope.expr(e)));
-                out.line(format!("pb_check_fits(pb_b.len(), pb_n, \"{}\")?;", m.name));
+                out.line("pb_w.check_fits(pb_b.len(), pb_n)?;");
                 out.line("pb_w.write_bytes(pb_b);");
                 out.line("pb_w.write_zero_bits((pb_n as usize - pb_b.len()) * 8);");
             }
             (_, Some(Count::Expr(e))) => {
-                out.line(format!("pb_check_len(pb_b.len(), {}, \"{}\")?;", self.scope.expr(e), m.name));
+                out.line(format!("pb_w.check_len(pb_b.len(), {})?;", self.scope.expr(e)));
                 out.line("pb_w.write_bytes(pb_b);");
             }
             _ => out.line("pb_w.write_bytes(pb_b);"),
@@ -92,23 +96,24 @@ impl StepEmitter for Encoder<'_> {
     }
 
     fn scalar(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec) {
-        write_elem(out, codec, ty, &format!("p.{}", ident(&m.name)), &m.name);
+        write_elem(out, codec, ty, &format!("p.{}", ident(&m.name)));
     }
 
     fn array(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec, count: &Count) {
         let place = format!("p.{}", ident(&m.name));
         if let Count::Expr(e) = count {
-            out.line(format!("pb_check_len({}.len(), {}, \"{}\")?;", place, self.scope.expr(e), m.name));
+            out.line(format!("pb_w.check_len({}.len(), {})?;", place, self.scope.expr(e)));
         }
         if ty.is_byte() {
             out.line(format!("pb_w.write_bytes(&{});", place));
         } else {
-            out.open(format!("for pb_v in {}.iter() {{", place));
+            out.open(format!("for (pb_i, pb_v) in {}.iter().enumerate() {{", place));
+            out.line("pb_w.at_index(pb_i);");
             let v = match codec {
                 Codec::Packet(_) => "pb_v",
                 _ => "*pb_v",
             };
-            write_elem(out, codec, ty, &format!("({})", v), &m.name);
+            write_elem(out, codec, ty, &format!("({})", v));
             out.close("}");
         }
     }
@@ -120,9 +125,9 @@ impl StepEmitter for Encoder<'_> {
             let m = self.scope.member(part.member);
             let place = format!("p.{}", ident(&m.name));
             if part.signed {
-                out.line(format!("pb_check_i({} as i64, {}, \"{}\")?;", place, part.width, m.name));
+                out.line(format!("pb_w.check_i({} as i64, {})?;", place, part.width));
             } else {
-                out.line(format!("pb_check_u({} as u64, {}, \"{}\")?;", place, part.width, m.name));
+                out.line(format!("pb_w.check_u({} as u64, {})?;", place, part.width));
             }
             out.line(format!("pb_c |= (({} as u64) & 0x{:x}) << {};", place, mask(part.width), part.shift));
         }

@@ -37,6 +37,10 @@ impl StepEmitter for Decoder<'_> {
         self.scope.packet
     }
 
+    fn locate(&self, out: &mut Out, field: &str) {
+        out.line(format!("pb_r.at(\"{}\");", field));
+    }
+
     fn align(&self, out: &mut Out, bytes: u64) {
         out.line(format!("try pb_r.skipBits(pbPad(pb_r.positionBits() - pb_start, {}));", bytes * 8))
     }
@@ -100,7 +104,10 @@ impl StepEmitter for Decoder<'_> {
                         if matches!(ty, ValueType::Packet(_)) { ".{}" } else { "std.mem.zeroes(@TypeOf(pb_a[0]))" }
                     ));
                     out.line(format!("{} = pb_a;", target));
-                    out.line(format!("for (pb_a) |*pb_e| pb_e.* = {};", read_elem(codec, ty)));
+                    out.open("for (pb_a, 0..) |*pb_e, pb_i| {");
+                    out.line("pb_r.atIndex(pb_i);");
+                    out.line(format!("pb_e.* = {};", read_elem(codec, ty)));
+                    out.close("}");
                     out.close("}");
                 }
             }
@@ -118,7 +125,10 @@ impl StepEmitter for Decoder<'_> {
                     } else {
                         out.line("errdefer pb_l.deinit();");
                     }
-                    out.line(format!("while (pb_r.remainingBits() > 0) try pb_l.append({});", read_elem(codec, ty)));
+                    out.open("while (pb_r.remainingBits() > 0) {");
+                    out.line("pb_r.atIndex(pb_l.items.len);");
+                    out.line(format!("try pb_l.append({});", read_elem(codec, ty)));
+                    out.close("}");
                     out.line(format!("{} = try pb_l.toOwnedSlice();", target));
                     out.close("}");
                 }

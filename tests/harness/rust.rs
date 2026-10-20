@@ -31,8 +31,8 @@ fn value_expr(m: &Member, place: &str) -> String {
 }
 
 impl Target for RustTarget {
-    fn language(&self) -> Language {
-        Language::Rust
+    fn language(&self) -> Option<Language> {
+        Some(Language::Rust)
     }
 
     fn unavailable(&self) -> Option<String> {
@@ -44,6 +44,14 @@ impl Target for RustTarget {
         s.push_str("fn pb_hex(b: &[u8]) -> String { format!(\"\\\"{}\\\"\", b.iter().map(|x| format!(\"{:02x}\", x)).collect::<String>()) }\n");
         s.push_str("fn pb_unhex(s: &str) -> Vec<u8> { (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect() }\n");
         s.push_str("fn pb_q(s: &str) -> String {\n    let mut o = String::from(\"\\\"\");\n    for c in s.chars() {\n        match c {\n            '\"' => o.push_str(\"\\\\\\\"\"),\n            '\\\\' => o.push_str(\"\\\\\\\\\"),\n            c if (c as u32) < 0x20 => o.push_str(&format!(\"\\\\u{:04x}\", c as u32)),\n            c => o.push(c),\n        }\n    }\n    o.push('\"');\n    o\n}\n\n");
+        s.push_str(
+            r#"fn pb_e(e: &PbError, pre: &str) -> String {
+    format!("\"{0}error\":{1},\"{0}kind\":{2},\"{0}path\":{3}", pre, pb_q(&e.to_string()),
+        pb_q(&format!("{:?}", e.kind).to_lowercase()), pb_q(&e.path))
+}
+
+"#,
+        );
         for p in &module.packets {
             let _ = writeln!(s, "fn dump_{}(p: &{}) -> String {{", p.name, p.name);
             s.push_str("    let mut parts: Vec<String> = Vec::new();\n");
@@ -57,7 +65,7 @@ impl Target for RustTarget {
         for c in cases {
             let p = packet(module, &c.packet);
             let _ = writeln!(s, "    match {}::decode(&pb_unhex({})) {{", p.name, quote(&c.hex));
-            s.push_str("        Err(e) => println!(\"{{\\\"ok\\\":false,\\\"error\\\":{}}}\", pb_q(&e.0)),\n");
+            s.push_str("        Err(e) => println!(\"{{\\\"ok\\\":false,{}}}\", pb_e(&e, \"\")),\n");
             s.push_str("        Ok(mut p) => {\n");
             for (name, v) in &c.set {
                 let _ = writeln!(
@@ -70,7 +78,7 @@ impl Target for RustTarget {
             let _ = writeln!(s, "            let v = dump_{}(&p);", p.name);
             s.push_str("            match p.encode() {\n");
             s.push_str("                Ok(b) => println!(\"{{\\\"ok\\\":true,\\\"value\\\":{},\\\"encoded\\\":{}}}\", v, pb_hex(&b)),\n");
-            s.push_str("                Err(e) => println!(\"{{\\\"ok\\\":true,\\\"value\\\":{},\\\"encode_error\\\":{}}}\", v, pb_q(&e.0)),\n");
+            s.push_str("                Err(e) => println!(\"{{\\\"ok\\\":true,\\\"value\\\":{},{}}}\", v, pb_e(&e, \"encode_\")),\n");
             s.push_str("            }\n        }\n    }\n");
         }
         s.push_str("}\n");

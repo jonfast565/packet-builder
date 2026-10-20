@@ -2,7 +2,7 @@
 
 use super::naming::{CSharp, scalar_type};
 use crate::generators::common::{ExprLang, Scope};
-use crate::ir::{AggOp, ArithOp, Func, Ty, ValueType, storage_for};
+use crate::ir::{AggOp, ArithOp, Func, Ty, UnaryOp, ValueType, storage_for};
 
 impl ExprLang for Scope<'_, CSharp> {
     fn int_lit(&self, v: i64) -> String {
@@ -42,6 +42,21 @@ impl ExprLang for Scope<'_, CSharp> {
             (ArithOp::Div, _) => format!("Pb.Div({}, {})", a, b),
             (ArithOp::Pow, Ty::Float) => format!("Math.Pow({}, {})", a, b),
             (ArithOp::Pow, _) => format!("Pb.Pow({}, {})", a, b),
+            (ArithOp::Mod, _) => format!("Pb.Mod({}, {})", a, b),
+            (ArithOp::Shl, _) => format!("Pb.Shl({}, {})", a, b),
+            (ArithOp::Shr, _) => format!("Pb.Shr({}, {})", a, b),
+            (ArithOp::BitAnd, _) => format!("({} & {})", a, b),
+            (ArithOp::BitOr, _) => format!("({} | {})", a, b),
+            (ArithOp::BitXor, _) => format!("({} ^ {})", a, b),
+        }
+    }
+
+    fn unary(&self, op: UnaryOp, e: String, ty: Ty) -> String {
+        match (op, ty) {
+            (UnaryOp::Neg, Ty::Float) => format!("(-{})", e),
+            (UnaryOp::Neg, _) => format!("unchecked(-{})", e),
+            (UnaryOp::BitNot, _) => format!("(~{})", e),
+            (UnaryOp::Not, _) => format!("(!{})", e),
         }
     }
 

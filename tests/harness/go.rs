@@ -32,8 +32,8 @@ fn value_expr(m: &Member, place: &str) -> String {
 }
 
 impl Target for GoTarget {
-    fn language(&self) -> Language {
-        Language::Go
+    fn language(&self) -> Option<Language> {
+        Some(Language::Go)
     }
 
     fn unavailable(&self) -> Option<String> {
@@ -46,6 +46,7 @@ impl Target for GoTarget {
         );
         s.push_str("var _ = strings.Join\n\n");
         s.push_str("func js(v string) string { b, _ := json.Marshal(v); return string(b) }\n\n");
+        s.push_str("func pbE(err error, pre string) string {\n\te := err.(*PbError)\n\treturn fmt.Sprintf(\"\\\"%serror\\\":%s,\\\"%skind\\\":%s,\\\"%spath\\\":%s\", pre, strconv.Quote(e.Error()), pre, js(e.Kind.String()), pre, js(e.Path))\n}\n\n");
         s.push_str("func hx(b []byte) string { return \"\\\"\" + hex.EncodeToString(b) + \"\\\"\" }\n\n");
         for p in &module.packets {
             let _ = writeln!(s, "func dump{}(p *{}) string {{", p.name, p.name);
@@ -62,7 +63,7 @@ impl Target for GoTarget {
             s.push_str("\tfunc() {\n");
             let _ = writeln!(s, "\t\tdata, _ := hex.DecodeString({})", quote(&c.hex));
             let _ = writeln!(s, "\t\tp, err := Decode{}(data)", p.name);
-            s.push_str("\t\tif err != nil {\n\t\t\tfmt.Printf(\"{\\\"ok\\\":false,\\\"error\\\":%s}\\n\", strconv.Quote(err.Error()))\n\t\t\treturn\n\t\t}\n");
+            s.push_str("\t\tif err != nil {\n\t\t\tfmt.Printf(\"{\\\"ok\\\":false,%s}\\n\", pbE(err, \"\"))\n\t\t\treturn\n\t\t}\n");
             for (name, v) in &c.set {
                 let _ = writeln!(
                     s,
@@ -73,7 +74,7 @@ impl Target for GoTarget {
             }
             let _ = writeln!(s, "\t\tv := dump{}(p)", p.name);
             s.push_str("\t\tb, err := p.Encode()\n");
-            s.push_str("\t\tif err != nil {\n\t\t\tfmt.Printf(\"{\\\"ok\\\":true,\\\"value\\\":%s,\\\"encode_error\\\":%s}\\n\", v, strconv.Quote(err.Error()))\n\t\t\treturn\n\t\t}\n");
+            s.push_str("\t\tif err != nil {\n\t\t\tfmt.Printf(\"{\\\"ok\\\":true,\\\"value\\\":%s,%s}\\n\", v, pbE(err, \"encode_\"))\n\t\t\treturn\n\t\t}\n");
             s.push_str("\t\tfmt.Printf(\"{\\\"ok\\\":true,\\\"value\\\":%s,\\\"encoded\\\":%s}\\n\", v, hx(b))\n");
             s.push_str("\t}()\n");
         }

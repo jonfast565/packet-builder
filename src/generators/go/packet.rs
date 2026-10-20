@@ -41,10 +41,12 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     out.line("");
 
     out.open(format!("func pbDecode{}(pbR *PbReader) (p {}) {{", name, name));
+    out.line(format!("pbR.Enter(\"{}\")", name));
     if p.uses_align() {
         out.line("pbStart := pbR.PositionBits()");
     }
     Decoder::new(p).emit_steps(out);
+    out.line("pbR.Leave()");
     out.line("return p");
     out.close("}");
     out.line("");
@@ -59,6 +61,7 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     out.line("");
 
     out.open(format!("func (p *{}) EncodeTo(pbW *PbWriter) error {{", name));
+    out.line(format!("pbW.Enter(\"{}\")", name));
     if p.uses_align() {
         out.line("pbStart := pbW.PositionBits()");
     }
@@ -67,6 +70,7 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
         out.line(format!("pbc_{} := {}", m.name, store_value(e, encoder.scope.expr(e), &m.ty)));
     }
     encoder.emit_steps(out);
+    out.line("pbW.Leave()");
     out.line("return pbW.Err()");
     out.close("}");
 }

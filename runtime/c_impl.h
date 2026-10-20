@@ -1,6 +1,7 @@
 /* ---- packet-builder runtime: implementation ------------------------------ */
 
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -13,33 +14,144 @@
 #define PB_FN static
 #endif
 
+/* In generated decoders: on failure jump to pb_fail, which records the error. */
 #define PB_TRY(e) do { pb_rc = (e); if (pb_rc != PB_OK) goto pb_fail; } while (0)
-#define PB_CHECK(e) do { int pb_rc_ = (e); if (pb_rc_ != PB_OK) return pb_rc_; } while (0)
+/* In generated encoders: on failure record the error and return its code. */
+#define PB_CHECK(e) do { int pb_rc_ = (e); if (pb_rc_ != PB_OK) return pb_note(&pb_w->tr, &pb_w->err, pb_rc_, pb_w->pos, 0); } while (0)
+/* Inside the runtime: pass errors up. */
+#define PB_PASS(e) do { int pb_rc_ = (e); if (pb_rc_ != PB_OK) return pb_rc_; } while (0)
 
 const char *pb_strerror(int rc) {
     switch (rc) {
     case PB_OK: return "ok";
-    case PB_ERR_EOF: return "unexpected end of data";
-    case PB_ERR_LENGTH: return "invalid length";
+    case PB_ERR_INCOMPLETE: return "unexpected end of data";
+    case PB_ERR_INVALID: return "invalid data";
     case PB_ERR_RANGE: return "value out of range";
     case PB_ERR_NOMEM: return "out of memory";
     case PB_ERR_TEXT: return "invalid string";
+    case PB_ERR_MISMATCH: return "value does not match the data";
+    case PB_ERR_CONSTRAINT: return "constraint violated";
     default: return "unknown error";
     }
 }
 
-void pb_reader_init(pb_reader *r, const uint8_t *data, size_t len) {
-    r->data = data;
-    r->len = len;
-    r->pos = 0;
+/* Record the first error with the trace depth at which it happened. */
+PB_FN int pb_note(const pb_trace *t, pb_error *e, int code, size_t pos, size_t needed_bits) {
+    if (e->code == PB_OK) {
+        e->code = code;
+        e->bit_offset = pos;
+        e->needed_bits = code == PB_ERR_INCOMPLETE ? needed_bits : 0;
+        e->depth = t->depth;
+    }
+    return code;
 }
 
-PB_FN size_t pb_remaining_bits(const pb_reader *r) { return r->len * 8 - r->pos; }
+PB_FN int pb_enter(pb_trace *t, const char *packet) {
+    if (t->depth >= PB_MAX_DEPTH) return PB_ERR_INVALID;
+    t->frames[t->depth].packet = packet;
+    t->frames[t->depth].field = "";
+    t->frames[t->depth].index = -1;
+    t->depth++;
+    return PB_OK;
+}
+
+PB_FN void pb_leave(pb_trace *t) {
+    if (t->depth) t->depth--;
+}
+
+PB_FN void pb_at(pb_trace *t, const char *field) {
+    t->frames[t->depth - 1].field = field;
+    t->frames[t->depth - 1].index = -1;
+}
+
+PB_FN void pb_at_index(pb_trace *t, size_t index) { t->frames[t->depth - 1].index = (long)index; }
+
+static void pb_append(char *buf, size_t n, size_t *at, const char *s) {
+    while (*s && *at + 1 < n) buf[(*at)++] = *s++;
+    buf[*at] = 0;
+}
+
+static char *pb_path(const pb_trace *t, const pb_error *e, char *buf, size_t n) {
+    size_t at = 0;
+    unsigned i;
+    char num[32];
+    if (!n) return buf;
+    buf[0] = 0;
+    if (e->depth) pb_append(buf, n, &at, t->frames[0].packet);
+    for (i = 0; i < e->depth && t->frames[i].field[0]; i++) {
+        pb_append(buf, n, &at, ".");
+        pb_append(buf, n, &at, t->frames[i].field);
+        if (t->frames[i].index >= 0) {
+            snprintf(num, sizeof num, "[%ld]", t->frames[i].index);
+            pb_append(buf, n, &at, num);
+        }
+    }
+    return buf;
+}
+
+static char *pb_describe(const pb_trace *t, const pb_error *e, char *buf, size_t n) {
+    size_t at;
+    char num[48];
+    pb_path(t, e, buf, n);
+    at = strlen(buf);
+    if (at) pb_append(buf, n, &at, ": ");
+    pb_append(buf, n, &at, pb_strerror(e->code));
+    snprintf(num, sizeof num, " (at bit %lu)", (unsigned long)e->bit_offset);
+    pb_append(buf, n, &at, num);
+    return buf;
+}
+
+char *pb_reader_path(const pb_reader *r, char *buf, size_t n) { return pb_path(&r->tr, &r->err, buf, n); }
+
+char *pb_writer_path(const pb_writer *w, char *buf, size_t n) { return pb_path(&w->tr, &w->err, buf, n); }
+
+char *pb_reader_describe(const pb_reader *r, char *buf, size_t n) { return pb_describe(&r->tr, &r->err, buf, n); }
+
+char *pb_writer_describe(const pb_writer *w, char *buf, size_t n) { return pb_describe(&w->tr, &w->err, buf, n); }
+
+void pb_reader_init(pb_reader *r, const uint8_t *data, size_t len) {
+    memset(r, 0, sizeof *r);
+    r->data = data;
+    r->len = len;
+    r->limit = len * 8;
+}
+
+/* Record a failed decode (called at pb_fail). */
+PB_FN int pb_rfail(pb_reader *r, int code) {
+    return pb_note(&r->tr, &r->err, code, r->pos, r->short_bits);
+}
+
+PB_FN size_t pb_remaining_bits(const pb_reader *r) { return r->limit - r->pos; }
+
+/* `bits` more bits are needed: incomplete input at the top level, invalid
+ * data inside a window. */
+PB_FN int pb_short(pb_reader *r, size_t bits) {
+    r->short_bits = bits - pb_remaining_bits(r);
+    return r->limit == r->len * 8 ? PB_ERR_INCOMPLETE : PB_ERR_INVALID;
+}
+
+#define PB_NEED(r, bits) do { if ((bits) > pb_remaining_bits(r)) return pb_short((r), (bits)); } while (0)
+
+/* Restrict reading to the next `bytes` bytes; *saved receives the previous
+ * limit for pb_pop_limit. */
+PB_FN int pb_push_limit(pb_reader *r, int64_t bytes, size_t *saved) {
+    if (bytes < 0) return PB_ERR_INVALID;
+    if ((uint64_t)bytes > pb_remaining_bits(r) / 8) return pb_short(r, (size_t)bytes * 8);
+    *saved = r->limit;
+    r->limit = r->pos + (size_t)bytes * 8;
+    return PB_OK;
+}
+
+/* Skip what is left of the current window and restore `saved`. */
+PB_FN void pb_pop_limit(pb_reader *r, size_t saved) {
+    r->pos = r->limit;
+    r->limit = saved;
+}
 
 PB_FN int pb_read_bits(pb_reader *r, unsigned width, uint64_t *out) {
     uint64_t v = 0;
     unsigned left = width;
-    if (width > pb_remaining_bits(r)) return PB_ERR_EOF;
+    PB_NEED(r, width);
     while (left > 0) {
         unsigned off = (unsigned)(r->pos & 7);
         unsigned take = 8 - off < left ? 8 - off : left;
@@ -56,7 +168,7 @@ PB_FN int pb_read_uint(pb_reader *r, unsigned nbytes, int little, uint64_t *out)
     uint64_t v = 0;
     size_t start = r->pos >> 3;
     unsigned i;
-    if ((size_t)nbytes * 8 > pb_remaining_bits(r)) return PB_ERR_EOF;
+    PB_NEED(r, (size_t)nbytes * 8);
     for (i = 0; i < nbytes; i++) {
         uint8_t b = little ? r->data[start + nbytes - 1 - i] : r->data[start + i];
         v = (v << 8) | b;
@@ -67,14 +179,14 @@ PB_FN int pb_read_uint(pb_reader *r, unsigned nbytes, int little, uint64_t *out)
 }
 
 PB_FN int pb_read_bytes(pb_reader *r, uint8_t *dst, size_t n) {
-    if (n > pb_remaining_bits(r) / 8) return PB_ERR_EOF;
+    if (n > pb_remaining_bits(r) / 8) return pb_short(r, n * 8);
     if (n) memcpy(dst, r->data + (r->pos >> 3), n);
     r->pos += n * 8;
     return PB_OK;
 }
 
 PB_FN int pb_skip_bits(pb_reader *r, size_t bits) {
-    if (bits > pb_remaining_bits(r)) return PB_ERR_EOF;
+    PB_NEED(r, bits);
     r->pos += bits;
     return PB_OK;
 }
@@ -129,7 +241,7 @@ PB_FN int pb_text(const uint8_t *src, size_t n, int until_nul, char **out, size_
 
 PB_FN int pb_read_text(pb_reader *r, size_t n, int until_nul, char **out, size_t *out_len) {
     int rc;
-    if (n > pb_remaining_bits(r) / 8) return PB_ERR_EOF;
+    if (n > pb_remaining_bits(r) / 8) return pb_short(r, n * 8);
     rc = pb_text(r->data + (r->pos >> 3), n, until_nul, out, out_len);
     if (rc == PB_OK) r->pos += n * 8;
     return rc;
@@ -138,10 +250,11 @@ PB_FN int pb_read_text(pb_reader *r, size_t n, int until_nul, char **out, size_t
 /* A NUL-terminated string; the terminator is consumed. */
 PB_FN int pb_read_ctext(pb_reader *r, char **out, size_t *out_len) {
     size_t start = r->pos >> 3;
-    const uint8_t *nul = start < r->len ? (const uint8_t *)memchr(r->data + start, 0, r->len - start) : NULL;
+    size_t end = r->limit >> 3;
+    const uint8_t *nul = start < end ? (const uint8_t *)memchr(r->data + start, 0, end - start) : NULL;
     size_t n;
     int rc;
-    if (!nul) return PB_ERR_EOF;
+    if (!nul) return pb_short(r, pb_remaining_bits(r) + 8);
     n = (size_t)(nul - (r->data + start));
     rc = pb_text(r->data + start, n, 0, out, out_len);
     if (rc == PB_OK) r->pos += (n + 1) * 8;
@@ -149,9 +262,13 @@ PB_FN int pb_read_ctext(pb_reader *r, char **out, size_t *out_len) {
 }
 
 /* Validate a decoded element count against the data that is left. */
-PB_FN int pb_count(const pb_reader *r, int64_t n, uint64_t elem_bits, size_t *out) {
-    if (n < 0) return PB_ERR_LENGTH;
-    if (elem_bits > 0 && (uint64_t)n > pb_remaining_bits(r) / elem_bits) return PB_ERR_LENGTH;
+PB_FN int pb_count(pb_reader *r, int64_t n, uint64_t elem_bits, size_t *out) {
+    if (n < 0) return PB_ERR_INVALID;
+    if (elem_bits > 0 && (uint64_t)n > pb_remaining_bits(r) / elem_bits) {
+        uint64_t bits = (uint64_t)n * elem_bits;
+        if (bits / elem_bits != (uint64_t)n || bits > (uint64_t)(size_t)-1) bits = (size_t)-1;
+        return pb_short(r, (size_t)bits);
+    }
     *out = (size_t)n;
     return PB_OK;
 }
@@ -174,14 +291,12 @@ PB_FN int pb_grow(void **ptr, size_t *cap, size_t need, size_t size) {
     return PB_OK;
 }
 
-void pb_writer_init(pb_writer *w) {
-    w->buf = NULL;
-    w->len = w->cap = w->pos = 0;
-}
+void pb_writer_init(pb_writer *w) { memset(w, 0, sizeof *w); }
 
 void pb_writer_free(pb_writer *w) {
     free(w->buf);
-    pb_writer_init(w);
+    w->buf = NULL;
+    w->len = w->cap = w->pos = 0;
 }
 
 PB_FN int pb_writer_reserve(pb_writer *w, size_t extra) {
@@ -199,7 +314,7 @@ PB_FN int pb_writer_reserve(pb_writer *w, size_t extra) {
 
 PB_FN int pb_write_bits(pb_writer *w, uint64_t value, unsigned width) {
     unsigned left = width;
-    PB_CHECK(pb_writer_reserve(w, width / 8 + 2));
+    PB_PASS(pb_writer_reserve(w, width / 8 + 2));
     while (left > 0) {
         unsigned off, take;
         if ((w->pos & 7) == 0) w->buf[w->len++] = 0;
@@ -214,7 +329,7 @@ PB_FN int pb_write_bits(pb_writer *w, uint64_t value, unsigned width) {
 
 PB_FN int pb_write_uint(pb_writer *w, uint64_t value, unsigned nbytes, int little) {
     unsigned i;
-    PB_CHECK(pb_writer_reserve(w, nbytes));
+    PB_PASS(pb_writer_reserve(w, nbytes));
     for (i = 0; i < nbytes; i++) {
         unsigned shift = little ? 8 * i : 8 * (nbytes - 1 - i);
         w->buf[w->len++] = (uint8_t)(value >> shift);
@@ -224,7 +339,7 @@ PB_FN int pb_write_uint(pb_writer *w, uint64_t value, unsigned nbytes, int littl
 }
 
 PB_FN int pb_write_bytes(pb_writer *w, const uint8_t *data, size_t n) {
-    PB_CHECK(pb_writer_reserve(w, n));
+    PB_PASS(pb_writer_reserve(w, n));
     if (n) memcpy(w->buf + w->len, data, n);
     w->len += n;
     w->pos += n * 8;
@@ -232,13 +347,13 @@ PB_FN int pb_write_bytes(pb_writer *w, const uint8_t *data, size_t n) {
 }
 
 PB_FN int pb_write_zero_bits(pb_writer *w, int64_t bits) {
-    for (; bits > 32; bits -= 32) PB_CHECK(pb_write_bits(w, 0, 32));
-    if (bits > 0) PB_CHECK(pb_write_bits(w, 0, (unsigned)bits));
+    for (; bits > 32; bits -= 32) PB_PASS(pb_write_bits(w, 0, 32));
+    if (bits > 0) PB_PASS(pb_write_bits(w, 0, (unsigned)bits));
     return PB_OK;
 }
 
 PB_FN int pb_check_fits(size_t len, int64_t size) {
-    return (size < 0 || (uint64_t)len > (uint64_t)size) ? PB_ERR_LENGTH : PB_OK;
+    return (size < 0 || (uint64_t)len > (uint64_t)size) ? PB_ERR_RANGE : PB_OK;
 }
 
 PB_FN int pb_check_text(const char *s, size_t len, int allow_nul) {
@@ -248,7 +363,7 @@ PB_FN int pb_check_text(const char *s, size_t len, int allow_nul) {
 }
 
 PB_FN int pb_check_len(size_t actual, int64_t expected) {
-    return (expected < 0 || (uint64_t)actual != (uint64_t)expected) ? PB_ERR_LENGTH : PB_OK;
+    return (expected < 0 || (uint64_t)actual != (uint64_t)expected) ? PB_ERR_MISMATCH : PB_OK;
 }
 
 PB_FN int pb_check_u(uint64_t v, unsigned width) {
@@ -285,6 +400,25 @@ PB_FN int64_t pb_div(int64_t a, int64_t b) {
     if (b == -1) return pb_sub(0, a);
     return a / b;
 }
+PB_FN int64_t pb_mod(int64_t a, int64_t b) {
+    if (b == 0 || b == -1) return 0;
+    return a % b;
+}
+
+PB_FN int64_t pb_shl(int64_t a, int64_t b) {
+    if (b < 0 || b > 63) return 0;
+    return (int64_t)((uint64_t)a << b);
+}
+
+PB_FN int64_t pb_shr(int64_t a, int64_t b) {
+    if (b < 0) return 0;
+    if (b > 63) b = 63;
+    /* arithmetic shift without relying on implementation-defined >> */
+    return a < 0 ? (int64_t)~(~(uint64_t)a >> b) : (int64_t)((uint64_t)a >> b);
+}
+
+PB_FN int64_t pb_neg(int64_t a) { return (int64_t)(0 - (uint64_t)a); }
+
 PB_FN int64_t pb_pow(int64_t base, int64_t exp) {
     uint64_t acc = 1, b = (uint64_t)base, e;
     if (exp < 0) return 0;

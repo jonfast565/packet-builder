@@ -14,7 +14,18 @@ pub struct CSharpTarget;
 /// (dotnet executable, csc.dll, reference assembly directory)
 fn toolchain() -> Option<(PathBuf, PathBuf, PathBuf)> {
     let dotnet = which("dotnet")?;
-    let root = fs::canonicalize(&dotnet).ok()?.parent()?.to_path_buf();
+    // `dotnet --list-sdks` prints "10.0.401 [/root/sdk]"; Homebrew keeps the
+    // root under libexec rather than next to the `dotnet` binary.
+    let listed = Command::new(&dotnet).arg("--list-sdks").output().ok().and_then(|o| {
+        let text = String::from_utf8_lossy(&o.stdout).into_owned();
+        let line = text.lines().last()?.to_string();
+        let path = line.split_once('[')?.1.trim_end_matches(']');
+        Some(PathBuf::from(path).parent()?.to_path_buf())
+    });
+    let root = match listed {
+        Some(root) => root,
+        None => fs::canonicalize(&dotnet).ok()?.parent()?.to_path_buf(),
+    };
     // Highest version directory ("10.0.1" sorts after "8.0.31").
     let newest = |dir: PathBuf| -> Option<PathBuf> {
         let version = |p: &PathBuf| -> Vec<u64> {
@@ -46,8 +57,8 @@ fn value_expr(m: &Member, place: &str) -> String {
 }
 
 impl Target for CSharpTarget {
-    fn language(&self) -> Language {
-        Language::CSharp
+    fn language(&self) -> Option<Language> {
+        Some(Language::CSharp)
     }
 
     fn unavailable(&self) -> Option<String> {
@@ -61,7 +72,8 @@ impl Target for CSharpTarget {
         s.push_str(
             "    static string Hx(byte[] b) => \"\\\"\" + Convert.ToHexString(b).ToLowerInvariant() + \"\\\"\";\n",
         );
-        s.push_str("    static string Q(string s) => \"\\\"\" + s.Replace(\"\\\\\", \"\\\\\\\\\").Replace(\"\\\"\", \"\\\\\\\"\") + \"\\\"\";\n\n");
+        s.push_str("    static string Q(string s) => \"\\\"\" + s.Replace(\"\\\\\", \"\\\\\\\\\").Replace(\"\\\"\", \"\\\\\\\"\") + \"\\\"\";\n");
+        s.push_str("    static string E(PbException e, string pre) => \",\\\"\" + pre + \"error\\\":\" + Q(e.Message) + \",\\\"\" + pre + \"kind\\\":\" + Q(e.Kind.ToString().ToLowerInvariant()) + \",\\\"\" + pre + \"path\\\":\" + Q(e.Path);\n\n");
         for p in &module.packets {
             let _ = writeln!(
                 s,
@@ -81,7 +93,7 @@ impl Target for CSharpTarget {
             let _ = writeln!(s, "            {} p;", p.name);
             let _ =
                 writeln!(s, "            try {{ p = {}.Decode(Convert.FromHexString({})); }}", p.name, quote(&c.hex));
-            s.push_str("            catch (PbException e) { Console.WriteLine(\"{\\\"ok\\\":false,\\\"error\\\":\" + Q(e.Message) + \"}\"); goto done; }\n");
+            s.push_str("            catch (PbException e) { Console.WriteLine(\"{\\\"ok\\\":false\" + E(e, \"\") + \"}\"); goto done; }\n");
             for (name, v) in &c.set {
                 let _ = writeln!(
                     s,
@@ -93,7 +105,7 @@ impl Target for CSharpTarget {
             let _ = writeln!(s, "            var v = Dump{}(p);", p.name);
             s.push_str("            byte[] b;\n");
             s.push_str("            try { b = p.Encode(); }\n");
-            s.push_str("            catch (PbException e) { Console.WriteLine(\"{\\\"ok\\\":true,\\\"value\\\":\" + v + \",\\\"encode_error\\\":\" + Q(e.Message) + \"}\"); goto done; }\n");
+            s.push_str("            catch (PbException e) { Console.WriteLine(\"{\\\"ok\\\":true,\\\"value\\\":\" + v + E(e, \"encode_\") + \"}\"); goto done; }\n");
             s.push_str("            Console.WriteLine(\"{\\\"ok\\\":true,\\\"value\\\":\" + v + \",\\\"encoded\\\":\" + Hx(b) + \"}\");\n");
             s.push_str("            done:;\n        }\n");
         }

@@ -26,6 +26,7 @@ impl Backend for GoGenerator {
         out.line("import (");
         out.line("\t\"fmt\"");
         out.line("\t\"math\"");
+        out.line("\t\"strings\"");
         out.line("\t\"unicode/utf8\"");
         out.line(")");
         out.line("");

@@ -51,6 +51,10 @@ impl StepEmitter for Encoder<'_> {
         self.scope.packet
     }
 
+    fn locate(&self, out: &mut Out, field: &str) {
+        out.line(format!("pb_at(&pb_w->tr, \"{}\");", field));
+    }
+
     fn align(&self, out: &mut Out, bytes: u64) {
         out.line(format!(
             "PB_CHECK(pb_write_zero_bits(pb_w, (int64_t)pb_pad(pb_writer_position(pb_w) - pb_start, {})));",
@@ -118,6 +122,7 @@ impl StepEmitter for Encoder<'_> {
             out.open("{");
             out.line("size_t pb_i;");
             out.open(format!("for (pb_i = 0; pb_i < {}; pb_i++) {{", len));
+            out.line("pb_at_index(&pb_w->tr, pb_i);");
             write_elem(out, codec, ty, &format!("{}[pb_i]", place));
             out.close("}");
             out.close("}");

@@ -9,9 +9,12 @@
 //!   type-checks expressions and decides when each calculated field can be
 //!   evaluated while decoding.
 //! - [`layout`] — the field-by-field layout report.
+//! - [`interp`] — a reference interpreter that decodes and encodes with a
+//!   module directly.
 
 mod analysis;
 pub mod expr;
+pub mod interp;
 pub mod layout;
 pub mod model;
 

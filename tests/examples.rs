@@ -24,7 +24,7 @@ fn python_oscar_demo() {
         eprintln!("skipping: python3 not found");
         return;
     }
-    let dir = harness::work_dir(Language::Python, "oscar_demo");
+    let dir = harness::work_dir("python", "oscar_demo");
     generated(Language::Python, &dir);
     let out = harness::run(
         Command::new("python3").arg(fs::canonicalize("examples/oscar_demo.py").unwrap()).env("PYTHONPATH", &dir),
@@ -41,7 +41,7 @@ fn rust_oscar_demo() {
         eprintln!("skipping: rustc not found");
         return;
     }
-    let dir = harness::work_dir(Language::Rust, "oscar_demo");
+    let dir = harness::work_dir("rust", "oscar_demo");
     generated(Language::Rust, &dir);
     fs::copy("examples/oscar_demo.rs", dir.join("oscar_demo.rs")).unwrap();
     harness::run(
@@ -68,7 +68,7 @@ fn python_p3_demo() {
         eprintln!("skipping: python3 not found");
         return;
     }
-    let dir = harness::work_dir(Language::Python, "p3_demo");
+    let dir = harness::work_dir("python", "p3_demo");
     generated_from("examples/p3.packet", Language::Python, &dir);
     let out = harness::run(
         Command::new("python3").arg(fs::canonicalize("examples/p3_demo.py").unwrap()).env("PYTHONPATH", &dir),
@@ -86,7 +86,7 @@ fn rust_p3_demo() {
         eprintln!("skipping: rustc not found");
         return;
     }
-    let dir = harness::work_dir(Language::Rust, "p3_demo");
+    let dir = harness::work_dir("rust", "p3_demo");
     generated_from("examples/p3.packet", Language::Rust, &dir);
     fs::copy("examples/p3_demo.rs", dir.join("p3_demo.rs")).unwrap();
     harness::run(

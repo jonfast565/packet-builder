@@ -20,6 +20,12 @@ minus  = @{ "-" }
 mult   = @{ "*" }
 div    = @{ "/" }
 pw     = @{ "^" }
+modulo = @{ "%" }
+shl    = @{ "<<" }
+shr    = @{ ">>" }
+band   = @{ "&" }
+bor    = @{ "|" }
+bnot   = @{ "~" }
 
 lparen = @{ "(" }
 rparen = @{ ")" }
@@ -32,9 +38,9 @@ colon  = @{ ":" }
 dot    = @{ "." }
 assign = @{ "=" }          
 
-gt   = @{ ">" }
+gt   = @{ ">" ~ !">" }
 gte  = @{ ">=" }
-lt   = @{ "<" }
+lt   = @{ "<" ~ !"<" }
 lte  = @{ "<=" }          
 eq   = @{ "==" }
 neq  = @{ "!=" | "<>" }
@@ -42,6 +48,8 @@ neq  = @{ "!=" | "<>" }
 // Logical
 and_kw = @{ "and" }
 or_kw  = @{ "or" }
+not_kw = @{ "not" }
+xor_kw = @{ "xor" }
 
 // Aggregates / control
 sumof_kw      = @{ "sumof" }
@@ -80,7 +88,7 @@ keyword = _{
     packet_kw | calc_kw | const_kw
   | when_kw | then_kw | otherwise_kw
   | sumof_kw | productof_kw
-  | and_kw | or_kw
+  | and_kw | or_kw | not_kw | xor_kw
   | sqrt_kw | min_kw | max_kw
   | le_kw | be_kw
   | bitfield_kw | msb_kw | lsb_kw
@@ -183,15 +191,22 @@ bit_order = @{ msb_kw | lsb_kw }
 endianness = @{ le_kw | be_kw }
 
 // ===============================
-// Expressions (precedence: or < and < comparison < +,- < *,/ < ^ < primary)
+// Expressions, loosest first: or, and, not, comparison, |, xor, &, << >>,
+// + -, * / %, unary - ~, ^, primary.
 // ===============================
 expr            = { bool_or }
 bool_or         = { bool_and ~ (or_kw  ~ bool_and )* }
-bool_and        = { cmp      ~ (and_kw ~ cmp      )* }
+bool_and        = { bool_not ~ (and_kw ~ bool_not )* }
+bool_not        = { not_kw* ~ cmp }
 // Comparisons do not chain ("a < b < c" is a syntax error).
-cmp             = { sum ~ ((neq|gte|lte|gt|lt|eq) ~ sum)? }
+cmp             = { bit_or ~ ((neq|gte|lte|gt|lt|eq) ~ bit_or)? }
+bit_or          = { bit_xor ~ (bor ~ bit_xor)* }
+bit_xor         = { bit_and ~ (xor_kw ~ bit_and)* }
+bit_and         = { shift ~ (band ~ shift)* }
+shift           = { sum ~ ((shl | shr) ~ sum)* }
 sum             = { product ~ ((plus | minus) ~ product)* }
-product         = { power   ~ ((mult | div)  ~ power  )* }
+product         = { unary   ~ ((mult | div | modulo) ~ unary)* }
+unary           = { (minus | bnot)* ~ power }
 power           = { primary ~ (pw ~ primary)? }
 
 primary         = { guard_expression | literal | function_call | accessor | inner_expr }

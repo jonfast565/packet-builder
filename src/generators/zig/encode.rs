@@ -38,33 +38,37 @@ impl StepEmitter for Encoder<'_> {
         self.scope.packet
     }
 
+    fn locate(&self, out: &mut Out, field: &str) {
+        out.line(format!("pb_w.at(\"{}\");", field));
+    }
+
     fn align(&self, out: &mut Out, bytes: u64) {
         out.line(format!("try pb_w.writeZeroBits(@intCast(pbPad(pb_w.positionBits() - pb_start, {})));", bytes * 8))
     }
 
     fn string(&self, out: &mut Out, m: &Member, mode: &StrMode, array: Option<&Count>) {
         let s = format!("p.{}", ident(&m.name));
-        out.line(format!("try pbCheckText({}, {});", s, !matches!(mode, StrMode::CString)));
+        out.line(format!("try pb_w.checkText({}, {});", s, !matches!(mode, StrMode::CString)));
         match (mode, array) {
             (StrMode::CString, _) => {
                 out.line(format!("try pb_w.writeBytes({});", s));
                 out.line("try pb_w.writeBits(0, 8);");
             }
             (StrMode::Prefixed { prefix, width }, _) => {
-                out.line(format!("try pbCheckPrefix({}.len, {});", s, width));
+                out.line(format!("try pb_w.checkPrefix({}.len, {});", s, width));
                 write_elem(out, prefix, &format!("@as(u64, {}.len)", s));
                 out.line(format!("try pb_w.writeBytes({});", s));
             }
             (StrMode::Padded, Some(Count::Expr(e))) => {
                 out.open("{");
                 out.line(format!("const pb_n = {};", self.scope.expr(e)));
-                out.line(format!("try pbCheckFits({}.len, pb_n);", s));
+                out.line(format!("try pb_w.checkFits({}.len, pb_n);", s));
                 out.line(format!("try pb_w.writeBytes({});", s));
                 out.line(format!("try pb_w.writeZeroBits((pb_n - @as(i64, @intCast({}.len))) * 8);", s));
                 out.close("}");
             }
             (_, Some(Count::Expr(e))) => {
-                out.line(format!("try pbCheckLen({}.len, {});", s, self.scope.expr(e)));
+                out.line(format!("try pb_w.checkLen({}.len, {});", s, self.scope.expr(e)));
                 out.line(format!("try pb_w.writeBytes({});", s));
             }
             _ => out.line(format!("try pb_w.writeBytes({});", s)),
@@ -89,12 +93,13 @@ impl StepEmitter for Encoder<'_> {
     fn array(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec, count: &Count) {
         let place = format!("p.{}", ident(&m.name));
         if let Count::Expr(e) = count {
-            out.line(format!("try pbCheckLen({}.len, {});", place, self.scope.expr(e)));
+            out.line(format!("try pb_w.checkLen({}.len, {});", place, self.scope.expr(e)));
         }
         if ty.is_byte() {
             out.line(format!("try pb_w.writeBytes({});", place));
         } else {
-            out.open(format!("for ({}) |pb_v| {{", place));
+            out.open(format!("for ({}, 0..) |pb_v, pb_i| {{", place));
+            out.line("pb_w.atIndex(pb_i);");
             write_elem(out, codec, "pb_v");
             out.close("}");
         }

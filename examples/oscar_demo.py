@@ -47,7 +47,7 @@ def main():
     reply = None
     for frame in frames(STREAM):
         if not frame.valid:
-            raise PbError("not a FLAP frame")
+            raise PbError(PbError.CONSTRAINT, "not a FLAP frame")
         if frame.channel == Channel.SIGNON:
             print("sign-on, protocol version", FlapSignon.decode(frame.payload).version)
             continue

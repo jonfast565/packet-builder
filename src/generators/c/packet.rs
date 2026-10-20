@@ -102,12 +102,10 @@ pub fn emit_implementation(out: &mut Out, p: &Packet) {
     body.push();
     Decoder::new(p).emit_steps(&mut body);
     out.open(format!("int {}_decode_from({} *p, pb_reader *pb_r) {{", name, name));
-    let uses_try = body.buf.contains("PB_TRY");
-    if uses_try {
-        out.line("int pb_rc = PB_OK;");
-    }
+    out.line("int pb_rc = PB_OK;");
     out.line("uint64_t pb_u = 0;");
     out.line("memset(p, 0, sizeof *p);");
+    out.line(format!("PB_TRY(pb_enter(&pb_r->tr, \"{}\"));", name));
     if p.uses_align() {
         out.line("size_t pb_start = pb_reader_position(pb_r);");
     }
@@ -116,14 +114,14 @@ pub fn emit_implementation(out: &mut Out, p: &Packet) {
     out.pop();
     out.buf.push_str(&body.buf);
     out.push();
+    out.line("pb_leave(&pb_r->tr);");
     out.line("return PB_OK;");
-    if uses_try {
-        out.pop();
-        out.line("pb_fail:");
-        out.push();
-        out.line(format!("{}_free(p);", name));
-        out.line("return pb_rc;");
-    }
+    out.pop();
+    out.line("pb_fail:");
+    out.push();
+    out.line("pb_rfail(pb_r, pb_rc);");
+    out.line(format!("{}_free(p);", name));
+    out.line("return pb_rc;");
     out.close("}");
     out.line("");
 
@@ -153,7 +151,9 @@ pub fn emit_implementation(out: &mut Out, p: &Packet) {
     if p.uses_align() {
         out.line("size_t pb_start = pb_writer_position(pb_w);");
     }
+    out.line(format!("PB_CHECK(pb_enter(&pb_w->tr, \"{}\"));", name));
     encoder.emit_steps(out);
+    out.line("pb_leave(&pb_w->tr);");
     out.line("return PB_OK;");
     out.close("}");
 }
