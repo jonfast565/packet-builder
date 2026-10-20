@@ -93,6 +93,10 @@ impl ExprLang for Scope<'_, Go> {
         }
     }
 
+    fn param(&self, index: usize) -> String {
+        format!("int64({})", self.param_var(index))
+    }
+
     fn convert(&self, e: String, from: Ty, to: Ty) -> String {
         match (from, to) {
             (Ty::Bool, Ty::Int) => format!("pbB2I({})", e),

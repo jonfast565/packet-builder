@@ -3,7 +3,7 @@
 use super::decode::Decoder;
 use super::encode::Encoder;
 use super::naming::{annotation, ident};
-use crate::generators::common::{Out, StepEmitter, member_category};
+use crate::generators::common::{Out, StepEmitter, member_category, param_var};
 use crate::ir::{Arm, Packet, Union, ValueType};
 
 /// The value an arm starts with.
@@ -49,13 +49,15 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
         out.line(format!("{}: {}", ident(&m.name), annotation(m)));
     }
     out.line("");
+    // Parameters: `, pbp_a` in signatures and calls.
+    let pass: String = p.params.iter().map(|x| format!(", {}", param_var(&x.name))).collect();
     out.line("@classmethod");
-    out.open(format!("def decode(cls, data) -> \"{}\":", p.name));
+    out.open(format!("def decode(cls, data{}) -> \"{}\":", pass, p.name));
     out.line("\"\"\"Decode from the start of `data`. Trailing bytes are ignored.\"\"\"");
-    out.line("return cls.decode_from(PbReader(data))");
+    out.line(format!("return cls.decode_from(PbReader(data){})", pass));
     out.close("");
     out.line("@classmethod");
-    out.open(format!("def decode_from(cls, pb_r) -> \"{}\":", p.name));
+    out.open(format!("def decode_from(cls, pb_r{}) -> \"{}\":", pass, p.name));
     out.line(format!("pb_r.enter(\"{}\")", p.name));
     out.line("p = cls()");
     if p.needs_start(false) {
@@ -66,12 +68,12 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     out.line("return p");
     out.close("");
 
-    out.open("def encode(self) -> bytes:");
+    out.open(format!("def encode(self{}) -> bytes:", pass));
     out.line("pb_w = PbWriter()");
-    out.line("self.encode_to(pb_w)");
+    out.line(format!("self.encode_to(pb_w{})", pass));
     out.line("return pb_w.finish()");
     out.close("");
-    out.open("def encode_to(self, pb_w) -> None:");
+    out.open(format!("def encode_to(self, pb_w{}) -> None:", pass));
     out.line(format!("pb_w.enter(\"{}\")", p.name));
     out.line("p = self");
     if p.needs_start(true) {

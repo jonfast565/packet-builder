@@ -60,14 +60,14 @@ impl<'a> Ctx<'a> {
                 let Some(ValueType::Packet(n)) = &self.last else {
                     return Err("`last` is not a packet, so it has no fields".into());
                 };
-                let p = self.done.get(n).ok_or_else(|| format!("unknown packet `{}`", n))?;
-                let m = p
-                    .members
-                    .iter()
-                    .find(|m| &m.name == field && m.array.is_none())
-                    .ok_or_else(|| format!("`{}` has no single-valued field `{}`", n, field))?;
-                let ty = self.scalar_ty(&m.ty, field)?;
+                let sig = self.sigs.get(n).ok_or_else(|| format!("unknown packet `{}`", n))?;
+                let mty =
+                    sig.fields.get(field).ok_or_else(|| format!("`{}` has no single-valued field `{}`", n, field))?;
+                let ty = self.scalar_ty(mty, field)?;
                 TExpr::Last { field: Some((n.clone(), field.clone())), ty }
+            }
+            ValueReference(name, None) if !self.names.contains_key(name) && self.param(name).is_some() => {
+                self.param(name).expect("checked")
             }
             ValueReference(name, None) if !self.names.contains_key(name) && self.consts.single(name).is_some() => {
                 TExpr::IntLit(self.consts.single(name).expect("checked").value)

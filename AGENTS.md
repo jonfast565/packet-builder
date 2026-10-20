@@ -13,9 +13,10 @@ source ──parser──▶ PacketExprList ──ir::analyze──▶ ir::Modul
 |------|------|
 | `src/parser/` | pest grammar (`grammar.pest`) → parse tree. `literals` validates numbers first; `items` (`TreeBuilder`) builds packets; `consts` builds `const` declarations; `expr` parses expressions; `types` maps type names. |
 | `src/ast.rs` | parse-tree types (`TypeNode`, `ExprNode`, `PacketExpr`, ...). |
-| `src/ir/model.rs` | the validated model every backend consumes: `Packet`, `Member`, `ValueType`, `Codec`, `Step`. |
+| `src/ir/model.rs` | the validated model every backend consumes: `Packet`, `Member`, `ValueType`, `Param`, `PacketRef`, unions and constants. |
+| `src/ir/wire.rs` | how fields travel on the wire: `Codec`, `Count`, `StrMode`, `Step` (re-exported from `model`). |
 | `src/ir/expr.rs` | type-checked expressions (`TExpr`). |
-| `src/ir/analysis/` | builds the model. `packet.rs` is a `PacketBuilder` that runs the passes in order (declare → counts → calcs → derived → lay out → finish); `consts.rs` folds named constants into a `ConstTable` (run before packets) and checks `: Category` tags; `checks.rs` turns `==`/`in`/`strict` into checks; `derive.rs` orders derived fields and their marks; `union.rs` lays out `switch` fields and `size n` windows; `repeat.rs` resolves `until`, `term` and text encodings; `cursor.rs` tracks the bit offset; `typecheck.rs`, `codec.rs`, `context.rs`, `types.rs` hold the rest. |
+| `src/ir/analysis/` | builds the model. `packet.rs` is a `PacketBuilder` that runs the passes in order (declare → counts → calcs → derived → lay out → finish); `consts.rs` folds named constants into a `ConstTable` (run before packets) and checks `: Category` tags; `checks.rs` turns `==`/`in`/`strict` into checks; `bitfield.rs` lays out bitfield containers; `derive.rs` orders derived fields and their marks; `union.rs` lays out `switch` fields and `size n` windows; `repeat.rs` resolves `until`, `term` and text encodings; `params.rs` holds packet signatures (parameters, member types known before analysis), arguments, `at` fields and the analysis order, which lets packets contain themselves through arrays and `at`; `cursor.rs` tracks the bit offset; `typecheck.rs`, `codec.rs`, `context.rs`, `types.rs` hold the rest. |
 | `src/ir/layout.rs` | the `layout` command's report. |
 | `src/ir/interp/` | the reference interpreter: decodes/encodes a `Module` directly, using `runtime/rust.rs` (included as `interp::rt`). `show.rs` renders decoded values for the `decode` command. |
 | `src/pcap.rs` | pcap/pcapng reading and pcap writing (no dependencies). |
@@ -34,7 +35,7 @@ code between backends.
   Callers depend on the trait, not on concrete generators.
 - **Template Method** — `common::StepEmitter` walks a packet's `Step`s and
   dispatches each to a hook (`align`, `calc`, `string`, `padding`, `scalar`,
-  `array`, `bitfield`, `switch`, `open_window`/`close_window`, `check`).
+  `array`, `bitfield`, `switch`, `open_window`/`close_window`, `at`, `check`).
   Each backend's `Decoder` and `Encoder` only fill in the hooks; the
   dispatch lives in one place. Encoders keep the default `calc`. Before
   every field it calls `locate`, which records the field name for error
@@ -48,8 +49,10 @@ code between backends.
   implementation for each node's spelling.
 - **Generic scope** — `common::Dialect` (boolean literals, how to name a
   member) is implemented by a zero-sized marker per language (`Rust`, `C`, ...);
-  `common::Scope<'_, D>` provides `place()`, `field()`, `member()` and
-  `expr()` for all of them. Backends implement `ExprLang for Scope<'_, TheirDialect>`.
+  `common::Scope<'_, D>` provides `place()`, `field()`, `member()`,
+  `expr()`, `param_var()` (parameters are `pbp_<name>` arguments of the
+  generated functions) and `args()` (a nested packet's arguments) for all
+  of them. Backends implement `ExprLang for Scope<'_, TheirDialect>`.
 - **Builder** — `ir::analysis::packet::PacketBuilder` holds the per-packet
   analysis state; each pass is one method.
 - Shared IR helpers (`Member::calc_expr`, `Member::is_calculated`,
@@ -64,7 +67,10 @@ keep a trace of frames (packet, field, array index). Generated code calls
 `enter("Packet")` / `leave()` around a packet, `at("field")` before each
 field and `at_index(i)` per array element; errors created by the runtime
 capture the path, the bit offset and a kind (`incomplete`, `invalid`,
-`range`, `text`, `mismatch`, `constraint`). Running out of data is
+`range`, `text`, `mismatch`, `constraint`). `at` fields use reader
+`jump`/`jump_back` and writer `sub`/`place`: a sub-writer's bytes are
+written at their offset by the writer's `finish`, which top-level `encode`
+calls. Running out of data is
 `incomplete` only at the end of the real input; inside a reader window
 (`push_limit`/`pop_limit`) it is `invalid`. Checks that can fail live on the
 reader/writer so they can report the path. When adding a runtime function,

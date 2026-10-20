@@ -5,7 +5,12 @@ use std::marker::PhantomData;
 
 use super::expr::{ExprLang, Mode, emit_expr};
 use crate::ast::Endianness;
-use crate::ir::{Member, Packet, TExpr};
+use crate::ir::{Member, Packet, PacketRef, TExpr, ValueType};
+
+/// The name of parameter `name` in generated functions (`pbp_version`).
+pub fn param_var(name: &str) -> String {
+    format!("pbp_{}", name)
+}
 
 /// Spelling rules of a target language. Each backend has one zero-sized
 /// marker type implementing this; [`Scope`] is generic over it.
@@ -53,6 +58,20 @@ impl<'a, D: Dialect> Scope<'a, D> {
         } else {
             D::field(self.packet, m)
         }
+    }
+
+    /// The variable holding parameter `index` in generated functions.
+    pub fn param_var(&self, index: usize) -> String {
+        param_var(&self.packet.params[index].name)
+    }
+
+    /// The arguments for nested packet `r`, each converted to its
+    /// parameter's type by `store` (the backend's `store_value`).
+    pub fn args(&self, r: &PacketRef, store: impl Fn(String, &ValueType) -> String) -> Vec<String>
+    where
+        Self: ExprLang,
+    {
+        r.typed_args().map(|(e, ty)| store(self.expr(e), ty)).collect()
     }
 
     /// The stored field of `m` (never the encode-time local).

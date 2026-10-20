@@ -1,7 +1,8 @@
 //! Semantic analysis: turns the parsed packet list into a validated,
 //! language-independent layout that every code generator consumes.
 //!
-//! - [`model`] — the validated packet model (packets, members, wire steps).
+//! - [`model`] — the validated packet model (packets, members, unions).
+//! - [`wire`] — how fields travel on the wire (codecs, counts, steps).
 //! - [`expr`] — type-checked expressions.
 //! - `analysis` — builds the model from the parse tree. It resolves packet
 //!   references and rejects cycles, tracks the bit offset of every field so
@@ -17,6 +18,7 @@ pub mod expr;
 pub mod interp;
 pub mod layout;
 pub mod model;
+pub mod wire;
 
 pub use analysis::analyze;
 pub use expr::*;

@@ -58,6 +58,21 @@ typedef struct pb_reader {
     pb_error err;
 } pb_reader;
 
+/* Where a reader was before pb_jump_to. */
+typedef struct pb_jump {
+    size_t pos, limit;
+    unsigned windows;
+} pb_jump;
+
+/* A packet placed at an offset (`at`): its bytes, and the trace naming the
+ * field for errors. */
+typedef struct pb_placed {
+    size_t at; /* in bytes */
+    uint8_t *data;
+    size_t len;
+    pb_trace tr;
+} pb_placed;
+
 /* Growable output buffer; integers may be written at any bit position. */
 typedef struct pb_writer {
     uint8_t *buf;
@@ -66,12 +81,19 @@ typedef struct pb_writer {
     size_t pos;  /* in bits */
     pb_trace tr;
     pb_error err;
+    size_t base; /* where buf goes in the output, in bits (sub writers) */
+    pb_placed *placed; /* written by pb_writer_finish */
+    size_t nplaced, capplaced;
 } pb_writer;
 
 const char *pb_strerror(int rc);
 void pb_reader_init(pb_reader *r, const uint8_t *data, size_t len);
 void pb_writer_init(pb_writer *w);
 void pb_writer_free(pb_writer *w);
+/* Write every placed packet at its offset: past the end (zero-filling the
+ * gap), or over bytes that must already match (PB_ERR_MISMATCH). Encoders
+ * call it before returning the buffer. */
+int pb_writer_finish(pb_writer *w);
 /* "Packet.field[2].field: message (at bit N)" for the reader's or writer's
  * first error, written to buf (always NUL-terminated). Returns buf. */
 char *pb_reader_describe(const pb_reader *r, char *buf, size_t n);

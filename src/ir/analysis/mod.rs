@@ -3,15 +3,19 @@
 //! - [`analyze`] (this file): packet names and dependency order.
 //! - `packet`: per-packet passes ([`PacketBuilder`](packet::PacketBuilder)).
 //! - `consts`: named constants and categories, and `: Category` tags.
+//! - `bitfield`: bitfield containers and their sub-fields.
 //! - `checks`: `== value`, `in lo..hi`, `strict` and `lenient` on fields.
 //! - `derive`: derived fields, their marks and the encode order.
 //! - `union`: tagged unions (`switch`) and windows (`size n`).
 //! - `repeat`: `until` and `term`, and string encodings.
+//! - `params`: packet parameters, arguments, `at` fields and the order
+//!   packets are analyzed in (recursion through arrays and `at`).
 //! - `context`: the member table and diagnostics shared by those passes.
 //! - `typecheck`, `codec`: expression and wire-format resolution.
 //! - `cursor`: what is known about the bit offset while laying out fields.
 //! - `types`: facts about source type names.
 
+mod bitfield;
 mod checks;
 mod codec;
 mod consts;
@@ -19,6 +23,7 @@ mod context;
 mod cursor;
 mod derive;
 mod packet;
+mod params;
 mod repeat;
 mod typecheck;
 mod types;
@@ -27,7 +32,7 @@ mod union;
 use std::collections::HashMap;
 
 use super::model::{Module, Packet, Step, Union, ValueType};
-use crate::ast::{PacketExprList, PacketItem, TypeNode};
+use crate::ast::PacketExprList;
 use crate::errors::Diagnostic;
 
 /// Type names a packet may not take.
@@ -80,7 +85,7 @@ pub fn analyze(list: &PacketExprList) -> Result<Module, Vec<Diagnostic>> {
     }
 
     // Dependency order between packets (nested packets first), rejecting cycles.
-    let order = match packet_order(list, &by_name) {
+    let order = match params::packet_order(list, &by_name) {
         Ok(o) => o,
         Err(d) => {
             diags.extend(d);
@@ -88,10 +93,11 @@ pub fn analyze(list: &PacketExprList) -> Result<Module, Vec<Diagnostic>> {
         }
     };
 
+    let sigs = params::signatures(list, &mut diags);
     let consts = consts::ConstTable::build(list, &mut diags);
     let mut done = HashMap::<String, Packet>::new();
     for idx in order {
-        match packet::PacketBuilder::new(&list.packets[idx], &done, &consts).build() {
+        match packet::PacketBuilder::new(&list.packets[idx], &done, &sigs, &consts).build() {
             Ok(packet) => {
                 done.insert(packet.name.clone(), packet);
             }
@@ -130,64 +136,4 @@ pub fn analyze(list: &PacketExprList) -> Result<Module, Vec<Diagnostic>> {
         return Err(diags);
     }
     Ok(Module { packets, constants: consts.constants, categories: consts.categories, unions })
-}
-
-fn packet_order(list: &PacketExprList, by_name: &HashMap<String, usize>) -> Result<Vec<usize>, Vec<Diagnostic>> {
-    let mut diags = Vec::new();
-    let mut state = vec![0u8; list.packets.len()]; // 0 = new, 1 = visiting, 2 = done
-    let mut order = Vec::new();
-
-    fn visit(
-        i: usize,
-        list: &PacketExprList,
-        by_name: &HashMap<String, usize>,
-        state: &mut Vec<u8>,
-        order: &mut Vec<usize>,
-        diags: &mut Vec<Diagnostic>,
-    ) {
-        if state[i] == 2 {
-            return;
-        }
-        if state[i] == 1 {
-            diags.push(Diagnostic::new(
-                format!("packet `{}` contains itself", list.packets[i].name),
-                list.packets[i].span,
-            ));
-            return;
-        }
-        state[i] = 1;
-        for item in &list.packets[i].items {
-            let mut refs = Vec::new();
-            match item {
-                PacketItem::Field(f) => {
-                    if let TypeNode::Packet(name) = &f.expr {
-                        refs.push((name, f.span));
-                    }
-                }
-                PacketItem::Switch(sw) => {
-                    for a in &sw.arms {
-                        if let Some((TypeNode::Packet(name), ..)) = &a.ty {
-                            refs.push((name, a.span));
-                        }
-                    }
-                }
-                _ => {}
-            }
-            for (name, span) in refs {
-                match by_name.get(name) {
-                    Some(j) => visit(*j, list, by_name, state, order, diags),
-                    None => diags.push(Diagnostic::new(format!("unknown type `{}`", name), span).with_note(
-                        "built-in types are uint8..uint64, int8..int64, uN/iN, float32, float64, macaddress, datetime, bytes",
-                    )),
-                }
-            }
-        }
-        state[i] = 2;
-        order.push(i);
-    }
-
-    for i in 0..list.packets.len() {
-        visit(i, list, by_name, &mut state, &mut order, &mut diags);
-    }
-    if diags.is_empty() { Ok(order) } else { Err(diags) }
 }

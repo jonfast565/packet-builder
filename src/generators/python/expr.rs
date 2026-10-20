@@ -123,6 +123,10 @@ impl ExprLang for Scope<'_, Python> {
         }
     }
 
+    fn param(&self, index: usize) -> String {
+        self.param_var(index)
+    }
+
     fn convert(&self, e: String, from: Ty, to: Ty) -> String {
         match (from, to) {
             (Ty::Bool, Ty::Int) => format!("int({})", e),

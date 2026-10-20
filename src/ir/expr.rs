@@ -291,6 +291,10 @@ pub enum TExpr {
         field: Option<(String, String)>,
         ty: Ty,
     },
+    /// Parameter `index` of the packet (`Packet::params`), as i64.
+    Param {
+        index: usize,
+    },
     /// A checksum of the bytes between two marks; the bytes of `hole` (the
     /// checksum field itself, when it is inside the range) count as zero.
     Checksum {
@@ -304,7 +308,11 @@ pub enum TExpr {
 impl TExpr {
     pub fn ty(&self) -> Ty {
         match self {
-            TExpr::IntLit(_) | TExpr::Len { .. } | TExpr::Size { .. } | TExpr::Checksum { .. } => Ty::Int,
+            TExpr::IntLit(_)
+            | TExpr::Len { .. }
+            | TExpr::Size { .. }
+            | TExpr::Checksum { .. }
+            | TExpr::Param { .. } => Ty::Int,
             TExpr::FloatLit(_) => Ty::Float,
             TExpr::Ref { ty, .. }
             | TExpr::Index { ty, .. }
@@ -326,7 +334,8 @@ impl TExpr {
             | TExpr::FloatLit(_)
             | TExpr::Size { .. }
             | TExpr::Checksum { .. }
-            | TExpr::Last { .. } => {}
+            | TExpr::Last { .. }
+            | TExpr::Param { .. } => {}
             TExpr::Ref { member, .. } | TExpr::Aggregate { member, .. } | TExpr::Len { member } => out.push(*member),
             TExpr::Index { member, index, .. } => {
                 out.push(*member);

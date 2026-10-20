@@ -3,7 +3,12 @@
 use super::expr::store_value;
 use super::naming::{Zig, ident, scalar_type};
 use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mark_var, mask};
-use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, TextEncoding, ValueType};
+use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, PacketRef, StrMode, TExpr, TextEncoding, ValueType};
+
+/// `, a, b`: the arguments for nested packet `r`.
+pub fn call_args(scope: &Scope<'_, Zig>, r: &PacketRef) -> String {
+    scope.args(r, store_value).iter().map(|a| format!(", {}", a)).collect()
+}
 
 /// `&[_]u8{ 0x0d, 0x0a }`
 pub fn byte_list(bytes: &[u8]) -> String {
@@ -11,7 +16,7 @@ pub fn byte_list(bytes: &[u8]) -> String {
     format!("&[_]u8{{ {} }}", items.join(", "))
 }
 
-fn read_elem(codec: &Codec, ty: &ValueType) -> String {
+fn read_elem(scope: &Scope<'_, Zig>, codec: &Codec, ty: &ValueType) -> String {
     let st = scalar_type(ty);
     match codec {
         Codec::Bytes { nbytes, endian } => {
@@ -24,7 +29,7 @@ fn read_elem(codec: &Codec, ty: &ValueType) -> String {
         Codec::Float { endian, .. } => format!("@as(f64, @bitCast(try pb_r.readUint(8, {})))", Zig::little(endian)),
         Codec::Mac => "try pb_r.readMac()".into(),
         Codec::Varint(k) => format!("pbFromBits({}, try pb_r.readVarint({}))", st, k.id()),
-        Codec::Packet(n) => format!("try {}.decodeFrom(allocator, pb_r)", n),
+        Codec::Packet(r) => format!("try {}.decodeFrom(allocator, pb_r{})", r.name, call_args(scope, r)),
         Codec::Str(_) => unreachable!("strings are handled by Decoder::string"),
     }
 }
@@ -47,7 +52,7 @@ impl<'a> Decoder<'a> {
                 format!("try pb_r.readBytes(allocator, try pb_r.count({}, 8))", self.scope.expr(e))
             }
             (Some(_), _, Some(Count::Remaining)) => "try pb_r.readBytes(allocator, pb_r.remainingBits() / 8)".into(),
-            (Some(ty), Some(codec), None) => read_elem(codec, ty),
+            (Some(ty), Some(codec), None) => read_elem(&self.scope, codec, ty),
             (_, _, Some(Count::Until(_) | Count::Terminated { .. })) => {
                 unreachable!("union arms have no until or term")
             }
@@ -108,6 +113,20 @@ impl StepEmitter for Decoder<'_> {
         ));
     }
 
+    fn at(&self, out: &mut Out, m: &Member, target: &PacketRef, offset: &TExpr, root: bool) {
+        out.open("{");
+        let from = if root { "0" } else { "pb_start" };
+        out.line(format!("const pb_j = try pb_r.jump({}, {});", from, self.scope.expr(offset)));
+        out.line(format!(
+            "p.{} = try {}.decodeFrom(allocator, pb_r{});",
+            ident(&m.name),
+            target.name,
+            call_args(&self.scope, target)
+        ));
+        out.line("pb_r.jumpBack(pb_j);");
+        out.close("}");
+    }
+
     fn align(&self, out: &mut Out, bytes: u64) {
         out.line(format!("try pb_r.skipBits(pbPad(pb_r.positionBits() - pb_start, {}));", bytes * 8))
     }
@@ -126,7 +145,10 @@ impl StepEmitter for Decoder<'_> {
                     format!("try pb_r.untilSlice({}, {})", byte_list(term), optional)
                 }
                 (StrMode::Prefixed { prefix, .. }, _) => {
-                    format!("try pb_r.bytesSlice(try pb_r.count(@bitCast({}), 8))", read_elem(prefix, &PREFIX_LEN))
+                    format!(
+                        "try pb_r.bytesSlice(try pb_r.count(@bitCast({}), 8))",
+                        read_elem(&self.scope, prefix, &PREFIX_LEN)
+                    )
                 }
                 (_, Some(Count::Expr(e))) => {
                     format!("try pb_r.bytesSlice(try pb_r.count({}, 8))", self.scope.expr(e))
@@ -140,7 +162,7 @@ impl StepEmitter for Decoder<'_> {
             (StrMode::CString, _) => out.line(format!("{} = try pb_r.readCText(allocator);", target)),
             (StrMode::Prefixed { prefix, .. }, _) => {
                 out.open("{");
-                out.line(format!("const pb_n = {};", read_elem(prefix, &PREFIX_LEN)));
+                out.line(format!("const pb_n = {};", read_elem(&self.scope, prefix, &PREFIX_LEN)));
                 out.line(format!(
                     "{} = try pb_r.readText(allocator, try pb_r.count(@bitCast(pb_n), 8), false);",
                     target
@@ -171,7 +193,7 @@ impl StepEmitter for Decoder<'_> {
     }
 
     fn scalar(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec) {
-        out.line(format!("p.{} = {};", ident(&m.name), read_elem(codec, ty)));
+        out.line(format!("p.{} = {};", ident(&m.name), read_elem(&self.scope, codec, ty)));
     }
 
     fn array(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec, count: &Count) {
@@ -192,7 +214,7 @@ impl StepEmitter for Decoder<'_> {
                     out.line(format!("{} = pb_a;", target));
                     out.open("for (pb_a, 0..) |*pb_e, pb_i| {");
                     out.line("pb_r.atIndex(pb_i);");
-                    out.line(format!("pb_e.* = {};", read_elem(codec, ty)));
+                    out.line(format!("pb_e.* = {};", read_elem(&self.scope, codec, ty)));
                     out.close("}");
                     out.close("}");
                 }
@@ -219,7 +241,7 @@ impl StepEmitter for Decoder<'_> {
                     }
                     out.open("while (pb_r.remainingBits() > 0) {");
                     out.line("pb_r.atIndex(pb_l.items.len);");
-                    out.line(format!("try pb_l.append({});", read_elem(codec, ty)));
+                    out.line(format!("try pb_l.append({});", read_elem(&self.scope, codec, ty)));
                     if let Count::Until(cond) = count {
                         out.line(format!("if ({}) break;", self.scope.expr(cond)));
                     }

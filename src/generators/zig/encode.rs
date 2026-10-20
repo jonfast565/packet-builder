@@ -1,14 +1,14 @@
 //! Zig encoder statements. Range checks are not needed: exact-width fields
 //! cannot hold out-of-range values.
 
-use super::decode::byte_list;
+use super::decode::{byte_list, call_args};
 use super::expr::store_value;
 use super::naming::{Zig, ident, scalar_type};
 use crate::generators::common::union::{ZIG_LOGIC, arm_test, uses_selector};
 use crate::generators::common::{Dialect, Mode, Out, Scope, StepEmitter, mark_var, mask};
-use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, TextEncoding, ValueType};
+use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, PacketRef, StrMode, TExpr, TextEncoding, ValueType};
 
-fn write_elem(out: &mut Out, codec: &Codec, v: &str) {
+fn write_elem(scope: &Scope<'_, Zig>, out: &mut Out, codec: &Codec, v: &str) {
     match codec {
         Codec::Bytes { nbytes, endian } => {
             out.line(format!("try pb_w.writeUint(pbToBits({}), {}, {});", v, nbytes, Zig::little(endian)))
@@ -22,7 +22,7 @@ fn write_elem(out: &mut Out, codec: &Codec, v: &str) {
         }
         Codec::Mac => out.line(format!("try pb_w.writeBytes(&{});", v)),
         Codec::Varint(k) => out.line(format!("try pb_w.writeVarint({}, pbToBits({}));", k.id(), v)),
-        Codec::Packet(_) => out.line(format!("try {}.encodeTo(pb_w);", v)),
+        Codec::Packet(r) => out.line(format!("try {}.encodeTo(pb_w{});", v, call_args(scope, r))),
         Codec::Str(_) => unreachable!("strings are handled by Encoder::string"),
     }
 }
@@ -59,7 +59,7 @@ impl Encoder<'_> {
             }
             (StrMode::Prefixed { prefix, width }, _) => {
                 out.line(format!("try pb_w.checkPrefix(pb_sz, {});", width));
-                write_elem(out, prefix, "@as(u64, pb_sz)");
+                write_elem(&self.scope, out, prefix, "@as(u64, pb_sz)");
                 out.line(write);
             }
             (StrMode::Padded, Some(Count::Expr(e))) => {
@@ -120,12 +120,26 @@ impl StepEmitter for Encoder<'_> {
                     }
                     out.line("try pb_w.writeBytes(pb_v);");
                 }
-                (Some(_), Some(codec), None) => write_elem(out, codec, "pb_v"),
+                (Some(_), Some(codec), None) => write_elem(&self.scope, out, codec, "pb_v"),
                 _ => {}
             }
             out.close("},");
         }
         out.close("}");
+        out.close("}");
+    }
+
+    fn at(&self, out: &mut Out, m: &Member, target: &PacketRef, offset: &TExpr, root: bool) {
+        out.open("{");
+        let from = if root { "0" } else { "pb_start" };
+        out.line(format!("var pb_s = try pb_w.sub({}, {}, {});", from, self.scope.expr(offset), root));
+        out.line("defer pb_s.deinit();");
+        out.line(format!(
+            "p.{}.encodeTo(&pb_s{}) catch |pb_err| return pb_w.failFrom(&pb_s, pb_err);",
+            ident(&m.name),
+            call_args(&self.scope, target)
+        ));
+        out.line("try pb_w.place(&pb_s);");
         out.close("}");
     }
 
@@ -201,7 +215,7 @@ impl StepEmitter for Encoder<'_> {
             }
             (StrMode::Prefixed { prefix, width }, _) => {
                 out.line(format!("try pb_w.checkPrefix({}.len, {});", s, width));
-                write_elem(out, prefix, &format!("@as(u64, {}.len)", s));
+                write_elem(&self.scope, out, prefix, &format!("@as(u64, {}.len)", s));
                 out.line(format!("try pb_w.writeBytes({});", s));
             }
             (StrMode::Padded, Some(Count::Expr(e))) => {
@@ -232,7 +246,7 @@ impl StepEmitter for Encoder<'_> {
     }
 
     fn scalar(&self, out: &mut Out, m: &Member, _ty: &ValueType, codec: &Codec) {
-        write_elem(out, codec, &format!("p.{}", ident(&m.name)));
+        write_elem(&self.scope, out, codec, &format!("p.{}", ident(&m.name)));
     }
 
     fn array(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec, count: &Count) {
@@ -254,7 +268,7 @@ impl StepEmitter for Encoder<'_> {
         } else {
             out.open(format!("for ({}, 0..) |pb_v, pb_i| {{", place));
             out.line("pb_w.atIndex(pb_i);");
-            write_elem(out, codec, "pb_v");
+            write_elem(&self.scope, out, codec, "pb_v");
             out.close("}");
         }
     }

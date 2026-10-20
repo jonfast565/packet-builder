@@ -1,12 +1,12 @@
 //! Go encoder statements. Like decoding, the writer records the first error.
 
-use super::decode::byte_list;
+use super::decode::{byte_list, call_args, with_args};
 use super::expr::store_value;
 use super::naming::{Go, field_name};
 use super::packet::arm_kind;
 use crate::generators::common::union::{C_LOGIC, arm_test, mismatch_message, uses_selector, variant_name};
 use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mark_var, mask, string_literal};
-use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, TextEncoding, ValueType};
+use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, PacketRef, StrMode, TExpr, TextEncoding, ValueType};
 
 fn write_elem(out: &mut Out, codec: &Codec, ty: &ValueType, v: &str) {
     if let ValueType::Int { width, signed } = ty
@@ -31,7 +31,7 @@ fn write_elem(out: &mut Out, codec: &Codec, ty: &ValueType, v: &str) {
         }
         Codec::Mac => out.line(format!("pbW.WriteBytes({}[:])", v)),
         Codec::Varint(k) => out.line(format!("pbW.WriteVarint({}, uint64({}))", k.id(), v)),
-        Codec::Packet(_) => out.line(format!("{}.EncodeTo(pbW)", v)),
+        Codec::Packet(r) => out.line(format!("{}.EncodeTo(pbW{})", v, call_args(r))),
         Codec::Str(_) => unreachable!("strings are handled by Encoder::string"),
     }
 }
@@ -43,6 +43,27 @@ pub struct Encoder<'a> {
 impl<'a> Encoder<'a> {
     pub fn new(packet: &'a Packet) -> Self {
         Encoder { scope: Scope::new(packet, Mode::Encode) }
+    }
+
+    fn array_body(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec, count: &Count) {
+        let place = format!("p.{}", field_name(&m.name));
+        if let Count::Expr(e) = count
+            && !self.packet().depends_on_wire(e)
+        {
+            out.line(format!("pbW.CheckLen(len({}), {})", place, self.scope.expr(e)));
+        }
+        if let Count::Terminated { term, .. } = count {
+            out.line(format!("pbW.CheckNoTerm({}, {})", place, byte_list(term)));
+            out.line(format!("pbW.WriteBytes({})", place));
+            out.line(format!("pbW.WriteBytes({})", byte_list(term)));
+        } else if ty.is_byte() {
+            out.line(format!("pbW.WriteBytes({})", place));
+        } else {
+            out.open(format!("for pbI := range {} {{", place));
+            out.line("pbW.AtIndex(pbI)");
+            write_elem(out, codec, ty, &format!("{}[pbI]", place));
+            out.close("}");
+        }
     }
 }
 
@@ -91,12 +112,12 @@ impl StepEmitter for Encoder<'_> {
                     }
                     out.line(format!("pbW.WriteBytes({})", target));
                 }
-                (Some(ValueType::Packet(n)), _, None) => {
+                (Some(ValueType::Packet(n)), Some(codec @ Codec::Packet(r)), None) => {
                     out.line(format!("pbV := {}", target));
                     out.open("if pbV == nil {");
                     out.line(format!("pbV = &{}{{}}", n));
                     out.close("}");
-                    out.line("pbV.EncodeTo(pbW)");
+                    with_args(&self.scope, out, codec, |out| out.line(format!("pbV.EncodeTo(pbW{})", call_args(r))));
                 }
                 (Some(ty), Some(codec), None) => write_elem(out, codec, ty, &target),
                 _ => {}
@@ -109,6 +130,17 @@ impl StepEmitter for Encoder<'_> {
             string_literal(&format!("`{}` holds no known arm", m.name))
         ));
         out.line("}");
+        out.close("}");
+    }
+
+    fn at(&self, out: &mut Out, m: &Member, target: &PacketRef, offset: &TExpr, root: bool) {
+        out.open("{");
+        let from = if root { "0" } else { "pb_start" };
+        out.line(format!("pbS := pbW.Sub({}, {}, {})", from, self.scope.expr(offset), root));
+        with_args(&self.scope, out, &Codec::Packet(target.clone()), |out| {
+            out.line(format!("p.{}.EncodeTo(pbS{})", field_name(&m.name), call_args(target)))
+        });
+        out.line("pbW.Place(pbS)");
         out.close("}");
     }
 
@@ -216,28 +248,11 @@ impl StepEmitter for Encoder<'_> {
     }
 
     fn scalar(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec) {
-        write_elem(out, codec, ty, &format!("p.{}", field_name(&m.name)));
+        with_args(&self.scope, out, codec, |out| write_elem(out, codec, ty, &format!("p.{}", field_name(&m.name))));
     }
 
     fn array(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec, count: &Count) {
-        let place = format!("p.{}", field_name(&m.name));
-        if let Count::Expr(e) = count
-            && !self.packet().depends_on_wire(e)
-        {
-            out.line(format!("pbW.CheckLen(len({}), {})", place, self.scope.expr(e)));
-        }
-        if let Count::Terminated { term, .. } = count {
-            out.line(format!("pbW.CheckNoTerm({}, {})", place, byte_list(term)));
-            out.line(format!("pbW.WriteBytes({})", place));
-            out.line(format!("pbW.WriteBytes({})", byte_list(term)));
-        } else if ty.is_byte() {
-            out.line(format!("pbW.WriteBytes({})", place));
-        } else {
-            out.open(format!("for pbI := range {} {{", place));
-            out.line("pbW.AtIndex(pbI)");
-            write_elem(out, codec, ty, &format!("{}[pbI]", place));
-            out.close("}");
-        }
+        with_args(&self.scope, out, codec, |out| self.array_body(out, m, ty, codec, count));
     }
 
     fn bitfield(&self, out: &mut Out, container: &Codec, container_width: u32, parts: &[BitPart]) {

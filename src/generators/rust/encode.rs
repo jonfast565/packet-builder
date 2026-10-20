@@ -1,14 +1,14 @@
 //! Rust encoder statements.
 
-use super::decode::byte_list;
+use super::decode::{byte_list, call_args};
 use super::expr::store_value;
 use super::naming::{Rust, ident, scalar_type};
 use crate::generators::common::union::{C_LOGIC, arm_test, mismatch_message, uses_selector, variant_name};
 use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mark_var, mask, string_literal};
-use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, TextEncoding, ValueType};
+use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, PacketRef, StrMode, TExpr, TextEncoding, ValueType};
 
 /// Statements that write one element held in `v`.
-fn write_elem(out: &mut Out, codec: &Codec, ty: &ValueType, v: &str) {
+fn write_elem(scope: &Scope<'_, Rust>, out: &mut Out, codec: &Codec, ty: &ValueType, v: &str) {
     if let ValueType::Int { width, signed } = ty
         && ty.needs_range_check()
     {
@@ -31,7 +31,7 @@ fn write_elem(out: &mut Out, codec: &Codec, ty: &ValueType, v: &str) {
         }
         Codec::Mac => out.line(format!("pb_w.write_bytes(&{});", v)),
         Codec::Varint(k) => out.line(format!("pb_w.write_varint({}, {} as u64)?;", k.id(), v)),
-        Codec::Packet(_) => out.line(format!("{}.encode_to(pb_w)?;", v)),
+        Codec::Packet(r) => out.line(format!("{}.encode_to(pb_w{})?;", v, call_args(scope, r))),
         Codec::Str(_) => unreachable!("strings are handled by Encoder::string"),
     }
 }
@@ -96,13 +96,22 @@ impl StepEmitter for Encoder<'_> {
                 }
                 (Some(ty), Some(codec), None) => {
                     let v = if matches!(codec, Codec::Packet(_)) { "pb_v" } else { "(*pb_v)" };
-                    write_elem(out, codec, ty, v);
+                    write_elem(&self.scope, out, codec, ty, v);
                 }
                 _ => {}
             }
             out.close("}");
         }
         out.close("}");
+        out.close("}");
+    }
+
+    fn at(&self, out: &mut Out, m: &Member, target: &PacketRef, offset: &TExpr, root: bool) {
+        out.open("{");
+        let from = if root { "0" } else { "pb_start" };
+        out.line(format!("let mut pb_s = pb_w.sub({}, {}, {})?;", from, self.scope.expr(offset), root));
+        out.line(format!("p.{}.encode_to(&mut pb_s{})?;", ident(&m.name), call_args(&self.scope, target)));
+        out.line("pb_w.place(pb_s);");
         out.close("}");
     }
 
@@ -191,7 +200,7 @@ impl StepEmitter for Encoder<'_> {
             }
             (StrMode::Prefixed { prefix, width }, _) => {
                 out.line(format!("pb_w.check_u(pb_b.len() as u64, {})?;", width));
-                write_elem(out, prefix, &PREFIX_LEN, "pb_b.len()");
+                write_elem(&self.scope, out, prefix, &PREFIX_LEN, "pb_b.len()");
                 out.line("pb_w.write_bytes(pb_b);");
             }
             (StrMode::Padded, Some(Count::Expr(e))) => {
@@ -221,7 +230,7 @@ impl StepEmitter for Encoder<'_> {
     }
 
     fn scalar(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec) {
-        write_elem(out, codec, ty, &format!("p.{}", ident(&m.name)));
+        write_elem(&self.scope, out, codec, ty, &format!("p.{}", ident(&m.name)));
     }
 
     fn array(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec, count: &Count) {
@@ -246,7 +255,7 @@ impl StepEmitter for Encoder<'_> {
                 Codec::Packet(_) => "pb_v",
                 _ => "*pb_v",
             };
-            write_elem(out, codec, ty, &format!("({})", v));
+            write_elem(&self.scope, out, codec, ty, &format!("({})", v));
             out.close("}");
         }
     }

@@ -82,6 +82,19 @@ class PbReader(_PbTrace):
     def remaining_bits(self):
         return self.limit - self.pos
 
+    def jump(self, start, offset):
+        """Read from `offset` bytes after bit `start` (the packet start, or 0
+        for the start of the input) until `jump_back`; windows do not apply."""
+        target = start + offset * 8
+        if offset < 0 or start % 8 or target > len(self.data) * 8:
+            raise self.error(PbError.INVALID, "offset %d is past the end of the input" % offset)
+        saved = (self.pos, self.limit, self.windows)
+        self.pos, self.limit, self.windows = target, len(self.data) * 8, 0
+        return saved
+
+    def jump_back(self, saved):
+        self.pos, self.limit, self.windows = saved
+
     def position_bits(self):
         return self.pos
 
@@ -249,11 +262,29 @@ class PbReader(_PbTrace):
 class PbWriter(_PbTrace):
     """Builds a byte buffer; integers may be written at any bit position."""
 
-    __slots__ = ("buf",)
+    __slots__ = ("buf", "base", "placed")
 
     def __init__(self):
         super().__init__()
         self.buf = bytearray()
+        self.base = 0  # where buf goes in the output, in bits (sub writers)
+        self.placed = []  # (byte offset, bytes, path) of packets placed with `at`
+
+    def sub(self, start, offset, root):
+        """A writer for a packet placed `offset` bytes after bit `start` of this
+        writer (the packet start), or after the start of the output (`root`)."""
+        start = 0 if root else self.base + start
+        if offset < 0 or start % 8:
+            raise self.error(PbError.RANGE, "bad offset %d (from bit %d)" % (offset, start))
+        s = PbWriter()
+        s.base = start + offset * 8
+        s.frames = [list(f) for f in self.frames]
+        return s
+
+    def place(self, s):
+        """Keep what `s` wrote, for `finish`."""
+        self.placed.append((s.base // 8, bytes(s.buf), self.path()))
+        self.placed.extend(s.placed)
 
     def position_bits(self):
         return self.pos
@@ -285,6 +316,19 @@ class PbWriter(_PbTrace):
             bits -= take
 
     def finish(self):
+        """The output, with every placed packet written at its offset: past the
+        end (zero-filling the gap), or over bytes that must already match."""
+        for at, data, path in sorted(self.placed, key=lambda p: p[0]):
+            for i, b in enumerate(data):
+                k = at + i
+                if k < len(self.buf):
+                    if self.buf[k] != b:
+                        msg = "the packet placed at byte %d does not match the bytes already there" % at
+                        raise PbError(PbError.MISMATCH, msg, path, k * 8)
+                else:
+                    self.buf += bytes(k - len(self.buf))
+                    self.buf.append(b)
+        self.placed = []
         return bytes(self.buf)
 
     def end_window(self, start, size, exact):

@@ -1,0 +1,242 @@
+{
+  "spec": "params.packet",
+  "cases": [
+    {
+      "name": "arguments reach nested packets, arrays and arms",
+      "packet": "Versioned",
+      "hex": "02 0002 aabb 07 08 03 09 04 05 06 0a",
+      "expect": {
+        "version": 2,
+        "length": 2,
+        "body": {
+          "data": "aabb",
+          "item": {
+            "a": 7,
+            "b": "08",
+            "seen": 2
+          }
+        },
+        "items": [
+          {
+            "a": 3,
+            "b": "09",
+            "seen": 3
+          },
+          {
+            "a": 4,
+            "b": "05",
+            "seen": 3
+          }
+        ],
+        "tail": {
+          "kind": "new",
+          "value": {
+            "a": 6,
+            "b": "0a",
+            "seen": 2
+          }
+        }
+      }
+    },
+    {
+      "name": "an argument changes the layout",
+      "packet": "Versioned",
+      "hex": "01 0001 aa 07 03 09 04 05 06",
+      "expect": {
+        "version": 1,
+        "length": 1,
+        "body": {
+          "data": "aa",
+          "item": {
+            "a": 7,
+            "b": "",
+            "seen": 1
+          }
+        },
+        "items": [
+          {
+            "a": 3,
+            "b": "09",
+            "seen": 2
+          },
+          {
+            "a": 4,
+            "b": "05",
+            "seen": 2
+          }
+        ],
+        "tail": {
+          "kind": "old",
+          "value": {
+            "a": 6,
+            "b": "",
+            "seen": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "an assertion on a parameter",
+      "packet": "Versioned",
+      "hex": "0a 0000 07 08 03 09 04 05 06 0a",
+      "error_kind": "constraint",
+      "error_path": "Versioned.body"
+    },
+    {
+      "name": "arguments wrap to the parameter type",
+      "packet": "Wrapped",
+      "hex": "0a",
+      "expect": {
+        "x": 10,
+        "inner": {
+          "wide": 4,
+          "signed": -126
+        }
+      }
+    },
+    {
+      "name": "fields at offsets from the packet start",
+      "packet": "Tables",
+      "hex": "07 03 05 00 01aa 02bbcc",
+      "expect": {
+        "tag": 7,
+        "table": {
+          "first": 3,
+          "second": 5,
+          "a": {
+            "len": 1,
+            "data": "aa"
+          },
+          "b": {
+            "len": 2,
+            "data": "bbcc"
+          }
+        }
+      }
+    },
+    {
+      "name": "an offset past the end of the input",
+      "packet": "Tables",
+      "hex": "07 03 09 00 01aa 02bbcc",
+      "error_kind": "invalid",
+      "error_path": "Tables.table.b"
+    },
+    {
+      "name": "an entry at an offset runs past the end",
+      "packet": "Tables",
+      "hex": "07 03 05 00 01aa 05bbcc",
+      "error_kind": "incomplete",
+      "error_path": "Tables.table.b.data"
+    },
+    {
+      "name": "entries placed over each other must agree",
+      "packet": "Tables",
+      "hex": "07 03 05 00 01aa 02bbcc",
+      "set": {
+        "table.first": 4
+      },
+      "encode_error_kind": "mismatch"
+    },
+    {
+      "name": "a field at an offset from the start of the input",
+      "packet": "Rooted",
+      "hex": "00 02 03aabbcc",
+      "expect": {
+        "tag": 0,
+        "ptr": {
+          "off": 2,
+          "target": {
+            "len": 3,
+            "data": "aabbcc"
+          }
+        }
+      }
+    },
+    {
+      "name": "a recursive tree",
+      "packet": "Node",
+      "hex": "01 02 02 00 03 01 04 00",
+      "expect": {
+        "value": 1,
+        "count": 2,
+        "children": [
+          {
+            "value": 2,
+            "count": 0,
+            "children": []
+          },
+          {
+            "value": 3,
+            "count": 1,
+            "children": [
+              {
+                "value": 4,
+                "count": 0,
+                "children": []
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "recursion deeper than the limit",
+      "packet": "Node",
+      "hex": "01010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010100",
+      "error_kind": "invalid"
+    },
+    {
+      "name": "recursion through until, a union and at root",
+      "packet": "Chain",
+      "hex": "01 05 02 05 00 01 09 00",
+      "expect": {
+        "links": [
+          {
+            "kind": 1,
+            "body": {
+              "kind": "value",
+              "value": {
+                "v": 5
+              }
+            }
+          },
+          {
+            "kind": 2,
+            "body": {
+              "kind": "jump",
+              "value": {
+                "off": 5,
+                "rest": {
+                  "links": [
+                    {
+                      "kind": 1,
+                      "body": {
+                        "kind": "value",
+                        "value": {
+                          "v": 9
+                        }
+                      }
+                    },
+                    {
+                      "kind": 0,
+                      "body": {
+                        "kind": "end",
+                        "value": null
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "a jump to itself hits the depth limit",
+      "packet": "Chain",
+      "hex": "02 00",
+      "error_kind": "invalid"
+    }
+  ]
+}

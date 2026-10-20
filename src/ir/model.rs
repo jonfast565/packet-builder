@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use super::expr::{Mark, TExpr};
-use crate::ast::Endianness;
+pub use super::wire::{BitPart, Codec, Count, Step, StrMode};
 pub use crate::ast::{Radix, TextEncoding, VarintKind};
 
 #[derive(Debug, Clone)]
@@ -115,13 +115,15 @@ impl Module {
     }
 
     /// Packets ordered so that every packet comes after the packets it
-    /// contains (needed by languages that require declaration before use).
+    /// contains by value (needed by languages that require declaration before
+    /// use). Arrays are stored out of line, so they do not count: that is how
+    /// a packet can contain itself.
     pub fn in_dependency_order(&self) -> Vec<&Packet> {
         fn visit<'a>(m: &'a Module, p: &'a Packet, seen: &mut HashSet<String>, out: &mut Vec<&'a Packet>) {
             if !seen.insert(p.name.clone()) {
                 return;
             }
-            for member in &p.members {
+            for member in p.members.iter().filter(|m| m.array.is_none()) {
                 let mut deps: Vec<&String> = Vec::new();
                 match &member.ty {
                     ValueType::Packet(n) => deps.push(n),
@@ -154,6 +156,8 @@ impl Module {
 #[derive(Debug, Clone)]
 pub struct Packet {
     pub name: String,
+    /// Values passed in by the containing packet (`packet Body(version uint8)`).
+    pub params: Vec<Param>,
     /// Struct members in declaration order (stored fields, bitfield members,
     /// calculated fields). Padding is not a member.
     pub members: Vec<Member>,
@@ -181,6 +185,34 @@ pub struct Packet {
     /// Members only known after encoding the body: `patches` and the
     /// calculated members that depend on them.
     pub wire_dependent: Vec<usize>,
+}
+
+/// A packet parameter: an integer the containing packet passes in. It is
+/// not stored; expressions read it as `TExpr::Param`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Param {
+    pub name: String,
+    pub ty: ValueType,
+}
+
+/// A nested packet and the arguments for its parameters: i64 expressions
+/// over the containing packet, converted to the parameter types (`types`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PacketRef {
+    pub name: String,
+    pub args: Vec<TExpr>,
+    pub types: Vec<ValueType>,
+}
+
+impl PacketRef {
+    pub fn new(name: &str) -> Self {
+        PacketRef { name: name.to_string(), args: Vec::new(), types: Vec::new() }
+    }
+
+    /// Each argument with the type of its parameter.
+    pub fn typed_args(&self) -> impl Iterator<Item = (&TExpr, &ValueType)> {
+        self.args.iter().zip(&self.types)
+    }
 }
 
 /// `assert cond "message"`.
@@ -245,7 +277,9 @@ impl Packet {
     /// True if decoding or encoding needs the packet's start position
     /// (`pb_start`): for alignment, or for a mark.
     pub fn needs_start(&self, encoding: bool) -> bool {
-        self.uses_align() || self.marks(encoding).contains(&Mark::PacketStart)
+        self.uses_align()
+            || self.marks(encoding).contains(&Mark::PacketStart)
+            || self.steps.iter().any(|s| matches!(s, Step::At { root: false, .. }))
     }
 }
 
@@ -388,111 +422,4 @@ pub fn storage_for(width: u32) -> u32 {
         17..=32 => 32,
         _ => 64,
     }
-}
-
-#[derive(Debug, Clone)]
-pub enum Count {
-    Expr(TExpr),
-    /// Repeat until the input is exhausted.
-    Remaining,
-    /// Repeat until the expression (over `last`, the element just read)
-    /// holds, or the input ends; the element that ends it is kept.
-    Until(TExpr),
-    /// Bytes up to this sequence, which is consumed; `optional`: or up to
-    /// the end of the input.
-    Terminated {
-        term: Vec<u8>,
-        optional: bool,
-    },
-}
-
-/// How a single element travels on the wire.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Codec {
-    /// Byte aligned integer of `nbytes` bytes in the given byte order.
-    Bytes {
-        nbytes: u32,
-        endian: Endianness,
-    },
-    /// Integer of `width` bits read MSB-first from the bit stream.
-    Bits {
-        width: u32,
-    },
-    Float {
-        width: u32,
-        endian: Endianness,
-    },
-    Mac,
-    Packet(String),
-    Str(StrMode),
-    /// A variable-length integer.
-    Varint(VarintKind),
-}
-
-/// How a string's length is determined. For `Padded` and `Exact` the byte
-/// count is the step's `array` count.
-#[derive(Debug, Clone, PartialEq)]
-pub enum StrMode {
-    /// `char[n]`: n bytes; the text ends at the first NUL, encoding pads with NULs.
-    Padded,
-    /// `string[n]` / `string[]`: exactly the given bytes.
-    Exact,
-    /// `string(uint8)`: a length prefix (written automatically), then the bytes.
-    Prefixed { prefix: Box<Codec>, width: u32 },
-    /// `cstring`: bytes up to a terminating NUL.
-    CString,
-    /// `string term 0x0d 0x0a`: bytes up to a terminator, which is consumed;
-    /// `optional`: or up to the end of the input.
-    Terminated { term: Vec<u8>, optional: bool },
-}
-
-impl Codec {
-    pub fn bits(&self) -> u32 {
-        match self {
-            Codec::Bytes { nbytes, .. } => nbytes * 8,
-            Codec::Bits { width } => *width,
-            Codec::Float { width, .. } => *width,
-            Codec::Mac => 48,
-            Codec::Packet(_) | Codec::Str(_) | Codec::Varint(_) => 0,
-        }
-    }
-
-    /// Lower bound on the size of one element, used to reject element counts
-    /// larger than the remaining input before allocating. Nested packets in
-    /// arrays are at least one byte (enforced by the analysis).
-    pub fn min_elem_bits(&self) -> u64 {
-        match self {
-            Codec::Packet(_) | Codec::Str(_) | Codec::Varint(_) => 8,
-            c => c.bits() as u64,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum Step {
-    /// A stored member, or padding when `member` is None.
-    Field { member: Option<usize>, ty: ValueType, codec: Codec, array: Option<Count> },
-    /// An integer container split into sub-fields; `name` is the container's.
-    Bitfield { name: String, container: Codec, container_width: u32, parts: Vec<BitPart> },
-    /// Evaluate a calculated member (decode only).
-    Calc { member: usize },
-    /// Skip (decode) or zero-fill (encode) to the next multiple of `bytes`
-    /// bytes counted from the start of the packet.
-    Align { bytes: u64 },
-    /// Check `Packet::asserts[index]`, once its inputs are known.
-    Assert { index: usize },
-    /// A tagged union: `selector` picks one of `arms` (the member's union).
-    Switch { member: usize, selector: TExpr, arms: Vec<Arm> },
-    /// The next step occupies exactly `size` bytes (`size n` after a field).
-    OpenWindow { size: TExpr, exact: bool },
-    /// The end of the window opened by step `open`.
-    CloseWindow { open: usize, exact: bool },
-}
-
-#[derive(Debug, Clone)]
-pub struct BitPart {
-    pub member: usize,
-    pub shift: u32,
-    pub width: u32,
-    pub signed: bool,
 }

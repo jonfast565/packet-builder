@@ -1,13 +1,13 @@
 //! C# encoder statements.
 
-use super::decode::byte_list;
+use super::decode::{byte_list, call_args};
 use super::expr::store_value;
 use super::naming::{CSharp, arm_class, scalar_type};
 use crate::generators::common::union::{C_LOGIC, arm_test, mismatch_message, uses_selector};
 use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mark_var, mask, string_literal};
-use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, TextEncoding, ValueType};
+use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, PacketRef, StrMode, TExpr, TextEncoding, ValueType};
 
-fn write_elem(out: &mut Out, codec: &Codec, ty: &ValueType, v: &str) {
+fn write_elem(scope: &Scope<'_, CSharp>, out: &mut Out, codec: &Codec, ty: &ValueType, v: &str) {
     match ty {
         ValueType::Int { width, signed } if ty.needs_range_check() => {
             if *signed {
@@ -36,7 +36,7 @@ fn write_elem(out: &mut Out, codec: &Codec, ty: &ValueType, v: &str) {
         )),
         Codec::Mac => out.line(format!("pbW.WriteBytes({});", v)),
         Codec::Varint(k) => out.line(format!("pbW.WriteVarint({}, unchecked((ulong){}));", k.id(), v)),
-        Codec::Packet(_) => out.line(format!("{}.EncodeTo(pbW);", v)),
+        Codec::Packet(r) => out.line(format!("{}.EncodeTo(pbW{});", v, call_args(scope, r))),
         Codec::Str(_) => unreachable!("strings are handled by Encoder::string"),
     }
 }
@@ -100,7 +100,7 @@ impl StepEmitter for Encoder<'_> {
                     }
                     out.line("pbW.WriteBytes(pbV.Value);");
                 }
-                (Some(ty), Some(codec), None) => write_elem(out, codec, ty, "pbV.Value"),
+                (Some(ty), Some(codec), None) => write_elem(&self.scope, out, codec, ty, "pbV.Value"),
                 _ => {}
             }
             out.line("break;");
@@ -113,6 +113,15 @@ impl StepEmitter for Encoder<'_> {
         ));
         out.pop();
         out.close("}");
+        out.close("}");
+    }
+
+    fn at(&self, out: &mut Out, m: &Member, target: &PacketRef, offset: &TExpr, root: bool) {
+        out.open("{");
+        let from = if root { "0" } else { "pb_start" };
+        out.line(format!("var pbS = pbW.Sub({}, {}, {});", from, self.scope.expr(offset), CSharp::flag(root)));
+        out.line(format!("{}.EncodeTo(pbS{});", self.scope.field(m), call_args(&self.scope, target)));
+        out.line("pbW.Place(pbS);");
         out.close("}");
     }
 
@@ -200,7 +209,7 @@ impl StepEmitter for Encoder<'_> {
             }
             (StrMode::Prefixed { prefix, width }, _) => {
                 out.line(format!("pbW.CheckU((ulong)pbB.Length, {});", width));
-                write_elem(out, prefix, &PREFIX_LEN, "pbB.Length");
+                write_elem(&self.scope, out, prefix, &PREFIX_LEN, "pbB.Length");
                 out.line("pbW.WriteBytes(pbB);");
             }
             (StrMode::Padded, Some(Count::Expr(e))) => {
@@ -230,7 +239,7 @@ impl StepEmitter for Encoder<'_> {
     }
 
     fn scalar(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec) {
-        write_elem(out, codec, ty, &self.scope.field(m));
+        write_elem(&self.scope, out, codec, ty, &self.scope.field(m));
     }
 
     fn array(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec, count: &Count) {
@@ -251,7 +260,7 @@ impl StepEmitter for Encoder<'_> {
             out.open("{");
             out.line("pbW.AtIndex(pbI);");
             out.line(format!("var pbV = {}[pbI];", place));
-            write_elem(out, codec, ty, "pbV");
+            write_elem(&self.scope, out, codec, ty, "pbV");
             out.close("}");
         }
     }

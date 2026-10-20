@@ -3,7 +3,7 @@
 use super::decode::Decoder;
 use super::encode::Encoder;
 use super::naming::{default_value, ident, member_type, owns_memory, scalar_type};
-use crate::generators::common::{Out, StepEmitter, member_category};
+use crate::generators::common::{Out, StepEmitter, member_category, param_var};
 use crate::ir::{Arm, Packet, Union, ValueType};
 
 /// The Zig type an arm holds (`void` for an empty arm).
@@ -103,11 +103,23 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     out.close("}");
     out.line("");
 
+    // Parameters: `, pbp_a: u8` in signatures, `, pbp_a` in calls.
+    let decl: String = p.params.iter().map(|x| format!(", {}: {}", param_var(&x.name), scalar_type(&x.ty))).collect();
+    let pass: String = p.params.iter().map(|x| format!(", {}", param_var(&x.name))).collect();
+    // Zig rejects unused parameters.
+    let touch = |out: &mut Out, body: &str| {
+        for x in &p.params {
+            if !uses(body, &param_var(&x.name)) {
+                out.line(format!("_ = {};", param_var(&x.name)));
+            }
+        }
+    };
+
     // decode
     out.line("/// Decode from the start of `data`. Trailing bytes are ignored.");
-    out.open(format!("pub fn decode(allocator: std.mem.Allocator, data: []const u8) PbError!{} {{", name));
+    out.open(format!("pub fn decode(allocator: std.mem.Allocator, data: []const u8{}) PbError!{} {{", decl, name));
     out.line("var pb_r = PbReader.init(data);");
-    out.line("return decodeFrom(allocator, &pb_r);");
+    out.line(format!("return decodeFrom(allocator, &pb_r{});", pass));
     out.close("}");
     out.line("");
 
@@ -115,7 +127,8 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     body.push();
     body.push();
     Decoder::new(p).emit_steps(&mut body);
-    out.open(format!("pub fn decodeFrom(allocator: std.mem.Allocator, pb_r: *PbReader) PbError!{} {{", name));
+    out.open(format!("pub fn decodeFrom(allocator: std.mem.Allocator, pb_r: *PbReader{}) PbError!{} {{", decl, name));
+    touch(out, &body.buf);
     // The errdefer below uses the allocator too.
     if !uses(&body.buf, "allocator") && !(allocates && uses(&body.buf, "p")) {
         out.line("_ = allocator;");
@@ -142,10 +155,11 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
 
     // encode
     out.line("/// Encode into a new buffer owned by the caller.");
-    out.open(format!("pub fn encode(self: *const {}, allocator: std.mem.Allocator) PbError![]u8 {{", name));
+    out.open(format!("pub fn encode(self: *const {}, allocator: std.mem.Allocator{}) PbError![]u8 {{", name, decl));
     out.line("var pb_w = PbWriter.init(allocator);");
     out.line("errdefer pb_w.deinit();");
-    out.line("try self.encodeTo(&pb_w);");
+    out.line(format!("try self.encodeTo(&pb_w{});", pass));
+    out.line("try pb_w.finish();");
     out.line("return pb_w.toOwnedSlice();");
     out.close("}");
     out.line("");
@@ -158,7 +172,8 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
         encoder.define_local(&mut body, m, e);
     }
     encoder.emit_steps(&mut body);
-    out.open(format!("pub fn encodeTo(self: *const {}, pb_w: *PbWriter) PbError!void {{", name));
+    out.open(format!("pub fn encodeTo(self: *const {}, pb_w: *PbWriter{}) PbError!void {{", name, decl));
+    touch(out, &body.buf);
     if uses(&body.buf, "p") {
         out.line("const p = self;");
     } else {

@@ -45,8 +45,10 @@ Real protocol descriptions live in [`examples/`](examples):
   packets with tokens, FDO91 atom streams).
   [`docs/p3.md`](docs/p3.md) decodes a session that includes a captured INIT
   packet, checks the CRCs and builds a reply.
-* [`examples/network.packet`](examples/network.packet): Ethernet, IPv4, TCP,
-  UDP and DNS headers, all heavy users of sub-byte fields.
+* [`examples/network.packet`](examples/network.packet): Ethernet, IPv4, TCP
+  and UDP headers (with their option lists), all heavy users of sub-byte
+  fields, and DNS messages with compressed names (parameters, `at root` and
+  recursion).
 
 ## Usage
 
@@ -390,6 +392,76 @@ Each union becomes a type named after the packet and field (`MessageBody`):
 | C# | abstract class with a sealed subclass per arm holding `Value` | `if (m.Body is MessageBody.Pair p) ... p.Value.A` |
 | Zig | `union(enum)` | `switch (m.body) { .pair => |p| ..., else => {} }` |
 
+### Parameters
+
+A packet can take integer parameters from the packet that contains it.
+Its expressions use them like fields, but they are not stored:
+
+```
+packet Body(version uint8, length uint16) be {
+  data bytes[length],
+  extra uint8[when version >= 2 then 1 otherwise 0]
+}
+
+packet Message be {
+  version uint8,
+  length uint16,
+  body Body(version, length),       // arguments: any expressions over earlier fields
+  items Item(version)[count],       // also in arrays and union arms
+}
+```
+
+An argument is converted to its parameter's type (wrapping, like a
+calculated field). Generated `decode`, `decode_from`, `encode` and
+`encode_to` take the parameters as extra arguments (`Body::decode(&data,
+version, length)`), and nested packets pass them along. To keep a value,
+store it with a calculated field (`calc v uint8 = version`).
+
+### Absolute offsets
+
+`at` reads a packet from somewhere else instead of where the field is
+declared; the cursor does not move:
+
+```
+packet Table be {
+  first uint8,
+  second uint8,
+  a Entry at first,                  // `first` bytes from the start of Table
+  b Entry at root second             // from the start of the whole input
+}
+```
+
+* The field must be a single packet (it may take arguments). Windows do not
+  apply at the offset, which may point anywhere in the input; an offset
+  past the end is an `invalid` error.
+* Encoding writes each such packet at its offset once the whole input is
+  written: past the end, the gap is zero-filled; over bytes already
+  written (by the sequential fields, or another `at` field), the bytes
+  must match, or encoding fails with `mismatch`. Several fields may point
+  at the same data, as compressed DNS names do. This happens in the
+  top-level `encode`; code that calls `encode_to` with its own writer
+  finishes it with the writer's `finish` (`pb_writer_finish` in C).
+
+### Recursion
+
+A packet may contain itself, directly or through other packets, as long as
+every cycle goes through an array (`[n]`, `[]`, `until`) or an `at` field,
+which are stored out of line:
+
+```
+packet Node be {
+  value uint8,
+  count uint8 = len(children),
+  children Node[count]
+}
+```
+
+Decoding fails with `invalid` beyond 64 nested packets, which also stops
+offsets that loop. `examples/network.packet` decodes DNS messages with
+name compression this way: a name is a list of labels `until` an empty
+label or a pointer, and a pointer label holds the rest of the name `at
+root` its offset.
+
 ### Calculated fields
 
 ```
@@ -553,7 +625,8 @@ and the test suite checks that they agree.
 
 Every packet `P` gets a struct/class with one member per field, plus decode
 from bytes, decode from a shared reader (for streams and nesting), encode,
-and encode into a shared writer. Decoding ignores trailing bytes.
+and encode into a shared writer. Decoding ignores trailing bytes. A packet
+with parameters takes them as extra arguments to each of these.
 
 | language | decode | encode | errors |
 |----------|--------|--------|--------|

@@ -14,6 +14,10 @@ impl ExprLang for Scope<'_, Rust> {
         format!("({:?}f64)", v)
     }
 
+    fn param(&self, index: usize) -> String {
+        format!("({} as i64)", self.param_var(index))
+    }
+
     fn member_ref(&self, member: usize, ty: Ty) -> String {
         let t = if ty == Ty::Float { "f64" } else { "i64" };
         format!("({} as {})", self.place(member), t)

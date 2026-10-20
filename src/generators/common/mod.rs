@@ -19,7 +19,7 @@ pub mod steps;
 pub mod union;
 
 pub use consts::{ConstEmitter, const_pascal, member_category};
-pub use dialect::{Dialect, Scope};
+pub use dialect::{Dialect, Scope, param_var};
 pub use expr::{ExprLang, Mode, cmp_symbol, emit_expr, mark_var};
 pub use naming::{magic_literal, pascal_case, string_literal};
 pub use options::GenOptions;

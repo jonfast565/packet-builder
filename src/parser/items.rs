@@ -7,8 +7,9 @@ use super::expr::parse_string_constant;
 use super::types::{to_endianness, type_from_name};
 use super::{Rule, int_literal, span_of};
 use crate::ast::{
-    ArmExpr, ArrayLength, AssertExpr, BitOrder, BitfieldExpr, BitfieldMember, CalculatedField, Constraint, Endianness,
-    ExprNode, FieldRules, PacketExpr, PacketItem, Span, SwitchExpr, TextEncoding, TypeExpr, TypeNode, WindowExpr,
+    ArmExpr, ArrayLength, AssertExpr, AtExpr, BitOrder, BitfieldExpr, BitfieldMember, CalculatedField, Constraint,
+    Endianness, ExprNode, FieldRules, PacketExpr, PacketItem, ParamExpr, Span, SwitchExpr, TextEncoding, TypeExpr,
+    TypeNode, WindowExpr,
 };
 
 fn parse_alignment(pair: Pair<Rule>) -> u64 {
@@ -63,10 +64,20 @@ impl TreeBuilder {
         let mut identifier = String::new();
         let mut packet_endianness: Option<Endianness> = None;
         let mut packet_align: Option<u64> = None;
+        let mut params = Vec::new();
 
         for detail in packet.into_inner() {
             match detail.as_rule() {
                 Rule::identifier => identifier = detail.as_str().to_string(),
+                Rule::param_list => {
+                    for param in detail.into_inner().filter(|x| x.as_rule() == Rule::param) {
+                        let span = span_of(&param);
+                        let mut parts = param.into_inner();
+                        let name = parts.next().map(|x| x.as_str().to_string()).unwrap_or_default();
+                        let ty = parts.next().map(|x| self.type_from_name(x.as_str())).unwrap_or(TypeNode::Integer64);
+                        params.push(ParamExpr { name, ty, span });
+                    }
+                }
                 Rule::endianness => packet_endianness = to_endianness(detail.as_str()),
                 Rule::alignment => packet_align = Some(parse_alignment(detail)),
                 Rule::rule_list => {
@@ -96,7 +107,7 @@ impl TreeBuilder {
             }
         }
 
-        PacketExpr { name: identifier, items, endianness: packet_endianness, align: packet_align, span }
+        PacketExpr { name: identifier, params, items, endianness: packet_endianness, align: packet_align, span }
     }
 
     fn declaration(&self, parser_rule: Pair<Rule>) -> TypeExpr {
@@ -113,11 +124,22 @@ impl TreeBuilder {
         let mut until = None;
         let mut term = None;
         let mut encoding = None;
+        let mut args = Vec::new();
+        let mut at = None;
 
         for field in parser_rule.into_inner() {
             match field.as_rule() {
                 Rule::identifier => identifier = field.as_str().to_string(),
-                Rule::field_type => type_node = self.field_type(field),
+                Rule::field_type => (type_node, args) = self.field_type(field),
+                Rule::at_clause => {
+                    let root = field.clone().into_inner().any(|p| p.as_rule() == Rule::root_kw);
+                    let offset = field
+                        .into_inner()
+                        .find(|p| p.as_rule() == Rule::expr)
+                        .map(parse_expr)
+                        .unwrap_or(ExprNode::NoExpr);
+                    at = Some(AtExpr { offset, root });
+                }
                 Rule::alignment => align = Some(parse_alignment(field)),
                 Rule::array_specifier => array = Some(array_specifier(field)),
                 Rule::window => window = Some(window_clause(field)),
@@ -158,15 +180,26 @@ impl TreeBuilder {
             until,
             term,
             encoding,
+            args,
+            at,
             rules,
             span,
         }
     }
 
-    fn field_type(&self, field: Pair<Rule>) -> TypeNode {
+    /// The type, and the arguments of a packet type.
+    fn field_type(&self, field: Pair<Rule>) -> (TypeNode, Vec<ExprNode>) {
         let inner = field.into_inner().next().expect("field_type has one child");
-        match inner.as_rule() {
-            Rule::packet_type => TypeNode::Packet(inner.as_str().to_string()),
+        let ty = match inner.as_rule() {
+            Rule::packet_ref => {
+                let mut parts = inner.into_inner();
+                let name = parts.next().map(|x| x.as_str().to_string()).unwrap_or_default();
+                let args = parts
+                    .next()
+                    .map(|l| l.into_inner().filter(|x| x.as_rule() == Rule::expr).map(parse_expr).collect())
+                    .unwrap_or_default();
+                return (TypeNode::Packet(name), args);
+            }
             Rule::prefixed_string => {
                 let mut prefix = TypeNode::UnsignedInteger8;
                 let mut endianness = None;
@@ -180,7 +213,8 @@ impl TreeBuilder {
                 TypeNode::PrefixedStr { prefix: Box::new(prefix), endianness }
             }
             _ => self.type_from_name(inner.as_str()),
-        }
+        };
+        (ty, Vec::new())
     }
 
     fn switch_field(&self, pair: Pair<Rule>) -> SwitchExpr {
@@ -201,7 +235,8 @@ impl TreeBuilder {
                 Rule::window => sw.window = Some(window_clause(part)),
                 Rule::switch_arm => {
                     let aspan = span_of(&part);
-                    let mut arm = ArmExpr { values: None, name: String::new(), ty: None, span: aspan };
+                    let mut arm =
+                        ArmExpr { values: None, name: String::new(), ty: None, args: Vec::new(), span: aspan };
                     let mut array = None;
                     let mut endian = None;
                     for x in part.into_inner() {
@@ -211,7 +246,11 @@ impl TreeBuilder {
                                     Some(x.into_inner().filter(|v| v.as_rule() == Rule::expr).map(parse_expr).collect())
                             }
                             Rule::identifier => arm.name = x.as_str().to_string(),
-                            Rule::field_type => arm.ty = Some((self.field_type(x), None, None)),
+                            Rule::field_type => {
+                                let (t, args) = self.field_type(x);
+                                arm.ty = Some((t, None, None));
+                                arm.args = args;
+                            }
                             Rule::array_specifier => array = Some(array_specifier(x)),
                             Rule::endianness => endian = to_endianness(x.as_str()),
                             _ => {}

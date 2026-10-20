@@ -75,7 +75,11 @@ impl Target for ZigTarget {
         let mut s = String::from("const std = @import(\"std\");\nconst pk = @import(\"packets.zig\");\n\n");
         s.push_str("fn hx(w: anytype, b: []const u8) !void {\n    try w.writeAll(\"\\\"\");\n    for (b) |c| try w.print(\"{x:0>2}\", .{c});\n    try w.writeAll(\"\\\"\");\n}\n\n");
         for u in &module.unions {
-            let _ = writeln!(s, "fn dump{}(w: anytype, v: *const pk.{}) !void {{\n    switch (v.*) {{", u.name, u.name);
+            let _ = writeln!(
+                s,
+                "fn dump{}(w: anytype, v: *const pk.{}) anyerror!void {{\n    switch (v.*) {{",
+                u.name, u.name
+            );
             for arm in &u.arms {
                 let head = format!("try w.writeAll(\"{{\\\"kind\\\":\\\"{}\\\",\\\"value\\\":\");", arm.name);
                 let (capture, value) = match (&arm.ty, arm.is_bytes()) {
@@ -96,7 +100,7 @@ impl Target for ZigTarget {
             s.push_str("    }\n}\n\n");
         }
         for p in &module.packets {
-            let _ = writeln!(s, "fn dump{}(w: anytype, p: *const pk.{}) !void {{", p.name, p.name);
+            let _ = writeln!(s, "fn dump{}(w: anytype, p: *const pk.{}) anyerror!void {{", p.name, p.name);
             s.push_str("    try w.writeAll(\"{\");\n");
             if p.members.is_empty() {
                 s.push_str("    _ = p;\n");
@@ -116,6 +120,7 @@ impl Target for ZigTarget {
         }
         s.push_str("}\n\n");
         s.push_str("const Writer = std.ArrayList(u8).Writer;\n\n");
+        s.push_str("fn encodeAll(p: anytype, pw: *pk.PbWriter) pk.PbError!void {\n    try p.encodeTo(pw);\n    try pw.finish();\n}\n\n");
         s.push_str(
             r#"fn pbErr(w: Writer, pre: []const u8, err: anyerror, trace: *const pk.PbTrace) !void {
     const kind = switch (err) {
@@ -166,7 +171,7 @@ impl Target for ZigTarget {
                 s.push_str("        try w.writeAll(\",\\\"encode_error\\\":\\\"value does not fit the field type (rejected by the Zig compiler)\\\",\\\"encode_kind\\\":\\\"range\\\"}\");\n");
             } else {
                 s.push_str("        var pw = pk.PbWriter.init(allocator);\n        defer pw.deinit();\n");
-                s.push_str("        if (p.encodeTo(&pw)) |_| {\n");
+                s.push_str("        if (encodeAll(&p, &pw)) |_| {\n");
                 s.push_str("            try w.writeAll(\",\\\"encoded\\\":\");\n            try hx(w, pw.buf.items);\n            try w.writeAll(\"}\");\n");
                 s.push_str("        } else |err| {\n            try pbErr(w, \"encode_\", err, &pw.trace);\n            try w.writeAll(\"}\");\n        }\n");
             }

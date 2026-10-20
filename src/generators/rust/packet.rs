@@ -4,7 +4,7 @@ use super::decode::Decoder;
 use super::encode::Encoder;
 use super::naming::{ident, member_type, scalar_type};
 use crate::generators::common::union::variant_name;
-use crate::generators::common::{Out, StepEmitter, magic_literal, member_category};
+use crate::generators::common::{Out, StepEmitter, magic_literal, member_category, param_var};
 use crate::ir::{Arm, Packet, Union};
 
 /// A Rust enum with one variant per arm.
@@ -75,16 +75,26 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
         out.line("");
     }
 
+    // Parameters: `, pbp_a: u8` in signatures, `, pbp_a` in calls.
+    let decl: String = p.params.iter().map(|x| format!(", {}: {}", param_var(&x.name), scalar_type(&x.ty))).collect();
+    let pass: String = p.params.iter().map(|x| format!(", {}", param_var(&x.name))).collect();
+    let touch = |out: &mut Out| {
+        for x in &p.params {
+            out.line(format!("let _ = {};", param_var(&x.name)));
+        }
+    };
+
     out.open(format!("impl {} {{", name));
 
     // decode
     out.line("/// Decode from the start of `data`. Trailing bytes are ignored.");
-    out.open(format!("pub fn decode(data: &[u8]) -> Result<{}, PbError> {{", name));
+    out.open(format!("pub fn decode(data: &[u8]{}) -> Result<{}, PbError> {{", decl, name));
     out.line("let mut pb_r = PbReader::new(data);");
-    out.line("Self::decode_from(&mut pb_r)");
+    out.line(format!("Self::decode_from(&mut pb_r{})", pass));
     out.close("}");
     out.line("");
-    out.open(format!("pub fn decode_from(pb_r: &mut PbReader) -> Result<{}, PbError> {{", name));
+    out.open(format!("pub fn decode_from(pb_r: &mut PbReader{}) -> Result<{}, PbError> {{", decl, name));
+    touch(out);
     out.line(format!("pb_r.enter(\"{}\")?;", name));
     out.line(format!("let mut p = {}::default();", name));
     if p.needs_start(false) {
@@ -97,13 +107,14 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     out.line("");
 
     // encode
-    out.open("pub fn encode(&self) -> Result<Vec<u8>, PbError> {");
+    out.open(format!("pub fn encode(&self{}) -> Result<Vec<u8>, PbError> {{", decl));
     out.line("let mut pb_w = PbWriter::new();");
-    out.line("self.encode_to(&mut pb_w)?;");
-    out.line("Ok(pb_w.finish())");
+    out.line(format!("self.encode_to(&mut pb_w{})?;", pass));
+    out.line("pb_w.finish()");
     out.close("}");
     out.line("");
-    out.open("pub fn encode_to(&self, pb_w: &mut PbWriter) -> Result<(), PbError> {");
+    out.open(format!("pub fn encode_to(&self, pb_w: &mut PbWriter{}) -> Result<(), PbError> {{", decl));
+    touch(out);
     out.line(format!("pb_w.enter(\"{}\")?;", name));
     out.line("let p = self;");
     if p.needs_start(true) {

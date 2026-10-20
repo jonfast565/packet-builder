@@ -6,10 +6,10 @@ use super::naming::{C, ident, len_ident, scalar_type};
 use super::packet::arm_kind;
 use crate::generators::common::union::{C_LOGIC, arm_test};
 use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mark_var, mask};
-use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, TextEncoding, ValueType};
+use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, PacketRef, StrMode, TExpr, TextEncoding, ValueType};
 
 /// Statements that decode one element into the lvalue `lv`.
-fn read_elem(out: &mut Out, codec: &Codec, ty: &ValueType, lv: &str) {
+fn read_elem(scope: &Scope<'_, C>, out: &mut Out, codec: &Codec, ty: &ValueType, lv: &str) {
     let st = scalar_type(ty);
     match codec {
         Codec::Bytes { nbytes, endian } => {
@@ -27,7 +27,7 @@ fn read_elem(out: &mut Out, codec: &Codec, ty: &ValueType, lv: &str) {
         }
         Codec::Varint(k) => out.line(format!("PB_TRY(pb_read_varint(pb_r, {}, &pb_u));", k.id())),
         Codec::Packet(n) => {
-            out.line(format!("PB_TRY({}_decode_from(&{}, pb_r));", n, lv));
+            out.line(format!("PB_TRY({}_decode_from(&{}, pb_r{}));", n.name, lv, call_args(scope, n)));
             return;
         }
         Codec::Str(_) => unreachable!("strings are handled by Decoder::string"),
@@ -36,6 +36,11 @@ fn read_elem(out: &mut Out, codec: &Codec, ty: &ValueType, lv: &str) {
         ValueType::Int { width, signed: true } => out.line(format!("{} = ({})pb_sext(pb_u, {});", lv, st, width)),
         _ => out.line(format!("{} = ({})pb_u;", lv, st)),
     }
+}
+
+/// `, a, b`: the arguments for nested packet `r`.
+pub fn call_args(scope: &Scope<'_, C>, r: &PacketRef) -> String {
+    scope.args(r, store_value).iter().map(|a| format!(", {}", a)).collect()
 }
 
 /// `(const uint8_t *)"\x0d\x0a", 2`
@@ -72,7 +77,7 @@ impl<'a> Decoder<'a> {
                 out.line(format!("PB_TRY(pb_read_bytes(pb_r, {}.data, pb_n));", target));
                 out.close("}");
             }
-            (Some(ty), Some(codec), None) => read_elem(out, codec, ty, &target),
+            (Some(ty), Some(codec), None) => read_elem(&self.scope, out, codec, ty, &target),
             _ => {}
         }
     }
@@ -144,6 +149,21 @@ impl StepEmitter for Decoder<'_> {
         ));
     }
 
+    fn at(&self, out: &mut Out, m: &Member, target: &PacketRef, offset: &TExpr, root: bool) {
+        out.open("{");
+        out.line("pb_jump pb_j;");
+        let from = if root { "0" } else { "pb_start" };
+        out.line(format!("PB_TRY(pb_jump_to(pb_r, {}, {}, &pb_j));", from, self.scope.expr(offset)));
+        out.line(format!(
+            "PB_TRY({}_decode_from(&p->{}, pb_r{}));",
+            target.name,
+            ident(&m.name),
+            call_args(&self.scope, target)
+        ));
+        out.line("pb_jump_back(pb_r, &pb_j);");
+        out.close("}");
+    }
+
     fn align(&self, out: &mut Out, bytes: u64) {
         out.line(format!("PB_TRY(pb_skip_bits(pb_r, pb_pad(pb_reader_position(pb_r) - pb_start, {})));", bytes * 8))
     }
@@ -182,7 +202,7 @@ impl StepEmitter for Decoder<'_> {
             (StrMode::Prefixed { prefix, .. }, _) => {
                 out.open("{");
                 out.line("size_t pb_n;");
-                read_elem(out, prefix, &PREFIX_LEN, "pb_u");
+                read_elem(&self.scope, out, prefix, &PREFIX_LEN, "pb_u");
                 out.line("PB_TRY(pb_count(pb_r, (int64_t)pb_u, 8, &pb_n));");
                 out.line(read("pb_n", 0));
                 out.close("}");
@@ -216,7 +236,7 @@ impl StepEmitter for Decoder<'_> {
     }
 
     fn scalar(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec) {
-        read_elem(out, codec, ty, &format!("p->{}", ident(&m.name)));
+        read_elem(&self.scope, out, codec, ty, &format!("p->{}", ident(&m.name)));
     }
 
     fn array(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec, count: &Count) {
@@ -238,7 +258,7 @@ impl StepEmitter for Decoder<'_> {
                 } else {
                     out.open("for (pb_i = 0; pb_i < pb_n; pb_i++) {");
                     out.line("pb_at_index(&pb_r->tr, pb_i);");
-                    read_elem(out, codec, ty, &format!("{}[pb_i]", target));
+                    read_elem(&self.scope, out, codec, ty, &format!("{}[pb_i]", target));
                     out.close("}");
                 }
             }
@@ -257,7 +277,7 @@ impl StepEmitter for Decoder<'_> {
                 out.line(format!("PB_TRY(pb_grow((void **)&{}, &pb_cap, pb_i + 1, sizeof *{}));", target, target));
                 out.line(format!("{} = pb_i + 1;", len));
                 out.line("pb_at_index(&pb_r->tr, pb_i);");
-                read_elem(out, codec, ty, &format!("{}[pb_i]", target));
+                read_elem(&self.scope, out, codec, ty, &format!("{}[pb_i]", target));
                 out.open("{");
                 out.line(format!("const {} *pb_last = &{}[pb_i];", scalar_type(ty), target));
                 out.line(format!("if ({}) break;", self.scope.expr(cond)));
@@ -274,7 +294,7 @@ impl StepEmitter for Decoder<'_> {
                 out.line(format!("PB_TRY(pb_grow((void **)&{}, &pb_cap, pb_i + 1, sizeof *{}));", target, target));
                 out.line(format!("{} = pb_i + 1;", len));
                 out.line("pb_at_index(&pb_r->tr, pb_i);");
-                read_elem(out, codec, ty, &format!("{}[pb_i]", target));
+                read_elem(&self.scope, out, codec, ty, &format!("{}[pb_i]", target));
                 out.close("}");
                 out.open(format!("if (!{}) {{", target));
                 out.line(format!("{} = pb_alloc(0, sizeof *{});", target, target));

@@ -228,7 +228,27 @@ pub struct TypeExpr {
     pub term: Option<(Vec<u64>, bool)>,
     /// `latin1`, `utf16le`, ...: how a string's characters become bytes.
     pub encoding: Option<TextEncoding>,
+    /// Arguments for a packet type's parameters.
+    pub args: Vec<ExprNode>,
+    /// `at [root] offset`.
+    pub at: Option<AtExpr>,
     pub rules: FieldRules,
+    pub span: Span,
+}
+
+/// `at [root] offset` after a field.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AtExpr {
+    pub offset: ExprNode,
+    /// `at root`: from the start of the whole input rather than the packet.
+    pub root: bool,
+}
+
+/// A packet parameter: `version uint8` in `packet Body(version uint8)`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParamExpr {
+    pub name: String,
+    pub ty: TypeNode,
     pub span: Span,
 }
 
@@ -259,6 +279,8 @@ pub struct ArmExpr {
     pub name: String,
     /// The arm's type, length and byte order; None for an empty arm.
     pub ty: Option<(TypeNode, Option<ArrayLength>, Option<Endianness>)>,
+    /// Arguments for a packet arm's parameters.
+    pub args: Vec<ExprNode>,
     pub span: Span,
 }
 
@@ -346,6 +368,7 @@ pub struct AssertExpr {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PacketExpr {
     pub name: String,
+    pub params: Vec<ParamExpr>,
     pub items: Vec<PacketItem>,
     pub endianness: Option<Endianness>,
     /// `packet P align N`: C-struct-like natural alignment, packed to N bytes.

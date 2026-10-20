@@ -98,6 +98,10 @@ impl ExprLang for Scope<'_, CSharp> {
         }
     }
 
+    fn param(&self, index: usize) -> String {
+        format!("((long){})", self.param_var(index))
+    }
+
     fn convert(&self, e: String, from: Ty, to: Ty) -> String {
         match (from, to) {
             (Ty::Bool, Ty::Int) => format!("({} ? 1L : 0L)", e),

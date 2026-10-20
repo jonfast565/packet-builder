@@ -140,6 +140,7 @@ impl Target for CTarget {
             let _ = writeln!(s, "            dump_{}(&p);", p.name);
             s.push_str("            pb_writer_init(&w);\n");
             let _ = writeln!(s, "            rc = {}_encode_to(&p, &w);", p.name);
+            s.push_str("            if (rc == PB_OK) rc = pb_writer_finish(&w);\n");
             s.push_str(
                 "            if (rc != PB_OK) { printf(\",\"); err(\"encode_\", rc, pb_writer_describe(&w, desc, sizeof desc), pb_writer_path(&w, path, sizeof path)); printf(\"}\\n\"); }\n",
             );

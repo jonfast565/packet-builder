@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 
 use super::context::Ctx;
+use super::params::Sigs;
 use super::types::{type_label, value_type};
 use crate::ast::{ConstDecl, ConstItem, ConstKind, PacketExpr, PacketExprList, Span, TypeNode};
 use crate::errors::Diagnostic;
@@ -84,8 +85,14 @@ impl ConstTable {
     pub fn build(list: &PacketExprList, diags: &mut Vec<Diagnostic>) -> ConstTable {
         let mut table = ConstTable::default();
         // An empty packet to type-check values in: no fields, so only constants resolve.
-        let scope =
-            PacketExpr { name: String::new(), items: Vec::new(), endianness: None, align: None, span: Span::default() };
+        let scope = PacketExpr {
+            name: String::new(),
+            params: Vec::new(),
+            items: Vec::new(),
+            endianness: None,
+            align: None,
+            span: Span::default(),
+        };
         // Folded name -> what it names, for collision messages.
         let mut taken = HashMap::<String, String>::new();
         for p in &list.packets {
@@ -184,7 +191,8 @@ impl ConstTable {
         diags: &mut Vec<Diagnostic>,
     ) -> Option<Constant> {
         let done = HashMap::new();
-        let mut ctx = Ctx::new(scope, &done, self);
+        let sigs = Sigs::new();
+        let mut ctx = Ctx::new(scope, &done, &sigs, self);
         let value = ctx.check_expr(&item.value, item.span);
         diags.append(&mut ctx.diags);
         let value = value?.const_int();

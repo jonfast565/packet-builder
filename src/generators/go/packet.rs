@@ -4,7 +4,7 @@ use super::decode::Decoder;
 use super::encode::Encoder;
 use super::naming::{field_name, gofmt_widths, member_type, scalar_type};
 use crate::generators::common::union::variant_name;
-use crate::generators::common::{Out, StepEmitter, magic_literal, member_category};
+use crate::generators::common::{Out, StepEmitter, magic_literal, member_category, param_var};
 use crate::ir::{Arm, Packet, Union, ValueType};
 
 /// The Go name of an arm's kind constant (`MessageBodyText`).
@@ -82,10 +82,14 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     out.close("}");
     out.line("");
 
+    // Parameters: `, pbp_a uint8` in signatures, `, pbp_a` in calls.
+    let decl: String = p.params.iter().map(|x| format!(", {} {}", param_var(&x.name), scalar_type(&x.ty))).collect();
+    let pass: String = p.params.iter().map(|x| format!(", {}", param_var(&x.name))).collect();
+
     out.line(format!("// Decode{} decodes a {} from the start of data. Trailing bytes are ignored.", name, name));
-    out.open(format!("func Decode{}(data []byte) (*{}, error) {{", name, name));
+    out.open(format!("func Decode{}(data []byte{}) (*{}, error) {{", name, decl, name));
     out.line("pbR := NewPbReader(data)");
-    out.line(format!("p := pbDecode{}(pbR)", name));
+    out.line(format!("p := pbDecode{}(pbR{})", name, pass));
     out.open("if err := pbR.Err(); err != nil {");
     out.line("return nil, err");
     out.close("}");
@@ -94,13 +98,13 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     out.line("");
 
     out.line(format!("// DecodeFrom reads a {} from pbR, which keeps its position.", name));
-    out.open(format!("func (p *{}) DecodeFrom(pbR *PbReader) error {{", name));
-    out.line(format!("*p = pbDecode{}(pbR)", name));
+    out.open(format!("func (p *{}) DecodeFrom(pbR *PbReader{}) error {{", name, decl));
+    out.line(format!("*p = pbDecode{}(pbR{})", name, pass));
     out.line("return pbR.Err()");
     out.close("}");
     out.line("");
 
-    out.open(format!("func pbDecode{}(pbR *PbReader) (p {}) {{", name, name));
+    out.open(format!("func pbDecode{}(pbR *PbReader{}) (p {}) {{", name, decl, name));
     out.line(format!("pbR.Enter(\"{}\")", name));
     if p.needs_start(false) {
         out.line("pb_start := pbR.PositionBits()");
@@ -111,16 +115,16 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     out.close("}");
     out.line("");
 
-    out.open(format!("func (p *{}) Encode() ([]byte, error) {{", name));
+    out.open(format!("func (p *{}) Encode({}) ([]byte, error) {{", name, decl.trim_start_matches(", ")));
     out.line("pbW := NewPbWriter()");
-    out.open("if err := p.EncodeTo(pbW); err != nil {");
+    out.open(format!("if err := p.EncodeTo(pbW{}); err != nil {{", pass));
     out.line("return nil, err");
     out.close("}");
-    out.line("return pbW.Bytes(), nil");
+    out.line("return pbW.Finish()");
     out.close("}");
     out.line("");
 
-    out.open(format!("func (p *{}) EncodeTo(pbW *PbWriter) error {{", name));
+    out.open(format!("func (p *{}) EncodeTo(pbW *PbWriter{}) error {{", name, decl));
     out.line(format!("pbW.Enter(\"{}\")", name));
     if p.needs_start(true) {
         out.line("pb_start := pbW.PositionBits()");

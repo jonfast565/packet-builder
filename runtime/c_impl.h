@@ -130,6 +130,27 @@ PB_FN int pb_short(pb_reader *r, size_t bits) {
     return r->windows == 0 ? PB_ERR_INCOMPLETE : PB_ERR_INVALID;
 }
 
+/* Read from `offset` bytes after bit `from` (the packet start, or 0 for the
+ * start of the input) until pb_jump_back; windows do not apply there. */
+PB_FN int pb_jump_to(pb_reader *r, size_t from, int64_t offset, pb_jump *saved) {
+    if (offset < 0 || from % 8 || (uint64_t)offset > r->len || from + (size_t)offset * 8 > r->len * 8) {
+        return PB_ERR_INVALID;
+    }
+    saved->pos = r->pos;
+    saved->limit = r->limit;
+    saved->windows = r->windows;
+    r->pos = from + (size_t)offset * 8;
+    r->limit = r->len * 8;
+    r->windows = 0;
+    return PB_OK;
+}
+
+PB_FN void pb_jump_back(pb_reader *r, const pb_jump *saved) {
+    r->pos = saved->pos;
+    r->limit = saved->limit;
+    r->windows = saved->windows;
+}
+
 #define PB_NEED(r, bits) do { if ((bits) > pb_remaining_bits(r)) return pb_short((r), (bits)); } while (0)
 
 /* Restrict reading to the next `bytes` bytes; *saved receives the previous
@@ -441,9 +462,13 @@ PB_FN int pb_grow(void **ptr, size_t *cap, size_t need, size_t size) {
 void pb_writer_init(pb_writer *w) { memset(w, 0, sizeof *w); }
 
 void pb_writer_free(pb_writer *w) {
+    size_t i;
+    for (i = 0; i < w->nplaced; i++) free(w->placed[i].data);
+    free(w->placed);
     free(w->buf);
     w->buf = NULL;
-    w->len = w->cap = w->pos = 0;
+    w->placed = NULL;
+    w->len = w->cap = w->pos = w->nplaced = w->capplaced = 0;
 }
 
 PB_FN int pb_writer_reserve(pb_writer *w, size_t extra) {
@@ -496,6 +521,84 @@ PB_FN int pb_write_bytes(pb_writer *w, const uint8_t *data, size_t n) {
 PB_FN int pb_write_zero_bits(pb_writer *w, int64_t bits) {
     for (; bits > 32; bits -= 32) PB_PASS(pb_write_bits(w, 0, 32));
     if (bits > 0) PB_PASS(pb_write_bits(w, 0, (unsigned)bits));
+    return PB_OK;
+}
+
+/* Start *s, a writer for a packet placed `offset` bytes after bit `from` of
+ * w (the packet start), or after the start of the output (`root`). */
+PB_FN int pb_writer_sub(pb_writer *w, pb_writer *s, size_t from, int64_t offset, int root) {
+    size_t start = root ? 0 : w->base + from;
+    pb_writer_init(s);
+    s->tr = w->tr;
+    if (offset < 0 || start % 8) return PB_ERR_RANGE;
+    s->base = start + (size_t)offset * 8;
+    return PB_OK;
+}
+
+/* Keep what s wrote (rc is how encoding into it went) for
+ * pb_writer_finish, and release s. On failure w takes over s's error. */
+PB_FN int pb_writer_place(pb_writer *w, pb_writer *s, int rc) {
+    size_t need, i;
+    if (rc == PB_OK) {
+        need = w->nplaced + 1 + s->nplaced;
+        if (need > w->capplaced) {
+            size_t ncap = w->capplaced ? w->capplaced * 2 : 4;
+            pb_placed *n;
+            while (ncap < need) ncap *= 2;
+            n = (pb_placed *)realloc(w->placed, ncap * sizeof *n);
+            if (!n) rc = PB_ERR_NOMEM;
+            else {
+                w->placed = n;
+                w->capplaced = ncap;
+            }
+        }
+    }
+    if (rc != PB_OK) {
+        if (w->err.code == PB_OK && s->err.code != PB_OK) {
+            w->err = s->err;
+            w->tr = s->tr;
+        }
+        pb_writer_free(s);
+        return rc;
+    }
+    w->placed[w->nplaced].at = s->base / 8;
+    w->placed[w->nplaced].data = s->buf;
+    w->placed[w->nplaced].len = s->len;
+    w->placed[w->nplaced].tr = w->tr;
+    w->nplaced++;
+    for (i = 0; i < s->nplaced; i++) w->placed[w->nplaced++] = s->placed[i];
+    free(s->placed);
+    memset(s, 0, sizeof *s);
+    return PB_OK;
+}
+
+int pb_writer_finish(pb_writer *w) {
+    size_t i, j, k;
+    /* Insertion sort by offset, keeping the order of equal offsets. */
+    for (i = 1; i < w->nplaced; i++) {
+        pb_placed x = w->placed[i];
+        for (j = i; j > 0 && w->placed[j - 1].at > x.at; j--) w->placed[j] = w->placed[j - 1];
+        w->placed[j] = x;
+    }
+    for (i = 0; i < w->nplaced; i++) {
+        pb_placed *pl = &w->placed[i];
+        for (j = 0; j < pl->len; j++) {
+            k = pl->at + j;
+            if (k < w->len) {
+                if (w->buf[k] != pl->data[j]) {
+                    w->tr = pl->tr;
+                    return pb_note(&w->tr, &w->err, PB_ERR_MISMATCH, k * 8, 0);
+                }
+            } else {
+                if (k > w->len) PB_PASS(pb_write_zero_bits(w, (int64_t)(k - w->len) * 8));
+                PB_PASS(pb_write_bytes(w, pl->data + j, 1));
+            }
+        }
+    }
+    for (i = 0; i < w->nplaced; i++) free(w->placed[i].data);
+    free(w->placed);
+    w->placed = NULL;
+    w->nplaced = w->capplaced = 0;
     return PB_OK;
 }
 

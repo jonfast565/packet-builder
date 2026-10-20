@@ -3,7 +3,7 @@
 use super::decode::Decoder;
 use super::encode::Encoder;
 use super::naming::{arm_class, default_value, member_type, prop_name, scalar_type};
-use crate::generators::common::{Out, StepEmitter, member_category};
+use crate::generators::common::{Out, StepEmitter, member_category, param_var};
 use crate::ir::{Packet, Union, ValueType};
 
 /// A union as an abstract class with one sealed subclass per arm; arms with
@@ -61,9 +61,12 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     }
     out.line("");
     out.line("/// <summary>Decode from the start of <paramref name=\"data\"/>. Trailing bytes are ignored.</summary>");
-    out.line(format!("public static {} Decode(byte[] data) => DecodeFrom(new PbReader(data));", name));
+    // Parameters: `, byte pbp_a` in signatures, `, pbp_a` in calls.
+    let decl: String = p.params.iter().map(|x| format!(", {} {}", scalar_type(&x.ty), param_var(&x.name))).collect();
+    let pass: String = p.params.iter().map(|x| format!(", {}", param_var(&x.name))).collect();
+    out.line(format!("public static {} Decode(byte[] data{}) => DecodeFrom(new PbReader(data){});", name, decl, pass));
     out.line("");
-    out.line(format!("public static {} DecodeFrom(PbReader pbR)", name));
+    out.line(format!("public static {} DecodeFrom(PbReader pbR{})", name, decl));
     out.open("{");
     out.line(format!("pbR.Enter(\"{}\");", name));
     out.line(format!("var p = new {}();", name));
@@ -75,14 +78,14 @@ pub fn emit_packet(out: &mut Out, p: &Packet) {
     out.line("return p;");
     out.close("}");
     out.line("");
-    out.line("public byte[] Encode()");
+    out.line(format!("public byte[] Encode({})", decl.trim_start_matches(", ")));
     out.open("{");
     out.line("var pbW = new PbWriter();");
-    out.line("EncodeTo(pbW);");
-    out.line("return pbW.ToArray();");
+    out.line(format!("EncodeTo(pbW{});", pass));
+    out.line("return pbW.Finish();");
     out.close("}");
     out.line("");
-    out.line("public void EncodeTo(PbWriter pbW)");
+    out.line(format!("public void EncodeTo(PbWriter pbW{})", decl));
     out.open("{");
     out.line(format!("pbW.Enter(\"{}\");", name));
     out.line("var p = this;");

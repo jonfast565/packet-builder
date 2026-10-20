@@ -1,13 +1,13 @@
 //! Python encoder statements.
 
-use super::decode::byte_list;
+use super::decode::{byte_list, call_args};
 use super::expr::store_value;
 use super::naming::{Python, float_format, ident};
 use crate::generators::common::union::{PY_LOGIC, arm_test, mismatch_message, uses_selector};
 use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mark_var, mask, string_literal};
-use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, TextEncoding, ValueType};
+use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, PacketRef, StrMode, TExpr, TextEncoding, ValueType};
 
-fn write_elem(out: &mut Out, codec: &Codec, ty: &ValueType, v: &str) {
+fn write_elem(scope: &Scope<'_, Python>, out: &mut Out, codec: &Codec, ty: &ValueType, v: &str) {
     match ty {
         ValueType::Int { width, signed: true } => out.line(format!("pb_w.check_i({}, {})", v, width)),
         ValueType::Int { width, signed: false } => out.line(format!("pb_w.check_u({}, {})", v, width)),
@@ -24,7 +24,7 @@ fn write_elem(out: &mut Out, codec: &Codec, ty: &ValueType, v: &str) {
         }
         Codec::Mac => out.line(format!("pb_w.write_bytes(bytes({}))", v)),
         Codec::Varint(k) => out.line(format!("pb_w.write_varint({}, {})", k.id(), v)),
-        Codec::Packet(_) => out.line(format!("{}.encode_to(pb_w)", v)),
+        Codec::Packet(r) => out.line(format!("{}.encode_to(pb_w{})", v, call_args(scope, r))),
         Codec::Str(_) => unreachable!("strings are handled by Encoder::string"),
     }
 }
@@ -83,7 +83,7 @@ impl StepEmitter for Encoder<'_> {
                     }
                     out.line("pb_w.write_bytes(bytes(pb_v))");
                 }
-                (Some(ty), Some(codec), None) => write_elem(out, codec, ty, "pb_v"),
+                (Some(ty), Some(codec), None) => write_elem(&self.scope, out, codec, ty, "pb_v"),
                 _ => out.line("pass"),
             }
             out.pop();
@@ -147,6 +147,13 @@ impl StepEmitter for Encoder<'_> {
         }
     }
 
+    fn at(&self, out: &mut Out, m: &Member, target: &PacketRef, offset: &TExpr, root: bool) {
+        let from = if root { "0" } else { "pb_start" };
+        out.line(format!("pb_s = pb_w.sub({}, {}, {})", from, self.scope.expr(offset), Python::flag(root)));
+        out.line(format!("p.{}.encode_to(pb_s{})", ident(&m.name), call_args(&self.scope, target)));
+        out.line("pb_w.place(pb_s)");
+    }
+
     fn align(&self, out: &mut Out, bytes: u64) {
         out.line(format!("pb_w.write_zero_bits(_pb_pad(pb_w.position_bits() - pb_start, {}))", bytes * 8))
     }
@@ -168,7 +175,7 @@ impl StepEmitter for Encoder<'_> {
             }
             (StrMode::Prefixed { prefix, width }, _) => {
                 out.line(format!("pb_w.check_u(len(pb_b), {})", width));
-                write_elem(out, prefix, &PREFIX_LEN, "len(pb_b)");
+                write_elem(&self.scope, out, prefix, &PREFIX_LEN, "len(pb_b)");
                 out.line("pb_w.write_bytes(pb_b)");
             }
             (StrMode::Padded, Some(Count::Expr(e))) => {
@@ -196,7 +203,7 @@ impl StepEmitter for Encoder<'_> {
     }
 
     fn scalar(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec) {
-        write_elem(out, codec, ty, &format!("p.{}", ident(&m.name)));
+        write_elem(&self.scope, out, codec, ty, &format!("p.{}", ident(&m.name)));
     }
 
     fn array(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec, count: &Count) {
@@ -214,7 +221,7 @@ impl StepEmitter for Encoder<'_> {
         } else {
             out.open(format!("for pb_i, pb_v in enumerate({}):", place));
             out.line("pb_w.at_index(pb_i)");
-            write_elem(out, codec, ty, "pb_v");
+            write_elem(&self.scope, out, codec, ty, "pb_v");
             out.pop();
         }
     }

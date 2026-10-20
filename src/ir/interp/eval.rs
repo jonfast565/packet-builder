@@ -46,6 +46,8 @@ pub type ChecksumFn<'a> = &'a dyn Fn(u32, usize, usize, usize, usize) -> u64;
 /// for derived fields the recorded positions and a way to compute checksums.
 pub struct Env<'a> {
     pub values: &'a [Value],
+    /// The packet's parameters (`TExpr::Param`).
+    pub params: Vec<i64>,
     pub marks: Option<&'a HashMap<Mark, usize>>,
     pub checksum: Option<ChecksumFn<'a>>,
     /// In an `until` condition: the element just read.
@@ -53,8 +55,8 @@ pub struct Env<'a> {
 }
 
 impl<'a> Env<'a> {
-    pub fn new(values: &'a [Value]) -> Self {
-        Env { values, marks: None, checksum: None, last: None }
+    pub fn new(values: &'a [Value], params: &[i64]) -> Self {
+        Env { values, params: params.to_vec(), marks: None, checksum: None, last: None }
     }
 
     fn mark(&self, m: Mark) -> usize {
@@ -180,6 +182,7 @@ pub fn eval(e: &TExpr, env: &Env) -> Ev {
                 Ty::Bool => Ev::B(v.bool()),
             }
         }
+        TExpr::Param { index } => Ev::I(env.params.get(*index).copied().unwrap_or(0)),
         TExpr::Last { field, ty } => {
             let v = match (env.last, field) {
                 (Some(Value::Struct(s)), Some((_, name))) => s.get(name),

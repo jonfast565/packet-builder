@@ -3,8 +3,9 @@
 use super::eval::{Env, eval, store};
 use super::rt::{PbError, PbErrorKind, PbWriter};
 use super::value::{Struct, Value};
-use super::{check, checked_members, intern, pad};
+use super::{arguments, check, checked_members, intern, pad};
 use crate::ast::Endianness;
+use std::cell::RefCell;
 use std::collections::HashMap;
 
 use crate::ir::{BitPart, Codec, Count, Mark, Module, Packet, Step, StrMode, TextEncoding, ValueType};
@@ -18,8 +19,12 @@ pub fn encode(module: &Module, name: &str, value: &Value) -> Result<Vec<u8>, PbE
         Value::Struct(s) => s.clone(),
         _ => return Err(w.error(PbErrorKind::Invalid, format!("a value of packet `{}` must be a struct", name))),
     };
-    Encoder { module }.packet(p, &s, &mut w)?;
-    Ok(w.finish())
+    if !p.params.is_empty() {
+        let msg = format!("packet `{}` takes {} argument(s); encode the packet containing it", name, p.params.len());
+        return Err(w.error(PbErrorKind::Invalid, msg));
+    }
+    Encoder { module, params: RefCell::new(Vec::new()) }.packet(p, &s, &mut w)?;
+    w.finish()
 }
 
 fn find<'m>(module: &'m Module, name: &str, w: &PbWriter) -> Result<&'m Packet, PbError> {
@@ -36,9 +41,22 @@ fn little(e: &Endianness) -> bool {
 
 struct Encoder<'m> {
     module: &'m Module,
+    /// The arguments of the packet being encoded.
+    params: RefCell<Vec<i64>>,
 }
 
 impl Encoder<'_> {
+    fn env<'v>(&self, values: &'v [Value]) -> Env<'v> {
+        Env::new(values, &self.params.borrow())
+    }
+
+    fn packet_with(&self, p: &Packet, s: &Struct, args: Vec<i64>, w: &mut PbWriter) -> Result<(), PbError> {
+        let outer = self.params.replace(args);
+        self.packet(p, s, w)?;
+        self.params.replace(outer);
+        Ok(())
+    }
+
     fn packet(&self, p: &Packet, s: &Struct, w: &mut PbWriter) -> Result<(), PbError> {
         w.enter(intern(&p.name))?;
         let mut values: Vec<Value> = p
@@ -50,7 +68,7 @@ impl Encoder<'_> {
         // generated encoders.
         for (m, e) in p.encode_calc_members() {
             let idx = p.members.iter().position(|x| x.name == m.name).expect("member");
-            let v = eval(e, &Env::new(&values));
+            let v = eval(e, &self.env(&values));
             // Derived values are range-checked when written, so keep them whole.
             values[idx] = if m.is_derived() { Value::Int(v.int() as i128) } else { store(v, &m.ty) };
         }
@@ -61,7 +79,7 @@ impl Encoder<'_> {
             for mi in checked_members(step).into_iter().filter(|m| !p.patches.contains(m)) {
                 for c in p.members[mi].enforced_checks() {
                     w.at(intern(self.field_name(p, step)));
-                    check(&c.cond, &c.message, &values, |m| w.error(PbErrorKind::Constraint, m))?;
+                    check(&c.cond, &c.message, &self.env(&values), |m| w.error(PbErrorKind::Constraint, m))?;
                 }
             }
             marks.insert(Mark::Before(i), w.position_bits());
@@ -96,11 +114,11 @@ impl Encoder<'_> {
             let v = {
                 let wr: &PbWriter = w;
                 let sum = |a, f, t, hf, ht| wr.checksum(a, f, t, hf, ht);
-                eval(e, &Env { values: &values, marks: Some(&marks), checksum: Some(&sum), last: None }).int()
+                eval(e, &Env { marks: Some(&marks), checksum: Some(&sum), ..self.env(&values) }).int()
             };
             values[mi] = Value::Int(v as i128);
             for c in m.enforced_checks() {
-                check(&c.cond, &c.message, &values, |msg| w.error(PbErrorKind::Constraint, msg))?;
+                check(&c.cond, &c.message, &self.env(&values), |msg| w.error(PbErrorKind::Constraint, msg))?;
             }
             let raw = int_bits(ty, &values[mi], w)?;
             let at = marks[&Mark::Before(si)];
@@ -123,7 +141,7 @@ impl Encoder<'_> {
     }
 
     fn expr(&self, values: &[Value], e: &crate::ir::TExpr) -> i64 {
-        eval(e, &Env::new(values)).int()
+        eval(e, &self.env(values)).int()
     }
 
     fn step(&self, p: &Packet, step: &Step, values: &[Value], start: usize, w: &mut PbWriter) -> Result<(), PbError> {
@@ -137,7 +155,7 @@ impl Encoder<'_> {
             Step::Assert { index } => {
                 w.at("");
                 let a = &p.asserts[*index];
-                check(&a.cond, &a.message, values, |m| w.error(PbErrorKind::Constraint, m))
+                check(&a.cond, &a.message, &self.env(values), |m| w.error(PbErrorKind::Constraint, m))
             }
             Step::Field { member, codec, array, ty } => {
                 let name = member.map(|i| p.members[i].name.as_str()).unwrap_or("_");
@@ -167,7 +185,7 @@ impl Encoder<'_> {
                         Ok(())
                     }
                     (Some(mi), codec) => match array {
-                        None => self.elem(codec, ty, &values[*mi], w),
+                        None => self.elem(values, codec, ty, &values[*mi], w),
                         Some(count) => self.array(values, &values[*mi], ty, codec, count, w),
                     },
                 }
@@ -208,15 +226,30 @@ impl Encoder<'_> {
                         w.write_bytes(&b);
                         Ok(())
                     }
-                    (Some(ty), Some(codec), None, Some(v)) => self.elem(codec, ty, v, w),
+                    (Some(ty), Some(codec), None, Some(v)) => self.elem(values, codec, ty, v, w),
                     _ => Ok(()),
                 }
+            }
+            Step::At { member, target, offset, root } => {
+                let m = &p.members[*member];
+                w.at(intern(&m.name));
+                let mut sub = w.sub(start, self.expr(values, offset), *root)?;
+                self.elem(values, &Codec::Packet(target.clone()), &m.ty, &values[*member], &mut sub)?;
+                w.place(sub);
+                Ok(())
             }
             Step::OpenWindow { .. } | Step::CloseWindow { .. } => Ok(()),
         }
     }
 
-    fn elem(&self, codec: &Codec, ty: &ValueType, v: &Value, w: &mut PbWriter) -> Result<(), PbError> {
+    fn elem(
+        &self,
+        values: &[Value],
+        codec: &Codec,
+        ty: &ValueType,
+        v: &Value,
+        w: &mut PbWriter,
+    ) -> Result<(), PbError> {
         match codec {
             Codec::Bytes { nbytes, endian } => {
                 let raw = int_bits(ty, v, w)?;
@@ -246,13 +279,14 @@ impl Encoder<'_> {
                 Value::Bytes(b) if b.len() == 6 => w.write_bytes(b),
                 _ => return Err(w.error(PbErrorKind::Range, "a MAC address needs 6 bytes".into())),
             },
-            Codec::Packet(n) => {
-                let p = find(self.module, n, w)?;
+            Codec::Packet(target) => {
+                let p = find(self.module, &target.name, w)?;
                 let s = match v {
                     Value::Struct(s) => s.clone(),
                     _ => Struct::default_for(self.module, p),
                 };
-                self.packet(p, &s, w)?;
+                let args = arguments(self.module, target, &self.env(values));
+                self.packet_with(p, &s, args, w)?;
             }
             Codec::Str(_) => unreachable!("strings are encoded by Encoder::string"),
         }
@@ -286,7 +320,7 @@ impl Encoder<'_> {
         }
         for (i, item) in items.iter().enumerate() {
             w.at_index(i);
-            self.elem(codec, ty, item, w)?;
+            self.elem(values, codec, ty, item, w)?;
         }
         Ok(())
     }
@@ -320,7 +354,8 @@ impl Encoder<'_> {
             }
             (StrMode::Prefixed { prefix, width }, _) => {
                 w.check_u(b.len() as u64, *width)?;
-                self.elem(prefix, &ValueType::Int { width: 64, signed: false }, &Value::Int(b.len() as i128), w)?;
+                let len = Value::Int(b.len() as i128);
+                self.elem(values, prefix, &ValueType::Int { width: 64, signed: false }, &len, w)?;
                 w.write_bytes(b);
             }
             (StrMode::Padded, Some(Count::Expr(e))) => {

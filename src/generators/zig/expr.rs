@@ -95,6 +95,10 @@ impl ExprLang for Scope<'_, Zig> {
         format!("@as(i64, @bitCast({}.checksum({}, {}, {}, {}, {})))", rw, algo.id(), from, to, hf, ht)
     }
 
+    fn param(&self, index: usize) -> String {
+        format!("pbI64({})", self.param_var(index))
+    }
+
     /// The element just appended to `pb_l` by a repeat-until loop.
     fn last(&self, field: Option<(&str, &str)>, ty: Ty) -> String {
         let f = if ty == Ty::Float { "pbF64" } else { "pbI64" };

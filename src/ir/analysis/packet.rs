@@ -11,11 +11,12 @@ use std::collections::{HashMap, HashSet};
 use super::consts::ConstTable;
 use super::context::Ctx;
 use super::cursor::{Cursor, const_factor};
+use super::params::Sigs;
 use super::types::{field_value_type, natural_align, value_type};
-use crate::ast::{BitOrder, BitfieldExpr, Endianness, PacketExpr, PacketItem, Span, TypeExpr, TypeNode};
+use crate::ast::{Endianness, PacketExpr, PacketItem, Span, TypeExpr, TypeNode};
 use crate::errors::Diagnostic;
 use crate::ir::expr::{TExpr, Ty, coerce};
-use crate::ir::model::{Assertion, BitPart, Codec, Count, MemberKind, Packet, Step, StrMode, ValueType};
+use crate::ir::model::{Assertion, Codec, Count, MemberKind, Packet, Step, StrMode, ValueType};
 
 pub(super) struct PacketBuilder<'a> {
     pub(super) p: &'a PacketExpr,
@@ -53,10 +54,10 @@ pub(super) struct ItemStep {
 }
 
 impl<'a> PacketBuilder<'a> {
-    pub fn new(p: &'a PacketExpr, done: &'a HashMap<String, Packet>, consts: &'a ConstTable) -> Self {
+    pub fn new(p: &'a PacketExpr, done: &'a HashMap<String, Packet>, sigs: &'a Sigs, consts: &'a ConstTable) -> Self {
         PacketBuilder {
             p,
-            ctx: Ctx::new(p, done, consts),
+            ctx: Ctx::new(p, done, sigs, consts),
             default_endian: p.endianness.clone().unwrap_or(Endianness::Le),
             field_counts: Vec::new(),
             steps: Vec::new(),
@@ -137,6 +138,7 @@ impl<'a> PacketBuilder<'a> {
                 PacketItem::Align(..) | PacketItem::Assert(_) => {}
             }
         }
+        ctx.check_param_names();
     }
 
     /// Pass 2: array counts (need the full name table).
@@ -202,6 +204,11 @@ impl<'a> PacketBuilder<'a> {
                     }
                     self.cursor.pad_to(*bytes, &mut self.steps);
                 }
+                PacketItem::Field(f) if f.at.is_some() => {
+                    field_no += 1;
+                    self.lay_out_at(f);
+                    self.note_item(item_idx);
+                }
                 PacketItem::Field(f) => {
                     let count = self.field_counts[field_no].clone();
                     field_no += 1;
@@ -262,7 +269,7 @@ impl<'a> PacketBuilder<'a> {
     /// Padding requested before a field: its explicit `align N`, and under
     /// `packet P align N` its natural alignment. None when nothing applies, so
     /// that packed bit fields are left alone.
-    fn requested_padding(&mut self, t: &TypeNode, explicit: Option<u64>) -> Option<u64> {
+    pub(super) fn requested_padding(&mut self, t: &TypeNode, explicit: Option<u64>) -> Option<u64> {
         let mut a = explicit;
         if let Some(pack) = self.p.align {
             let n = natural_align(t, self.ctx.done).min(pack).max(1);
@@ -291,7 +298,7 @@ impl<'a> PacketBuilder<'a> {
 
         // Lengths must only use values already decoded.
         if let Some(Count::Expr(e) | Count::Until(e)) = &count {
-            self.ctx.require_available(e, &self.available, &self.scheduled, f.span, &f.id);
+            self.ctx.require_available(e, &self.available, &self.scheduled, f.span, "length", &f.id);
         }
         if matches!(count, Some(Count::Remaining)) {
             if !is_last {
@@ -316,16 +323,21 @@ impl<'a> PacketBuilder<'a> {
 
         let align = self.cursor.align;
         self.aligned_before = align.is_aligned();
-        let codec = if ty == ValueType::Str {
+        let mut codec = if ty == ValueType::Str {
             self.ctx.string_codec(f, &self.default_endian, align)
         } else {
             self.ctx.codec_for(&f.expr, f.endianness.clone(), &self.default_endian, align, f.span, &f.id)
         };
+        if let Codec::Packet(r) = &mut codec {
+            *r = self.packet_ref(&r.name, &f.args, f.span, &f.id);
+        }
         let (elem_bits, elem_fixed) = match &codec {
-            Codec::Packet(n) => {
-                let nested = self.ctx.done.get(n);
-                (nested.map(|x| x.min_bits).unwrap_or(0), nested.and_then(|x| x.fixed_bits))
-            }
+            // A packet analyzed later (it contains this one) has at least
+            // one byte when it is in an array.
+            Codec::Packet(r) => match self.ctx.done.get(&r.name) {
+                Some(nested) => (nested.min_bits, nested.fixed_bits),
+                None => (if count.is_some() { 8 } else { 0 }, None),
+            },
             Codec::Str(StrMode::Padded | StrMode::Exact) => (8, Some(8)),
             Codec::Str(StrMode::Prefixed { width, .. }) => (*width as u64, None),
             Codec::Str(StrMode::CString | StrMode::Terminated { .. }) => (8, None),
@@ -379,55 +391,6 @@ impl<'a> PacketBuilder<'a> {
         }
     }
 
-    fn lay_out_bitfield(&mut self, b: &BitfieldExpr) {
-        if self.open_ended {
-            self.ctx.diags.push(Diagnostic::new(
-                format!("field `{}` follows a field that consumes the rest of the input", b.id),
-                b.span,
-            ));
-        }
-        if let Some(pad) = self.requested_padding(&b.container, b.align) {
-            self.cursor.pad_to(pad, &mut self.steps);
-        }
-        let (cwidth, _) = match b.container.integer_info() {
-            Some(info) if !matches!(b.container, TypeNode::Bytes) => info,
-            _ => {
-                self.ctx.diags.push(Diagnostic::new(
-                    format!("bitfield `{}` needs an integer container such as uint8 or u12", b.id),
-                    b.span,
-                ));
-                (8, false)
-            }
-        };
-        let align = self.cursor.align;
-        let codec = self.ctx.codec_for(&b.container, b.endianness.clone(), &self.default_endian, align, b.span, &b.id);
-        let total: u32 = b.members.iter().map(|m| m.width).sum();
-        if total > cwidth {
-            self.ctx.diags.push(Diagnostic::new(
-                format!("bitfield `{}` members use {} bits but the container has only {}", b.id, total, cwidth),
-                b.span,
-            ));
-        }
-        let mut parts = Vec::new();
-        let mut offset = 0u32;
-        for m in &b.members {
-            if m.name != "_" && total <= cwidth {
-                let shift = match b.order {
-                    BitOrder::Msb => cwidth - offset - m.width,
-                    BitOrder::Lsb => offset,
-                };
-                if let Some(&idx) = self.ctx.names.get(&m.name) {
-                    parts.push(BitPart { member: idx, shift, width: m.width, signed: m.signed });
-                    self.available.insert(idx);
-                }
-            }
-            offset += m.width;
-        }
-        self.cursor.advance(cwidth as u64, Some(cwidth as u64), 1);
-        self.aligned_before = align.is_aligned();
-        self.steps.push(Step::Bitfield { name: b.id.clone(), container: codec, container_width: cwidth, parts });
-    }
-
     /// Pass 5: final checks, then the packet.
     fn finish(mut self) -> Result<Packet, Vec<Diagnostic>> {
         let p = self.p;
@@ -479,6 +442,7 @@ impl<'a> PacketBuilder<'a> {
         let fixed_bits = if self.open_ended { None } else { self.cursor.exact };
         Ok(Packet {
             name: p.name.clone(),
+            params: self.ctx.params,
             members: self.ctx.members,
             steps: self.steps,
             encode_calcs: plan.encode_calcs,

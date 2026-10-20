@@ -93,6 +93,13 @@ impl PbTrace {
     }
 }
 
+/// Where a reader was before `PbReader::jump`.
+pub struct PbJump {
+    pos: usize,
+    limit: usize,
+    windows: usize,
+}
+
 /// Reads integers of any bit width (MSB-first) and byte-aligned values.
 pub struct PbReader<'a> {
     data: &'a [u8],
@@ -194,6 +201,30 @@ impl<'a> PbReader<'a> {
         self.limit = saved;
         self.windows -= 1;
         Ok(())
+    }
+
+    /// Read from `offset` bytes after bit `from` (the packet start, or 0 for
+    /// the start of the input) until `jump_back`; windows do not apply there.
+    pub fn jump(&mut self, from: usize, offset: i64) -> Result<PbJump, PbError> {
+        if offset < 0 || from % 8 != 0 {
+            return Err(self.error(PbErrorKind::Invalid, format!("bad offset {} (from bit {})", offset, from)));
+        }
+        let target = (offset as u64).saturating_mul(8).saturating_add(from as u64);
+        if target > self.data.len() as u64 * 8 {
+            return Err(self.error(PbErrorKind::Invalid, format!("offset {} is past the end of the input", offset)));
+        }
+        let saved = PbJump { pos: self.pos, limit: self.limit, windows: self.windows };
+        self.pos = target as usize;
+        self.limit = self.data.len() * 8;
+        self.windows = 0;
+        Ok(saved)
+    }
+
+    /// Return to where `jump` left.
+    pub fn jump_back(&mut self, saved: PbJump) {
+        self.pos = saved.pos;
+        self.limit = saved.limit;
+        self.windows = saved.windows;
     }
 
     pub fn read_bits(&mut self, width: u32) -> Result<u64, PbError> {
@@ -375,6 +406,11 @@ pub struct PbWriter {
     buf: Vec<u8>,
     pos: usize, // in bits
     trace: PbTrace,
+    /// Where `buf` goes in the output, in bits (non-zero for `sub` writers).
+    base: usize,
+    /// Packets placed at an offset (`at`): byte position, bytes and the
+    /// field's path. `finish` writes them.
+    placed: Vec<(usize, Vec<u8>, String)>,
 }
 
 impl PbWriter {
@@ -446,8 +482,48 @@ impl PbWriter {
         self.write_bits(0, (bits % 32) as u32);
     }
 
-    pub fn finish(self) -> Vec<u8> {
-        self.buf
+    /// The output, with every placed packet written at its offset: past the
+    /// end (zero-filling the gap), or over bytes that must already match.
+    pub fn finish(mut self) -> Result<Vec<u8>, PbError> {
+        let mut placed = std::mem::take(&mut self.placed);
+        placed.sort_by_key(|p| p.0);
+        for (at, bytes, path) in placed {
+            for (i, b) in bytes.into_iter().enumerate() {
+                let k = at + i;
+                if k < self.buf.len() {
+                    if self.buf[k] != b {
+                        return Err(PbError {
+                            kind: PbErrorKind::Mismatch,
+                            message: format!("the packet placed at byte {} does not match the bytes already there", at),
+                            path,
+                            bit_offset: k * 8,
+                            needed_bits: 0,
+                        });
+                    }
+                } else {
+                    self.buf.resize(k, 0);
+                    self.buf.push(b);
+                }
+            }
+        }
+        Ok(self.buf)
+    }
+
+    /// A writer for a packet placed `offset` bytes after bit `from` of this
+    /// writer (the packet start), or after the start of the output (`root`).
+    pub fn sub(&self, from: usize, offset: i64, root: bool) -> Result<PbWriter, PbError> {
+        let start = if root { 0 } else { self.base + from };
+        if offset < 0 || start % 8 != 0 {
+            return Err(self.error(PbErrorKind::Range, format!("bad offset {} (from bit {})", offset, start)));
+        }
+        let base = (offset as usize).saturating_mul(8).saturating_add(start);
+        Ok(PbWriter { base, trace: self.trace.clone(), ..PbWriter::default() })
+    }
+
+    /// Keep what `sub` wrote, for `finish`.
+    pub fn place(&mut self, sub: PbWriter) {
+        self.placed.push((sub.base / 8, sub.buf, self.trace.path()));
+        self.placed.extend(sub.placed);
     }
 
     /// End a window of `size` bytes that started at bit `start`: the content

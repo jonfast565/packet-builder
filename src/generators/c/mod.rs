@@ -38,6 +38,15 @@ impl Backend for CGenerator {
         out.line("#ifdef __cplusplus");
         out.line("extern \"C\" {");
         out.line("#endif");
+        // Every type first, so that arrays (pointers) may refer to packets
+        // defined later.
+        out.line("");
+        for u in &module.unions {
+            out.line(format!("typedef struct {} {};", u.name, u.name));
+        }
+        for p in &module.packets {
+            out.line(format!("typedef struct {} {};", p.name, p.name));
+        }
         for p in module.in_dependency_order() {
             for m in &p.members {
                 if let ValueType::Union(n) = &m.ty

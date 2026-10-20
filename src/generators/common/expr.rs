@@ -41,6 +41,8 @@ pub trait ExprLang {
     /// In an `until` condition: the element just read (`pb_last`), or its
     /// field (element packet name, field name).
     fn last(&self, field: Option<(&str, &str)>, ty: Ty) -> String;
+    /// Parameter `index` of the packet (named by `Scope::param_var`), as i64.
+    fn param(&self, index: usize) -> String;
     /// Element count of an array member, or the byte length of a string, as i64.
     fn len(&self, member: usize) -> String;
     /// Whole bytes between two recorded bit positions (variables), as i64.
@@ -89,6 +91,7 @@ pub fn emit_expr<L: ExprLang + ?Sized>(l: &L, e: &TExpr) -> String {
         TExpr::Convert { e, to } => l.convert(emit_expr(l, e), e.ty(), *to),
         TExpr::Unary { op, e, ty } => l.unary(*op, emit_expr(l, e), *ty),
         TExpr::Len { member } => l.len(*member),
+        TExpr::Param { index } => l.param(*index),
         TExpr::Last { field, ty } => l.last(field.as_ref().map(|(p, f)| (p.as_str(), f.as_str())), *ty),
         TExpr::Size { from, to } => l.size(&mark_var(*from), &mark_var(*to)),
         TExpr::Checksum { algo, from, to, hole } => {

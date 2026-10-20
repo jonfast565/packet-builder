@@ -6,7 +6,29 @@ use super::naming::{Go, field_name, member_type, scalar_type};
 use super::packet::arm_kind;
 use crate::generators::common::union::variant_name;
 use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mark_var, mask, string_literal};
-use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, TextEncoding, ValueType};
+use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, PacketRef, StrMode, TExpr, TextEncoding, ValueType};
+
+/// `, pbA0, pbA1`: the arguments for nested packet `r`, held in locals by
+/// [`with_args`].
+pub fn call_args(r: &PacketRef) -> String {
+    (0..r.args.len()).map(|i| format!(", pbA{}", i)).collect()
+}
+
+/// Emit `f` in a block that first computes the arguments of nested packet
+/// `codec` into locals: gofmt's spacing of operators inside nested calls is
+/// hard to match, so calls only pass plain names.
+pub fn with_args(scope: &Scope<'_, Go>, out: &mut Out, codec: &Codec, f: impl FnOnce(&mut Out)) {
+    let Codec::Packet(r) = codec else { return f(out) };
+    if r.args.is_empty() {
+        return f(out);
+    }
+    out.open("{");
+    for (i, (e, ty)) in r.typed_args().enumerate() {
+        out.line(format!("pbA{} := {}", i, store_value(e, scope.expr(e), ty)));
+    }
+    f(out);
+    out.close("}");
+}
 
 /// `[]byte{0x0d, 0x0a}`
 pub fn byte_list(bytes: &[u8]) -> String {
@@ -25,7 +47,7 @@ fn read_elem(codec: &Codec, ty: &ValueType) -> String {
         Codec::Float { endian, .. } => return format!("math.Float64frombits(pbR.ReadUint(8, {}))", Go::little(endian)),
         Codec::Mac => return "pbR.ReadMac()".into(),
         Codec::Varint(k) => format!("pbR.ReadVarint({})", k.id()),
-        Codec::Packet(n) => return format!("pbDecode{}(pbR)", n),
+        Codec::Packet(r) => return format!("pbDecode{}(pbR{})", r.name, call_args(r)),
         Codec::Str(_) => unreachable!("strings are handled by Decoder::string"),
     };
     match ty {
@@ -54,9 +76,11 @@ impl<'a> Decoder<'a> {
             (Some(_), _, Some(Count::Remaining)) => {
                 out.line(format!("{} = pbR.ReadBytes(pbR.RemainingBits() / 8)", target))
             }
-            (Some(ValueType::Packet(n)), _, None) => {
-                out.line(format!("pbV := pbDecode{}(pbR)", n));
-                out.line(format!("{} = &pbV", target));
+            (Some(ValueType::Packet(n)), Some(codec @ Codec::Packet(r)), None) => {
+                with_args(&self.scope, out, codec, |out| {
+                    out.line(format!("pbV := pbDecode{}(pbR{})", n, call_args(r)));
+                    out.line(format!("{} = &pbV", target));
+                });
             }
             (Some(ty), Some(codec), None) => out.line(format!("{} = {}", target, read_elem(codec, ty))),
             (_, _, Some(Count::Until(_) | Count::Terminated { .. })) => {
@@ -125,6 +149,17 @@ impl StepEmitter for Decoder<'_> {
         out.close("}");
     }
 
+    fn at(&self, out: &mut Out, m: &Member, target: &PacketRef, offset: &TExpr, root: bool) {
+        out.open("{");
+        let from = if root { "0" } else { "pb_start" };
+        out.line(format!("pbJ := pbR.Jump({}, {})", from, self.scope.expr(offset)));
+        with_args(&self.scope, out, &Codec::Packet(target.clone()), |out| {
+            out.line(format!("p.{} = pbDecode{}(pbR{})", field_name(&m.name), target.name, call_args(target)))
+        });
+        out.line("pbR.JumpBack(pbJ)");
+        out.close("}");
+    }
+
     fn align(&self, out: &mut Out, bytes: u64) {
         out.line(format!("pbR.SkipBits(pbPad(pbR.PositionBits()-pb_start, {}))", bytes * 8))
     }
@@ -167,10 +202,22 @@ impl StepEmitter for Decoder<'_> {
     }
 
     fn scalar(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec) {
-        out.line(format!("p.{} = {}", field_name(&m.name), read_elem(codec, ty)));
+        with_args(&self.scope, out, codec, |out| {
+            out.line(format!("p.{} = {}", field_name(&m.name), read_elem(codec, ty)))
+        });
     }
 
     fn array(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec, count: &Count) {
+        with_args(&self.scope, out, codec, |out| self.array_body(out, m, ty, codec, count));
+    }
+
+    fn bitfield(&self, out: &mut Out, container: &Codec, container_width: u32, parts: &[BitPart]) {
+        self.bitfield_body(out, container, container_width, parts)
+    }
+}
+
+impl Decoder<'_> {
+    fn array_body(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec, count: &Count) {
         let target = format!("p.{}", field_name(&m.name));
         let ebits = codec.min_elem_bits();
         match count {
@@ -218,7 +265,7 @@ impl StepEmitter for Decoder<'_> {
         }
     }
 
-    fn bitfield(&self, out: &mut Out, container: &Codec, container_width: u32, parts: &[BitPart]) {
+    fn bitfield_body(&self, out: &mut Out, container: &Codec, container_width: u32, parts: &[BitPart]) {
         out.open("{");
         let raw = match container {
             Codec::Bytes { nbytes, endian } => format!("pbR.ReadUint({}, {})", nbytes, Go::little(endian)),

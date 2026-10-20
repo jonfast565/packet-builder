@@ -3,6 +3,7 @@
 var _ = math.Sqrt
 var _ = utf8.Valid
 var _ = strings.Builder{}
+var _ = sort.Ints
 
 // PbErrorKind says what went wrong while decoding or encoding.
 type PbErrorKind int
@@ -123,6 +124,27 @@ type PbReader struct {
 }
 
 func NewPbReader(data []byte) *PbReader { return &PbReader{data: data, limit: len(data) * 8} }
+
+// PbJump is where a reader was before Jump.
+type PbJump struct{ pos, limit, windows int }
+
+// Jump reads from offset bytes after bit from (the packet start, or 0 for
+// the start of the input) until JumpBack; windows do not apply there.
+func (r *PbReader) Jump(from int, offset int64) PbJump {
+	saved := PbJump{r.pos, r.limit, r.windows}
+	if r.err != nil {
+		return saved
+	}
+	if offset < 0 || from%8 != 0 || offset > int64(len(r.data)) || from+int(offset)*8 > len(r.data)*8 {
+		r.Fail(PbInvalid, "offset %d is past the end of the input", offset)
+		return saved
+	}
+	r.pos, r.limit, r.windows = from+int(offset)*8, len(r.data)*8, 0
+	return saved
+}
+
+// JumpBack returns to where Jump left.
+func (r *PbReader) JumpBack(j PbJump) { r.pos, r.limit, r.windows = j.pos, j.limit, j.windows }
 
 func (r *PbReader) Err() error { return r.err }
 
@@ -454,9 +476,72 @@ type PbWriter struct {
 	pos int // in bits
 	err error
 	tr  pbTrace
+	// base is where buf goes in the output, in bits (non-zero for Sub writers).
+	base int
+	// placed holds packets placed at an offset (`at`); Finish writes them.
+	placed []pbPlaced
+}
+
+type pbPlaced struct {
+	at   int
+	data []byte
+	path string
 }
 
 func NewPbWriter() *PbWriter { return &PbWriter{} }
+
+// Sub returns a writer for a packet placed offset bytes after bit from of
+// this writer (the packet start), or after the start of the output (root).
+func (w *PbWriter) Sub(from int, offset int64, root bool) *PbWriter {
+	start := w.base + from
+	if root {
+		start = 0
+	}
+	s := &PbWriter{tr: pbTrace{frames: append([]pbFrame{}, w.tr.frames...)}}
+	if offset < 0 || start%8 != 0 {
+		w.Fail(PbRange, "bad offset %d (from bit %d)", offset, start)
+		return s
+	}
+	s.base = start + int(offset)*8
+	return s
+}
+
+// Place keeps what s wrote, for Finish.
+func (w *PbWriter) Place(s *PbWriter) {
+	if w.err == nil {
+		w.err = s.err
+	}
+	w.placed = append(w.placed, pbPlaced{s.base / 8, s.buf, w.tr.path()})
+	w.placed = append(w.placed, s.placed...)
+}
+
+// Finish returns the output with every placed packet written at its offset:
+// past the end (zero-filling the gap), or over bytes that must already match.
+func (w *PbWriter) Finish() ([]byte, error) {
+	if w.err != nil {
+		return nil, w.err
+	}
+	sort.SliceStable(w.placed, func(i, j int) bool { return w.placed[i].at < w.placed[j].at })
+	for _, pl := range w.placed {
+		for i, b := range pl.data {
+			k := pl.at + i
+			switch {
+			case k < len(w.buf):
+				if w.buf[k] != b {
+					msg := fmt.Sprintf("the packet placed at byte %d does not match the bytes already there", pl.at)
+					return nil, &PbError{Kind: PbMismatch, Msg: msg, Path: pl.path, BitOffset: k * 8}
+				}
+			default:
+				for len(w.buf) < k {
+					w.buf = append(w.buf, 0)
+				}
+				w.buf = append(w.buf, b)
+			}
+		}
+	}
+	w.placed = nil
+	return w.buf, nil
+}
 
 func (w *PbWriter) Err() error { return w.err }
 

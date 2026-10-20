@@ -4,7 +4,7 @@
 use super::decode::Decoder;
 use super::encode::Encoder;
 use super::naming::{ident, len_ident, scalar_type};
-use crate::generators::common::{Out, StepEmitter, magic_literal, member_category};
+use crate::generators::common::{Out, StepEmitter, magic_literal, member_category, param_var};
 use crate::ir::{Arm, Packet, Union, ValueType};
 
 /// The C name of a union arm's kind constant (`MESSAGEBODY_TEXT`).
@@ -19,7 +19,7 @@ pub fn emit_union_declaration(out: &mut Out, u: &Union) {
         out.line(format!("{} = {},", arm_kind(&u.name, arm), i));
     }
     out.close("};");
-    out.open(format!("typedef struct {} {{", u.name));
+    out.open(format!("struct {} {{", u.name));
     out.line(format!("int kind; /* {}_* */", u.name.to_ascii_uppercase()));
     out.open("union {");
     let mut members = 0;
@@ -36,7 +36,7 @@ pub fn emit_union_declaration(out: &mut Out, u: &Union) {
         out.line("char pb_empty;");
     }
     out.close("} u;");
-    out.close(format!("}} {};", u.name));
+    out.close("};");
     out.line(format!("void {}_free({} *u);", u.name, u.name));
 }
 
@@ -63,7 +63,7 @@ pub fn emit_union_free(out: &mut Out, u: &Union) {
 
 pub fn emit_declarations(out: &mut Out, p: &Packet) {
     let name = &p.name;
-    out.open(format!("typedef struct {} {{", name));
+    out.open(format!("struct {} {{", name));
     if p.members.is_empty() {
         out.line("char pb_empty; /* C requires at least one member */");
     }
@@ -90,22 +90,37 @@ pub fn emit_declarations(out: &mut Out, p: &Packet) {
             }
         }
     }
-    out.close(format!("}} {};", name));
+    out.close("};");
     out.line("");
     out.line("/* Decode from the start of data; trailing bytes are ignored. Returns PB_OK or a");
     out.line(format!(" * negative PB_ERR_* code. On success release with {}_free(). */", name));
-    out.line(format!("int {}_decode({} *p, const uint8_t *data, size_t len);", name, name));
-    out.line(format!("int {}_decode_from({} *p, pb_reader *pb_r);", name, name));
+    let decl = param_decl(p);
+    out.line(format!("int {}_decode({} *p, const uint8_t *data, size_t len{});", name, name, decl));
+    out.line(format!("int {}_decode_from({} *p, pb_reader *pb_r{});", name, name, decl));
     out.line("/* Encode into a new malloc'ed buffer (*out, *out_len). */");
-    out.line(format!("int {}_encode(const {} *p, uint8_t **out, size_t *out_len);", name, name));
-    out.line(format!("int {}_encode_to(const {} *p, pb_writer *pb_w);", name, name));
+    out.line(format!("int {}_encode(const {} *p, uint8_t **out, size_t *out_len{});", name, name, decl));
+    out.line(format!("int {}_encode_to(const {} *p, pb_writer *pb_w{});", name, name, decl));
     out.line(format!("void {}_free({} *p);", name, name));
     out.line("/* Zero *p, then give members declared `== value` that value. */");
     out.line(format!("void {}_init({} *p);", name, name));
 }
 
+/// `, uint8_t pbp_a`: the parameters in signatures.
+fn param_decl(p: &Packet) -> String {
+    p.params.iter().map(|x| format!(", {} {}", scalar_type(&x.ty), param_var(&x.name))).collect()
+}
+
+/// `(void)pbp_a;` for each parameter, which a function may not use.
+fn touch_params(out: &mut Out, p: &Packet) {
+    for x in &p.params {
+        out.line(format!("(void){};", param_var(&x.name)));
+    }
+}
+
 pub fn emit_implementation(out: &mut Out, p: &Packet) {
     let name = &p.name;
+    let decl = param_decl(p);
+    let pass: String = p.params.iter().map(|x| format!(", {}", param_var(&x.name))).collect();
 
     // init
     out.open(format!("void {}_init({} *p) {{", name, name));
@@ -166,17 +181,17 @@ pub fn emit_implementation(out: &mut Out, p: &Packet) {
     out.line("");
 
     // decode
-    out.open(format!("int {}_decode({} *p, const uint8_t *data, size_t len) {{", name, name));
+    out.open(format!("int {}_decode({} *p, const uint8_t *data, size_t len{}) {{", name, name, decl));
     out.line("pb_reader pb_r;");
     out.line("pb_reader_init(&pb_r, data, len);");
-    out.line(format!("return {}_decode_from(p, &pb_r);", name));
+    out.line(format!("return {}_decode_from(p, &pb_r{});", name, pass));
     out.close("}");
     out.line("");
 
     let mut body = Out::new("    ");
     body.push();
     Decoder::new(p).emit_steps(&mut body);
-    out.open(format!("int {}_decode_from({} *p, pb_reader *pb_r) {{", name, name));
+    out.open(format!("int {}_decode_from({} *p, pb_reader *pb_r{}) {{", name, name, decl));
     out.line("int pb_rc = PB_OK;");
     out.line("uint64_t pb_u = 0;");
     out.line("memset(p, 0, sizeof *p);");
@@ -186,6 +201,7 @@ pub fn emit_implementation(out: &mut Out, p: &Packet) {
     }
     out.line("(void)pb_u;");
     out.line("(void)pb_r;");
+    touch_params(out, p);
     out.pop();
     out.buf.push_str(&body.buf);
     out.push();
@@ -201,11 +217,12 @@ pub fn emit_implementation(out: &mut Out, p: &Packet) {
     out.line("");
 
     // encode
-    out.open(format!("int {}_encode(const {} *p, uint8_t **out, size_t *out_len) {{", name, name));
+    out.open(format!("int {}_encode(const {} *p, uint8_t **out, size_t *out_len{}) {{", name, name, decl));
     out.line("pb_writer pb_w;");
     out.line("int rc;");
     out.line("pb_writer_init(&pb_w);");
-    out.line(format!("rc = {}_encode_to(p, &pb_w);", name));
+    out.line(format!("rc = {}_encode_to(p, &pb_w{});", name, pass));
+    out.line("if (rc == PB_OK) rc = pb_writer_finish(&pb_w);");
     out.open("if (rc != PB_OK) {");
     out.line("pb_writer_free(&pb_w);");
     out.line("return rc;");
@@ -216,13 +233,14 @@ pub fn emit_implementation(out: &mut Out, p: &Packet) {
     out.close("}");
     out.line("");
 
-    out.open(format!("int {}_encode_to(const {} *p, pb_writer *pb_w) {{", name, name));
+    out.open(format!("int {}_encode_to(const {} *p, pb_writer *pb_w{}) {{", name, name, decl));
     let encoder = Encoder::new(p);
     for (m, e) in p.encode_calc_members() {
         encoder.define_local(out, m, e);
     }
     out.line("(void)p;");
     out.line("(void)pb_w;");
+    touch_params(out, p);
     if p.needs_start(true) {
         out.line("size_t pb_start = pb_writer_position(pb_w);");
     }

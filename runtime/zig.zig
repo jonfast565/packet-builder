@@ -71,6 +71,13 @@ pub const PbTrace = struct {
     }
 };
 
+/// Where a reader was before `PbReader.jump`.
+pub const PbJump = struct { pos: usize, limit: usize, windows: usize };
+
+/// A packet placed at an offset (`at`): its bytes, and the trace naming the
+/// field for errors.
+pub const PbPlaced = struct { at: usize, data: []u8, trace: PbTrace };
+
 /// Reads integers of any bit width (MSB-first) and byte-aligned values.
 pub const PbReader = struct {
     data: []const u8,
@@ -102,6 +109,26 @@ pub const PbReader = struct {
             return self.trace.fail(PbError.Incomplete, self.pos, bits - self.remainingBits());
         }
         return self.trace.fail(PbError.Invalid, self.pos, 0);
+    }
+
+    /// Read from `offset` bytes after bit `from` (the packet start, or 0 for
+    /// the start of the input) until `jumpBack`; windows do not apply there.
+    pub fn jump(self: *PbReader, from: usize, offset: i64) PbError!PbJump {
+        if (offset < 0 or from % 8 != 0) return self.fail(PbError.Invalid);
+        const off: u64 = @intCast(offset);
+        if (off > self.data.len or from + off * 8 > self.data.len * 8) return self.fail(PbError.Invalid);
+        const saved = PbJump{ .pos = self.pos, .limit = self.limit, .windows = self.windows };
+        self.pos = from + @as(usize, @intCast(off)) * 8;
+        self.limit = self.data.len * 8;
+        self.windows = 0;
+        return saved;
+    }
+
+    /// Return to where `jump` left.
+    pub fn jumpBack(self: *PbReader, saved: PbJump) void {
+        self.pos = saved.pos;
+        self.limit = saved.limit;
+        self.windows = saved.windows;
     }
 
     fn need(self: *PbReader, bits: usize) PbError!void {
@@ -343,17 +370,79 @@ pub const PbWriter = struct {
     buf: std.ArrayList(u8),
     pos: usize = 0, // in bits
     trace: PbTrace = .{},
+    base: usize = 0, // where buf goes in the output, in bits (sub writers)
+    placed: std.ArrayList(PbPlaced), // written by `finish`
 
     pub fn init(allocator: std.mem.Allocator) PbWriter {
-        return .{ .buf = std.ArrayList(u8).init(allocator) };
+        return .{ .buf = std.ArrayList(u8).init(allocator), .placed = std.ArrayList(PbPlaced).init(allocator) };
+    }
+
+    fn freePlaced(self: *PbWriter) void {
+        for (self.placed.items) |pl| self.buf.allocator.free(pl.data);
+        self.placed.clearAndFree();
     }
 
     pub fn deinit(self: *PbWriter) void {
+        self.freePlaced();
         self.buf.deinit();
     }
 
     pub fn toOwnedSlice(self: *PbWriter) PbError![]u8 {
+        self.freePlaced();
         return self.buf.toOwnedSlice();
+    }
+
+    /// A writer for a packet placed `offset` bytes after bit `from` of this
+    /// writer (the packet start), or after the start of the output (`root`).
+    pub fn sub(self: *PbWriter, from: usize, offset: i64, root: bool) PbError!PbWriter {
+        const start = if (root) 0 else self.base + from;
+        if (offset < 0 or start % 8 != 0) return self.fail(PbError.Range);
+        var s = PbWriter.init(self.buf.allocator);
+        s.base = start + @as(usize, @intCast(offset)) * 8;
+        s.trace = self.trace;
+        return s;
+    }
+
+    /// Keep what `s` wrote, for `finish`; `s` keeps nothing.
+    pub fn place(self: *PbWriter, s: *PbWriter) PbError!void {
+        const data = try s.buf.toOwnedSlice();
+        errdefer self.buf.allocator.free(data);
+        try self.placed.append(.{ .at = s.base / 8, .data = data, .trace = self.trace });
+        try self.placed.appendSlice(s.placed.items);
+        s.placed.clearRetainingCapacity();
+    }
+
+    /// Encoding into `s` failed with `err`: take over its error position.
+    pub fn failFrom(self: *PbWriter, s: *const PbWriter, err: PbError) PbError {
+        if (!self.trace.diag.failed and s.trace.diag.failed) self.trace = s.trace;
+        return err;
+    }
+
+    /// Write every placed packet at its offset: past the end (zero-filling
+    /// the gap), or over bytes that must already match.
+    pub fn finish(self: *PbWriter) PbError!void {
+        const byAt = struct {
+            fn lt(_: void, a: PbPlaced, b: PbPlaced) bool {
+                return a.at < b.at;
+            }
+        }.lt;
+        std.mem.sort(PbPlaced, self.placed.items, {}, byAt);
+        for (self.placed.items) |pl| {
+            for (pl.data, 0..) |b, i| {
+                const k = pl.at + i;
+                if (k < self.buf.items.len) {
+                    if (self.buf.items[k] != b) {
+                        self.trace = pl.trace;
+                        return self.trace.fail(PbError.Mismatch, k * 8, 0);
+                    }
+                } else {
+                    if (k > self.buf.items.len) try self.buf.appendNTimes(0, k - self.buf.items.len);
+                    try self.buf.append(b);
+                }
+            }
+        }
+        self.freePlaced();
+        self.pos = self.buf.items.len * 8;
     }
 
     pub fn positionBits(self: *const PbWriter) usize {

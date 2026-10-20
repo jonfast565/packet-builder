@@ -481,3 +481,53 @@ fn varints_cannot_be_patched() {
         "varint `n` cannot be derived from the encoded bytes",
     );
 }
+
+#[test]
+fn parameters_are_integers() {
+    assert_error("packet B(x float32) { a uint8 }", "parameter `x` of `B` must have an integer type");
+}
+
+#[test]
+fn parameters_and_fields_have_different_names() {
+    assert_error("packet B(a uint8) { a uint8 }", "`a` is both a parameter and a field of packet `B`");
+}
+
+#[test]
+fn arguments_match_the_parameters() {
+    assert_error(
+        "packet B(n uint8) { a uint8[n] } packet P { b B }",
+        "packet `B` takes 1 argument(s), but `b` passes 0",
+    );
+    assert_error("packet B { a uint8 } packet P { b B(1) }", "packet `B` takes 0 argument(s), but `b` passes 1");
+}
+
+#[test]
+fn arguments_use_known_values() {
+    assert_error(
+        "packet B(n uint8) { a uint8[n] } packet P { b B(n), n uint8 }",
+        "the arguments of `b` uses `n`, which is not known yet",
+    );
+}
+
+#[test]
+fn at_fields_are_single_packets() {
+    assert_error("packet P { o uint8, a uint16 at o }", "`a` uses `at`, so it must be a single packet");
+    assert_error(
+        "packet E { a uint8 } packet P { o uint8, e E[2] at o }",
+        "`e` uses `at`, so it cannot also have a length, `until`, `size`, `align` or `=`",
+    );
+    assert_error(
+        "packet E { a uint8 } packet P { e E at o, o uint8 }",
+        "the offset of `e` uses `o`, which is not known yet",
+    );
+}
+
+#[test]
+fn recursion_needs_an_array_or_at() {
+    assert_error("packet A { b B } packet B { a A }", "contains itself");
+    assert_error("packet A { x uint8, a A }", "packet `A` contains itself");
+    // Through an array or `at`, it is fine.
+    compile("packet A { n uint8, kids A[n] }").expect("array recursion");
+    compile("packet A { o uint8, next A at root o }").expect("at recursion");
+    compile("packet A { b B } packet B { n uint8, a A[n] }").expect("mutual recursion");
+}

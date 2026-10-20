@@ -29,7 +29,7 @@ impl PacketBuilder<'_> {
                 .push(Diagnostic::new(format!("`{}` has a size, so it must start on a byte boundary", name), span));
         }
         let size = self.ctx.check_expr(&w.size, span).map(|t| coerce(t, Ty::Int)).unwrap_or(TExpr::IntLit(0));
-        self.ctx.require_available(&size, &self.available, &self.scheduled, span, name);
+        self.ctx.require_available(&size, &self.available, &self.scheduled, span, "size", name);
         let constant = size.const_int();
         self.steps.push(Step::OpenWindow { size, exact: w.exact });
         Some(Window {
@@ -68,7 +68,7 @@ impl PacketBuilder<'_> {
             self.ctx.diags.push(Diagnostic::new(format!("union `{}` must start on a byte boundary", sw.id), span));
         }
         let selector = self.ctx.check_expr(&sw.selector, span).map(|t| coerce(t, Ty::Int)).unwrap_or(TExpr::IntLit(0));
-        self.ctx.require_available(&selector, &self.available, &self.scheduled, span, &sw.id);
+        self.ctx.require_available(&selector, &self.available, &self.scheduled, span, "selector", &sw.id);
 
         let mut arms = Vec::new();
         let mut seen: HashMap<i64, String> = HashMap::new();
@@ -108,15 +108,19 @@ impl PacketBuilder<'_> {
             let mut arm = Arm { name: a.name.clone(), values, default, ty: None, codec: None, count: None };
             let bits = match &a.ty {
                 None => 0,
-                Some((TypeNode::Packet(n), None, None)) => match self.ctx.done.get(n) {
-                    Some(nested) => {
-                        open |= nested.open_ended;
-                        arm.ty = Some(ValueType::Packet(n.clone()));
-                        arm.codec = Some(Codec::Packet(n.clone()));
-                        nested.min_bits
+                Some((TypeNode::Packet(n), None, None)) => {
+                    arm.ty = Some(ValueType::Packet(n.clone()));
+                    arm.codec = Some(Codec::Packet(self.packet_ref(n, &a.args, a.span, &a.name)));
+                    // A packet analyzed later (it contains this one) is not
+                    // known yet.
+                    match self.ctx.done.get(n) {
+                        Some(nested) => {
+                            open |= nested.open_ended;
+                            nested.min_bits
+                        }
+                        None => 0,
                     }
-                    None => 0,
-                },
+                }
                 Some((TypeNode::Bytes | TypeNode::UnsignedInteger8, Some(len), endian)) if endian.is_none() => {
                     let count = match len {
                         ArrayLength::Remaining => {
@@ -126,7 +130,7 @@ impl PacketBuilder<'_> {
                         ArrayLength::Expr(e) => {
                             let e =
                                 self.ctx.check_expr(e, a.span).map(|t| coerce(t, Ty::Int)).unwrap_or(TExpr::IntLit(0));
-                            self.ctx.require_available(&e, &self.available, &self.scheduled, a.span, &a.name);
+                            self.ctx.require_available(&e, &self.available, &self.scheduled, a.span, "length", &a.name);
                             Count::Expr(e)
                         }
                     };

@@ -3,7 +3,7 @@
 //! template that dispatches each [`Step`] to the matching hook.
 
 use super::out::Out;
-use crate::ir::{Arm, BitPart, Check, Codec, Count, Mark, Member, Packet, Step, StrMode, TExpr, ValueType};
+use crate::ir::{Arm, BitPart, Check, Codec, Count, Mark, Member, Packet, PacketRef, Step, StrMode, TExpr, ValueType};
 
 /// One hook per kind of wire step.
 pub trait StepEmitter {
@@ -73,13 +73,19 @@ pub trait StepEmitter {
     /// encoders check the size and pad to it.
     fn close_window(&self, out: &mut Out, id: usize, sized: bool, exact: bool);
 
+    /// A packet stored elsewhere (`at`): decoders read it `offset` bytes
+    /// from the packet start (`pb_start`), or from the start of the input
+    /// when `root`, and come back; encoders write it into a writer placed
+    /// there (`sub`/`place`).
+    fn at(&self, out: &mut Out, member: &Member, target: &PacketRef, offset: &TExpr, root: bool);
+
     /// The wire name of a step's field (`_` for padding), if it has one.
     fn step_field<'s>(&'s self, step: &'s Step) -> Option<&'s str> {
         match step {
             Step::Field { member: Some(mi), .. } => Some(&self.packet().members[*mi].name),
             Step::Field { member: None, .. } => Some("_"),
             Step::Bitfield { name, .. } => Some(name),
-            Step::Switch { member, .. } => Some(&self.packet().members[*member].name),
+            Step::Switch { member, .. } | Step::At { member, .. } => Some(&self.packet().members[*member].name),
             Step::Assert { .. } => Some(""),
             Step::Calc { .. } | Step::Align { .. } | Step::OpenWindow { .. } | Step::CloseWindow { .. } => None,
         }
@@ -149,6 +155,7 @@ pub trait StepEmitter {
                 self.bitfield(out, container, *container_width, parts)
             }
             Step::Switch { member, selector, arms } => self.switch(out, &members[*member], selector, arms),
+            Step::At { member, target, offset, root } => self.at(out, &members[*member], target, offset, *root),
             Step::OpenWindow { .. } | Step::CloseWindow { .. } => {}
         }
         if !self.encoding() {

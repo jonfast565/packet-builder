@@ -3,7 +3,7 @@
 use super::eval::{Env, eval, store};
 use super::rt::{PbError, PbErrorKind, PbReader};
 use super::value::{Struct, Value};
-use super::{check, checked_members, intern, pad, sext};
+use super::{arguments, check, checked_members, intern, pad, sext};
 use std::collections::HashMap;
 
 use crate::ir::{BitPart, Codec, Count, Mark, Module, Packet, Step, StrMode, TextEncoding, ValueType};
@@ -14,10 +14,15 @@ pub fn decode(module: &Module, name: &str, data: &[u8]) -> Result<Value, PbError
     decode_from(module, name, &mut r)
 }
 
-/// Decode packet `name` at the reader's position.
+/// Decode packet `name` at the reader's position. Packets with parameters
+/// can only be decoded inside another packet.
 pub fn decode_from(module: &Module, name: &str, r: &mut PbReader) -> Result<Value, PbError> {
     let p = find(module, name, r)?;
-    Ok(Value::Struct(Decoder { module, r }.packet(p)?))
+    if !p.params.is_empty() {
+        let msg = format!("packet `{}` takes {} argument(s); decode the packet containing it", name, p.params.len());
+        return Err(r.error(PbErrorKind::Invalid, msg));
+    }
+    Ok(Value::Struct(Decoder { module, r, params: Vec::new() }.packet(p, Vec::new())?))
 }
 
 fn find<'m>(module: &'m Module, name: &str, r: &PbReader) -> Result<&'m Packet, PbError> {
@@ -31,10 +36,23 @@ fn find<'m>(module: &'m Module, name: &str, r: &PbReader) -> Result<&'m Packet, 
 struct Decoder<'m, 'r, 'd> {
     module: &'m Module,
     r: &'r mut PbReader<'d>,
+    /// The arguments of the packet being decoded.
+    params: Vec<i64>,
 }
 
 impl Decoder<'_, '_, '_> {
-    fn packet(&mut self, p: &Packet) -> Result<Struct, PbError> {
+    fn env<'v>(&self, values: &'v [Value]) -> Env<'v> {
+        Env::new(values, &self.params)
+    }
+
+    fn packet(&mut self, p: &Packet, args: Vec<i64>) -> Result<Struct, PbError> {
+        let outer = std::mem::replace(&mut self.params, args);
+        let s = self.packet_body(p)?;
+        self.params = outer;
+        Ok(s)
+    }
+
+    fn packet_body(&mut self, p: &Packet) -> Result<Struct, PbError> {
         self.r.enter(intern(&p.name))?;
         let mut values: Vec<Value> = p.members.iter().map(|m| Value::default_for(self.module, m)).collect();
         let start = self.r.position_bits();
@@ -47,7 +65,7 @@ impl Decoder<'_, '_, '_> {
                     if let Some(name) = p.steps.get(i + 1).and_then(|s| step_name(p, s)) {
                         self.r.at(intern(name));
                     }
-                    let n = eval(size, &Env::new(&values)).int();
+                    let n = eval(size, &self.env(&values)).int();
                     windows.insert(i, self.r.push_limit(n)?);
                 }
                 Step::CloseWindow { open, exact } => {
@@ -62,7 +80,7 @@ impl Decoder<'_, '_, '_> {
             marks.insert(Mark::After(i), self.r.position_bits());
             for mi in checked_members(step) {
                 for c in p.members[mi].enforced_checks() {
-                    check(&c.cond, &c.message, &values, |m| self.r.error(PbErrorKind::Constraint, m))?;
+                    check(&c.cond, &c.message, &self.env(&values), |m| self.r.error(PbErrorKind::Constraint, m))?;
                 }
             }
         }
@@ -73,7 +91,8 @@ impl Decoder<'_, '_, '_> {
             let (false, Some(e)) = (m.lenient, m.derived_expr()) else { continue };
             let r: &PbReader = self.r;
             let sum = |a, f, t, hf, ht| r.checksum(a, f, t, hf, ht);
-            let want = eval(e, &Env { values: &values, marks: Some(&marks), checksum: Some(&sum), last: None }).int();
+            let env = Env { marks: Some(&marks), checksum: Some(&sum), ..Env::new(&values, &self.params) };
+            let want = eval(e, &env).int();
             let got = match values[mi] {
                 Value::Int(v) => v as i64,
                 _ => 0,
@@ -89,7 +108,7 @@ impl Decoder<'_, '_, '_> {
     }
 
     fn count(&mut self, e: &crate::ir::TExpr, values: &[Value], elem_bits: u64) -> Result<usize, PbError> {
-        let n = eval(e, &Env::new(values)).int();
+        let n = eval(e, &self.env(values)).int();
         self.r.count(n, elem_bits)
     }
 
@@ -102,12 +121,12 @@ impl Decoder<'_, '_, '_> {
             Step::Assert { index } => {
                 self.r.at("");
                 let a = &p.asserts[*index];
-                check(&a.cond, &a.message, values, |m| self.r.error(PbErrorKind::Constraint, m))
+                check(&a.cond, &a.message, &self.env(values), |m| self.r.error(PbErrorKind::Constraint, m))
             }
             Step::Calc { member } => {
                 let m = &p.members[*member];
                 if let Some(e) = m.calc_expr() {
-                    values[*member] = store(eval(e, &Env::new(values)), &m.ty);
+                    values[*member] = store(eval(e, &self.env(values)), &m.ty);
                 }
                 Ok(())
             }
@@ -132,7 +151,7 @@ impl Decoder<'_, '_, '_> {
                     }
                     (Some(mi), codec) => {
                         values[*mi] = match array {
-                            None => self.elem(codec, ty)?,
+                            None => self.elem(values, codec, ty)?,
                             Some(count) => self.array(values, ty, codec, count)?,
                         };
                     }
@@ -146,7 +165,7 @@ impl Decoder<'_, '_, '_> {
             Step::Switch { member, selector, arms } => {
                 let m = &p.members[*member];
                 self.r.at(intern(&m.name));
-                let sel = eval(selector, &Env::new(values)).int();
+                let sel = eval(selector, &self.env(values)).int();
                 let Some(arm) = arms.iter().find(|a| a.values.contains(&sel)).or(arms.iter().find(|a| a.default))
                 else {
                     return Err(self.r.error(PbErrorKind::Invalid, format!("no arm of `{}` for {}", m.name, sel)));
@@ -160,17 +179,25 @@ impl Decoder<'_, '_, '_> {
                         };
                         Some(Box::new(Value::Bytes(self.r.read_bytes(n)?)))
                     }
-                    (Some(ty), Some(codec), None) => Some(Box::new(self.elem(codec, ty)?)),
+                    (Some(ty), Some(codec), None) => Some(Box::new(self.elem(values, codec, ty)?)),
                     _ => None,
                 };
                 values[*member] = Value::Variant { arm: arm.name.clone(), value };
+                Ok(())
+            }
+            Step::At { member, target, offset, root } => {
+                self.r.at(intern(&p.members[*member].name));
+                let off = eval(offset, &self.env(values)).int();
+                let saved = self.r.jump(if *root { 0 } else { start }, off)?;
+                values[*member] = self.elem(values, &Codec::Packet(target.clone()), &p.members[*member].ty)?;
+                self.r.jump_back(saved);
                 Ok(())
             }
             Step::OpenWindow { .. } | Step::CloseWindow { .. } => Ok(()),
         }
     }
 
-    fn elem(&mut self, codec: &Codec, ty: &ValueType) -> Result<Value, PbError> {
+    fn elem(&mut self, values: &[Value], codec: &Codec, ty: &ValueType) -> Result<Value, PbError> {
         let raw = match codec {
             Codec::Bytes { nbytes, endian } => self.r.read_uint(*nbytes, *endian == crate::ast::Endianness::Le)?,
             Codec::Bits { width } => self.r.read_bits(*width)?,
@@ -184,9 +211,10 @@ impl Decoder<'_, '_, '_> {
             }
             Codec::Mac => return Ok(Value::Bytes(self.r.read_bytes(6)?)),
             Codec::Varint(kind) => self.r.read_varint(kind.id())?,
-            Codec::Packet(n) => {
-                let p = find(self.module, n, self.r)?;
-                return Ok(Value::Struct(self.packet(p)?));
+            Codec::Packet(target) => {
+                let p = find(self.module, &target.name, self.r)?;
+                let args = arguments(self.module, target, &self.env(values));
+                return Ok(Value::Struct(self.packet(p, args)?));
             }
             Codec::Str(_) => unreachable!("strings are decoded by Decoder::string"),
         };
@@ -202,8 +230,8 @@ impl Decoder<'_, '_, '_> {
                 let mut items = Vec::new();
                 while self.r.remaining_bits() > 0 {
                     self.r.at_index(items.len());
-                    let item = self.elem(codec, ty)?;
-                    let stop = eval(cond, &Env { last: Some(&item), ..Env::new(values) }).bool();
+                    let item = self.elem(values, codec, ty)?;
+                    let stop = eval(cond, &Env { last: Some(&item), ..self.env(values) }).bool();
                     items.push(item);
                     if stop {
                         break;
@@ -226,13 +254,13 @@ impl Decoder<'_, '_, '_> {
             Some(n) => {
                 for i in 0..n {
                     self.r.at_index(i);
-                    items.push(self.elem(codec, ty)?);
+                    items.push(self.elem(values, codec, ty)?);
                 }
             }
             None => {
                 while self.r.remaining_bits() > 0 {
                     self.r.at_index(items.len());
-                    items.push(self.elem(codec, ty)?);
+                    items.push(self.elem(values, codec, ty)?);
                 }
             }
         }
@@ -250,7 +278,7 @@ impl Decoder<'_, '_, '_> {
             (StrMode::CString, _) => self.r.read_cstring()?,
             (StrMode::Terminated { term, optional }, _) => self.r.read_until(term, *optional)?,
             (StrMode::Prefixed { prefix, .. }, _) => {
-                let n = match self.elem(prefix, &ValueType::Int { width: 64, signed: false })? {
+                let n = match self.elem(values, prefix, &ValueType::Int { width: 64, signed: false })? {
                     Value::Int(v) => v as i64,
                     _ => 0,
                 };

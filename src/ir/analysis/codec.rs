@@ -5,7 +5,7 @@ use super::cursor::Align;
 use super::types::type_label;
 use crate::ast::{Endianness, Span, TypeExpr, TypeNode};
 use crate::errors::Diagnostic;
-use crate::ir::model::{Codec, StrMode};
+use crate::ir::model::{Codec, PacketRef, StrMode};
 
 impl<'a> Ctx<'a> {
     pub fn codec_for(
@@ -37,7 +37,7 @@ impl<'a> Ctx<'a> {
                 if !aligned {
                     misaligned(self, "nested packets");
                 }
-                Codec::Packet(n.clone())
+                Codec::Packet(PacketRef::new(n))
             }
             TypeNode::Float32 | TypeNode::Float64 => {
                 if !aligned {

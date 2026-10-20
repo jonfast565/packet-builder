@@ -4,7 +4,12 @@ use super::expr::store_value;
 use super::naming::{CSharp, arm_class, scalar_type};
 use crate::generators::common::union::{C_LOGIC, arm_test};
 use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mark_var, mask, string_literal};
-use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, TextEncoding, ValueType};
+use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, PacketRef, StrMode, TExpr, TextEncoding, ValueType};
+
+/// `, a, b`: the arguments for nested packet `r`.
+pub fn call_args(scope: &Scope<'_, CSharp>, r: &PacketRef) -> String {
+    scope.args(r, store_value).iter().map(|a| format!(", {}", a)).collect()
+}
 
 /// `new byte[] { 0x0d, 0x0a }`
 pub fn byte_list(bytes: &[u8]) -> String {
@@ -12,7 +17,7 @@ pub fn byte_list(bytes: &[u8]) -> String {
     format!("new byte[] {{ {} }}", items.join(", "))
 }
 
-fn read_elem(codec: &Codec, ty: &ValueType) -> String {
+fn read_elem(scope: &Scope<'_, CSharp>, codec: &Codec, ty: &ValueType) -> String {
     let st = scalar_type(ty);
     let raw = match codec {
         Codec::Bytes { nbytes, endian } => format!("pbR.ReadUint({}, {})", nbytes, CSharp::little(endian)),
@@ -31,7 +36,7 @@ fn read_elem(codec: &Codec, ty: &ValueType) -> String {
         }
         Codec::Mac => return "pbR.ReadBytes(6)".into(),
         Codec::Varint(k) => format!("pbR.ReadVarint({})", k.id()),
-        Codec::Packet(n) => return format!("{}.DecodeFrom(pbR)", n),
+        Codec::Packet(r) => return format!("{}.DecodeFrom(pbR{})", r.name, call_args(scope, r)),
         Codec::Str(_) => unreachable!("strings are handled by Decoder::string"),
     };
     match ty {
@@ -60,7 +65,9 @@ impl<'a> Decoder<'a> {
             (Some(_), _, Some(Count::Remaining)) => {
                 format!("new {} {{ Value = pbR.ReadBytes(pbR.RemainingBits / 8) }}", class)
             }
-            (Some(ty), Some(codec), None) => format!("new {} {{ Value = {} }}", class, read_elem(codec, ty)),
+            (Some(ty), Some(codec), None) => {
+                format!("new {} {{ Value = {} }}", class, read_elem(&self.scope, codec, ty))
+            }
             _ => format!("new {}()", class),
         }
     }
@@ -130,6 +137,20 @@ impl StepEmitter for Decoder<'_> {
         ));
     }
 
+    fn at(&self, out: &mut Out, m: &Member, target: &PacketRef, offset: &TExpr, root: bool) {
+        out.open("{");
+        let from = if root { "0" } else { "pb_start" };
+        out.line(format!("var pbJ = pbR.Jump({}, {});", from, self.scope.expr(offset)));
+        out.line(format!(
+            "{} = {}.DecodeFrom(pbR{});",
+            self.scope.field(m),
+            target.name,
+            call_args(&self.scope, target)
+        ));
+        out.line("pbR.JumpBack(pbJ);");
+        out.close("}");
+    }
+
     fn align(&self, out: &mut Out, bytes: u64) {
         out.line(format!("pbR.SkipBits(Pb.Pad(pbR.PositionBits - pb_start, {}));", bytes * 8))
     }
@@ -145,7 +166,7 @@ impl StepEmitter for Decoder<'_> {
                 format!("pbR.ReadUntil({}, {})", byte_list(term), optional)
             }
             (StrMode::Prefixed { prefix, .. }, _) => {
-                format!("pbR.ReadBytes(pbR.Count(unchecked((long){}), 8))", read_elem(prefix, &PREFIX_LEN))
+                format!("pbR.ReadBytes(pbR.Count(unchecked((long){}), 8))", read_elem(&self.scope, prefix, &PREFIX_LEN))
             }
             (_, Some(Count::Expr(e))) => format!("pbR.ReadBytes(pbR.Count({}, 8))", self.scope.expr(e)),
             _ => "pbR.ReadBytes(pbR.RemainingBits / 8)".to_string(),
@@ -172,7 +193,7 @@ impl StepEmitter for Decoder<'_> {
     }
 
     fn scalar(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec) {
-        out.line(format!("{} = {};", self.scope.field(m), read_elem(codec, ty)));
+        out.line(format!("{} = {};", self.scope.field(m), read_elem(&self.scope, codec, ty)));
     }
 
     fn array(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec, count: &Count) {
@@ -190,7 +211,7 @@ impl StepEmitter for Decoder<'_> {
                     out.line("for (int pbI = 0; pbI < pbN; pbI++)");
                     out.open("{");
                     out.line("pbR.AtIndex(pbI);");
-                    out.line(format!("pbA[pbI] = {};", read_elem(codec, ty)));
+                    out.line(format!("pbA[pbI] = {};", read_elem(&self.scope, codec, ty)));
                     out.close("}");
                     out.line(format!("{} = pbA;", target));
                     out.close("}");
@@ -205,7 +226,7 @@ impl StepEmitter for Decoder<'_> {
                 out.line("while (pbR.RemainingBits > 0)");
                 out.open("{");
                 out.line("pbR.AtIndex(pbL.Count);");
-                out.line(format!("var pbLast = {};", read_elem(codec, ty)));
+                out.line(format!("var pbLast = {};", read_elem(&self.scope, codec, ty)));
                 out.line("pbL.Add(pbLast);");
                 out.line(format!("if ({}) break;", self.scope.expr(cond)));
                 out.close("}");
@@ -221,7 +242,7 @@ impl StepEmitter for Decoder<'_> {
                     out.line("while (pbR.RemainingBits > 0)");
                     out.open("{");
                     out.line("pbR.AtIndex(pbL.Count);");
-                    out.line(format!("pbL.Add({});", read_elem(codec, ty)));
+                    out.line(format!("pbL.Add({});", read_elem(&self.scope, codec, ty)));
                     out.close("}");
                     out.line(format!("{} = pbL.ToArray();", target));
                     out.close("}");

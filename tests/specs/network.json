@@ -274,9 +274,9 @@
       "error": true
     },
     {
-      "name": "DNS query header",
-      "packet": "DnsHeader",
-      "hex": "1a2b01000001000000000000",
+      "name": "DNS query",
+      "packet": "DnsMessage",
+      "hex": "1a2b01000001000000000000076578616d706c6503636f6d0000010001",
       "expect": {
         "id": 6699,
         "qr": 0,
@@ -292,13 +292,159 @@
         "question_count": 1,
         "answer_count": 0,
         "authority_count": 0,
-        "additional_count": 0
+        "additional_count": 0,
+        "questions": [
+          {
+            "name": {
+              "labels": [
+                {
+                  "kind": 0,
+                  "length": 7,
+                  "body": {
+                    "kind": "text",
+                    "value": "6578616d706c65"
+                  }
+                },
+                {
+                  "kind": 0,
+                  "length": 3,
+                  "body": {
+                    "kind": "text",
+                    "value": "636f6d"
+                  }
+                },
+                {
+                  "kind": 0,
+                  "length": 0,
+                  "body": {
+                    "kind": "text",
+                    "value": ""
+                  }
+                }
+              ]
+            },
+            "type": 1,
+            "class": 1
+          }
+        ],
+        "answers": [],
+        "authorities": [],
+        "additionals": []
       }
     },
     {
-      "name": "DNS NXDOMAIN response header",
-      "packet": "DnsHeader",
-      "hex": "1a2b81830001000000010000",
+      "name": "DNS response with a compressed name",
+      "packet": "DnsMessage",
+      "hex": "1a2b81800001000100000000076578616d706c6503636f6d0000010001c00c0001000100000e1000045db8d822",
+      "expect": {
+        "id": 6699,
+        "qr": 1,
+        "opcode": 0,
+        "aa": 0,
+        "tc": 0,
+        "rd": 1,
+        "ra": 1,
+        "z": 0,
+        "ad": 0,
+        "cd": 0,
+        "rcode": 0,
+        "question_count": 1,
+        "answer_count": 1,
+        "authority_count": 0,
+        "additional_count": 0,
+        "questions": [
+          {
+            "name": {
+              "labels": [
+                {
+                  "kind": 0,
+                  "length": 7,
+                  "body": {
+                    "kind": "text",
+                    "value": "6578616d706c65"
+                  }
+                },
+                {
+                  "kind": 0,
+                  "length": 3,
+                  "body": {
+                    "kind": "text",
+                    "value": "636f6d"
+                  }
+                },
+                {
+                  "kind": 0,
+                  "length": 0,
+                  "body": {
+                    "kind": "text",
+                    "value": ""
+                  }
+                }
+              ]
+            },
+            "type": 1,
+            "class": 1
+          }
+        ],
+        "answers": [
+          {
+            "name": {
+              "labels": [
+                {
+                  "kind": 3,
+                  "length": 0,
+                  "body": {
+                    "kind": "pointer",
+                    "value": {
+                      "low": 12,
+                      "name": {
+                        "labels": [
+                          {
+                            "kind": 0,
+                            "length": 7,
+                            "body": {
+                              "kind": "text",
+                              "value": "6578616d706c65"
+                            }
+                          },
+                          {
+                            "kind": 0,
+                            "length": 3,
+                            "body": {
+                              "kind": "text",
+                              "value": "636f6d"
+                            }
+                          },
+                          {
+                            "kind": 0,
+                            "length": 0,
+                            "body": {
+                              "kind": "text",
+                              "value": ""
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "type": 1,
+            "class": 1,
+            "ttl": 3600,
+            "length": 4,
+            "data": "5db8d822"
+          }
+        ],
+        "authorities": [],
+        "additionals": []
+      }
+    },
+    {
+      "name": "DNS NXDOMAIN response",
+      "packet": "DnsMessage",
+      "hex": "1a2b81830001000000010000076578616d706c6503636f6d0000010001c00c000600010000003c000400000001",
       "expect": {
         "id": 6699,
         "qr": 1,
@@ -314,13 +460,218 @@
         "question_count": 1,
         "answer_count": 0,
         "authority_count": 1,
-        "additional_count": 0
+        "additional_count": 0,
+        "questions": [
+          {
+            "name": {
+              "labels": [
+                {
+                  "kind": 0,
+                  "length": 7,
+                  "body": {
+                    "kind": "text",
+                    "value": "6578616d706c65"
+                  }
+                },
+                {
+                  "kind": 0,
+                  "length": 3,
+                  "body": {
+                    "kind": "text",
+                    "value": "636f6d"
+                  }
+                },
+                {
+                  "kind": 0,
+                  "length": 0,
+                  "body": {
+                    "kind": "text",
+                    "value": ""
+                  }
+                }
+              ]
+            },
+            "type": 1,
+            "class": 1
+          }
+        ],
+        "answers": [],
+        "authorities": [
+          {
+            "name": {
+              "labels": [
+                {
+                  "kind": 3,
+                  "length": 0,
+                  "body": {
+                    "kind": "pointer",
+                    "value": {
+                      "low": 12,
+                      "name": {
+                        "labels": [
+                          {
+                            "kind": 0,
+                            "length": 7,
+                            "body": {
+                              "kind": "text",
+                              "value": "6578616d706c65"
+                            }
+                          },
+                          {
+                            "kind": 0,
+                            "length": 3,
+                            "body": {
+                              "kind": "text",
+                              "value": "636f6d"
+                            }
+                          },
+                          {
+                            "kind": 0,
+                            "length": 0,
+                            "body": {
+                              "kind": "text",
+                              "value": ""
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "type": 6,
+            "class": 1,
+            "ttl": 60,
+            "length": 4,
+            "data": "00000001"
+          }
+        ],
+        "additionals": []
+      }
+    },
+    {
+      "name": "DNS name pointing at itself",
+      "packet": "DnsMessage",
+      "hex": "1a2b01000001000000000000c00c00010001",
+      "error_kind": "invalid"
+    },
+    {
+      "name": "DNS label with a reserved kind",
+      "packet": "DnsMessage",
+      "hex": "1a2b01000001000000000000410000010001",
+      "error_kind": "invalid",
+      "error_path": "DnsMessage.questions[0].name.labels[0].body"
+    },
+    {
+      "name": "DNS pointer to a name later in the message",
+      "packet": "DnsMessage",
+      "hex": "1a2b01000002000000000000c01200010001076578616d706c6503636f6d0000010001",
+      "expect": {
+        "id": 6699,
+        "qr": 0,
+        "opcode": 0,
+        "aa": 0,
+        "tc": 0,
+        "rd": 1,
+        "ra": 0,
+        "z": 0,
+        "ad": 0,
+        "cd": 0,
+        "rcode": 0,
+        "question_count": 2,
+        "answer_count": 0,
+        "authority_count": 0,
+        "additional_count": 0,
+        "questions": [
+          {
+            "name": {
+              "labels": [
+                {
+                  "kind": 3,
+                  "length": 0,
+                  "body": {
+                    "kind": "pointer",
+                    "value": {
+                      "low": 18,
+                      "name": {
+                        "labels": [
+                          {
+                            "kind": 0,
+                            "length": 7,
+                            "body": {
+                              "kind": "text",
+                              "value": "6578616d706c65"
+                            }
+                          },
+                          {
+                            "kind": 0,
+                            "length": 3,
+                            "body": {
+                              "kind": "text",
+                              "value": "636f6d"
+                            }
+                          },
+                          {
+                            "kind": 0,
+                            "length": 0,
+                            "body": {
+                              "kind": "text",
+                              "value": ""
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "type": 1,
+            "class": 1
+          },
+          {
+            "name": {
+              "labels": [
+                {
+                  "kind": 0,
+                  "length": 7,
+                  "body": {
+                    "kind": "text",
+                    "value": "6578616d706c65"
+                  }
+                },
+                {
+                  "kind": 0,
+                  "length": 3,
+                  "body": {
+                    "kind": "text",
+                    "value": "636f6d"
+                  }
+                },
+                {
+                  "kind": 0,
+                  "length": 0,
+                  "body": {
+                    "kind": "text",
+                    "value": ""
+                  }
+                }
+              ]
+            },
+            "type": 1,
+            "class": 1
+          }
+        ],
+        "answers": [],
+        "authorities": [],
+        "additionals": []
       }
     },
     {
       "name": "DNS opcode out of range on encode",
-      "packet": "DnsHeader",
-      "hex": "1a2b01000001000000000000",
+      "packet": "DnsMessage",
+      "hex": "1a2b01000001000000000000076578616d706c6503636f6d0000010001",
       "set": {
         "opcode": 16
       },

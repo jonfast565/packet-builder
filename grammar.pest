@@ -99,6 +99,9 @@ text_encoding = @{ ("ascii" | "latin1" | "utf8" | "utf16le" | "utf16be") ~ !(aln
 size_kw   = @{ "size" ~ !(alnum | underscore) }
 exact_kw  = @{ "exact" ~ !(alnum | underscore) }
 fat_arrow = @{ "=>" }
+// Absolute offsets: `name Foo at offset`, `name Foo at root offset`.
+at_kw     = @{ "at" ~ !(alnum | underscore) }
+root_kw   = @{ "root" ~ !(alnum | underscore) }
 default_arm = @{ "_" ~ !(alnum | underscore) }
 
 // ===============================
@@ -194,14 +197,17 @@ type_name = @{
 // They are read MSB-first from the bit stream and need no byte alignment.
 bit_type = @{ ("u" | "i") ~ digit+ ~ !(alnum | underscore) }
 
-// A reference to another packet declared in the same file.
+// A reference to another packet declared in the same file, with arguments
+// for its parameters: `Body(version, length - 4)`.
 packet_type = @{ identifier }
+packet_ref  = { packet_type ~ arg_list? }
+arg_list    = { lparen ~ expr ~ (comma ~ expr)* ~ comma? ~ rparen }
 
 // A string preceded by its length: string(uint8), string(uint16 le), ...
 prefixed_string = { string_t ~ lparen ~ (type_name | bit_type) ~ endianness? ~ rparen }
 
 // Any type usable in a field declaration
-field_type = { prefixed_string | type_name | bit_type | packet_type }
+field_type = { prefixed_string | type_name | bit_type | packet_ref }
 
 // Alignment in bytes, relative to the start of the packet
 alignment = { align_kw ~ numeric_constant }
@@ -251,8 +257,13 @@ range_call = { identifier ~ lparen ~ field_range ~ rparen }
 // Accessors & declarations
 declaration = {
     identifier ~ field_type ~ array_specifier? ~ until_clause? ~ term_clause? ~ text_encoding? ~ endianness?
-    ~ alignment? ~ window? ~ category_tag? ~ derivation? ~ constraint? ~ lenient_kw?
+    ~ at_clause? ~ alignment? ~ window? ~ category_tag? ~ derivation? ~ constraint? ~ lenient_kw?
 }
+
+// `at offset`: the field is somewhere else, `offset` bytes from the start of
+// the packet (`at root offset`: of the whole input). Reading it does not
+// move the cursor.
+at_clause = { at_kw ~ root_kw? ~ expr }
 
 // `items Item[] until last.kind == 0`: stop after the element for which the
 // expression holds (or at the end of the input or window).
@@ -334,8 +345,13 @@ wordsize_directive = { wordsize_kw ~ numeric_constant }
 // every field is aligned to min(its natural alignment, N) and the packet is
 // padded to a multiple of its alignment.
 packet  = {
-  packet_kw ~ identifier ~ endianness? ~ alignment? ~ lbracket ~ rule_list? ~ rbracket
+  packet_kw ~ identifier ~ param_list? ~ endianness? ~ alignment? ~ lbracket ~ rule_list? ~ rbracket
 }
+
+// `packet Body(version uint8, length uint16) { ... }`: values the packet's
+// expressions may use, passed by whoever contains it.
+param_list = { lparen ~ param ~ (comma ~ param)* ~ comma? ~ rparen }
+param      = { identifier ~ (type_name | bit_type) }
 
 rule_list = { rule ~ (comma ~ rule)* ~ comma? }
 

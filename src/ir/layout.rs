@@ -90,6 +90,16 @@ impl Module {
                     });
                     offset = None;
                 }
+                Step::At { member, target, root, .. } => {
+                    let args = if target.args.is_empty() { "" } else { "(...)" };
+                    rows.push(LayoutRow {
+                        offset_bits: None,
+                        size_bits: None,
+                        name: packet.members[*member].name.clone(),
+                        kind: format!("{}{} at {}offset ...", target.name, args, if *root { "root " } else { "" }),
+                        nested: window.is_some(),
+                    });
+                }
                 Step::Align { bytes } => {
                     let unit = bytes * 8;
                     let size = offset.map(|o| (unit - o % unit) % unit);
@@ -106,7 +116,7 @@ impl Module {
                 }
                 Step::Field { member, ty, codec, array } => {
                     let elem = match codec {
-                        Codec::Packet(n) => self.packets.iter().find(|p| &p.name == n).and_then(|p| p.fixed_bits),
+                        Codec::Packet(r) => self.packets.iter().find(|p| p.name == r.name).and_then(|p| p.fixed_bits),
                         Codec::Str(StrMode::Padded | StrMode::Exact) => Some(8),
                         Codec::Str(_) | Codec::Varint(_) => None,
                         c => Some(c.bits() as u64),
@@ -138,6 +148,9 @@ impl Module {
                         }
                         (ValueType::Float { width }, _) => format!("float{}{}", width, suffix),
                         (ValueType::Mac, _) => format!("macaddress{}", suffix),
+                        (ValueType::Packet(n), Codec::Packet(r)) if !r.args.is_empty() => {
+                            format!("{}(...){}", n, suffix)
+                        }
                         (ValueType::Packet(n), _) => format!("{}{}", n, suffix),
                         (ValueType::Str, _) => "string".into(),
                         (ValueType::Union(n), _) => n.clone(),

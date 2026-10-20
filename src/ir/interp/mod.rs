@@ -63,8 +63,23 @@ fn checked_members(step: &crate::ir::Step) -> Vec<usize> {
 fn check(
     cond: &crate::ir::TExpr,
     message: &str,
-    values: &[Value],
+    env: &eval::Env,
     fail: impl FnOnce(String) -> Error,
 ) -> Result<(), Error> {
-    if eval::eval(cond, &eval::Env::new(values)).bool() { Ok(()) } else { Err(fail(message.to_string())) }
+    if eval::eval(cond, env).bool() { Ok(()) } else { Err(fail(message.to_string())) }
+}
+
+/// The arguments of a nested packet, evaluated in the containing packet and
+/// wrapped to the parameter types.
+fn arguments(module: &crate::ir::Module, target: &crate::ir::PacketRef, env: &eval::Env) -> Vec<i64> {
+    let params = module.packets.iter().find(|p| p.name == target.name).map(|p| p.params.as_slice()).unwrap_or(&[]);
+    target
+        .args
+        .iter()
+        .zip(params)
+        .map(|(a, prm)| match eval::store(eval::eval(a, env), &prm.ty) {
+            Value::Int(v) => v as i64,
+            _ => 0,
+        })
+        .collect()
 }

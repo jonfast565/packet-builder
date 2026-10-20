@@ -1,14 +1,14 @@
 //! C encoder statements. `PB_CHECK` returns the error code on failure.
 
-use super::decode::term_args;
+use super::decode::{call_args, term_args};
 use super::expr::store_value;
 use super::naming::{C, ident, len_ident, scalar_type};
 use super::packet::arm_kind;
 use crate::generators::common::union::{C_LOGIC, arm_test, uses_selector};
 use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mark_var, mask};
-use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, StrMode, TExpr, TextEncoding, ValueType};
+use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, PacketRef, StrMode, TExpr, TextEncoding, ValueType};
 
-fn write_elem(out: &mut Out, codec: &Codec, ty: &ValueType, v: &str) {
+fn write_elem(scope: &Scope<'_, C>, out: &mut Out, codec: &Codec, ty: &ValueType, v: &str) {
     if let ValueType::Int { width, signed } = ty
         && ty.needs_range_check()
     {
@@ -32,7 +32,7 @@ fn write_elem(out: &mut Out, codec: &Codec, ty: &ValueType, v: &str) {
         )),
         Codec::Mac => out.line(format!("PB_CHECK(pb_write_bytes(pb_w, {}, 6));", v)),
         Codec::Varint(k) => out.line(format!("PB_CHECK(pb_write_varint(pb_w, {}, (uint64_t){}));", k.id(), v)),
-        Codec::Packet(n) => out.line(format!("PB_CHECK({}_encode_to(&{}, pb_w));", n, v)),
+        Codec::Packet(r) => out.line(format!("PB_CHECK({}_encode_to(&{}, pb_w{}));", r.name, v, call_args(scope, r))),
         Codec::Str(_) => unreachable!("strings are handled by Encoder::string"),
     }
 }
@@ -73,7 +73,7 @@ impl Encoder<'_> {
             }
             (StrMode::Prefixed { prefix, width }, _) => {
                 out.line(format!("PB_CHECK(pb_check_u((uint64_t)pb_sz, {}));", width));
-                write_elem(out, prefix, &PREFIX_LEN, "pb_sz");
+                write_elem(&self.scope, out, prefix, &PREFIX_LEN, "pb_sz");
                 out.line(write);
             }
             (StrMode::Padded, Some(Count::Expr(e))) => {
@@ -132,7 +132,7 @@ impl StepEmitter for Encoder<'_> {
                     }
                     out.line(format!("PB_CHECK(pb_write_bytes(pb_w, {}.data, {}.len));", target, target));
                 }
-                (Some(ty), Some(codec), None) => write_elem(out, codec, ty, &target),
+                (Some(ty), Some(codec), None) => write_elem(&self.scope, out, codec, ty, &target),
                 _ => {}
             }
             out.line("break;");
@@ -141,6 +141,26 @@ impl StepEmitter for Encoder<'_> {
         out.line("default:");
         out.line("    PB_CHECK(PB_ERR_INVALID);");
         out.close("}");
+        out.close("}");
+    }
+
+    fn at(&self, out: &mut Out, m: &Member, target: &PacketRef, offset: &TExpr, root: bool) {
+        out.open("{");
+        out.line("pb_writer pb_s;");
+        let from = if root { "0" } else { "pb_start" };
+        out.line(format!(
+            "int pb_e = pb_writer_sub(pb_w, &pb_s, {}, {}, {});",
+            from,
+            self.scope.expr(offset),
+            C::flag(root)
+        ));
+        out.line(format!(
+            "if (pb_e == PB_OK) pb_e = {}_encode_to(&p->{}, &pb_s{});",
+            target.name,
+            ident(&m.name),
+            call_args(&self.scope, target)
+        ));
+        out.line("PB_CHECK(pb_writer_place(pb_w, &pb_s, pb_e));");
         out.close("}");
     }
 
@@ -244,7 +264,7 @@ impl StepEmitter for Encoder<'_> {
             }
             (StrMode::Prefixed { prefix, width }, _) => {
                 out.line(format!("PB_CHECK(pb_check_u((uint64_t){}, {}));", len, width));
-                write_elem(out, prefix, &PREFIX_LEN, &len);
+                write_elem(&self.scope, out, prefix, &PREFIX_LEN, &len);
                 out.line(format!("PB_CHECK(pb_write_bytes(pb_w, (const uint8_t *){}, {}));", s, len));
             }
             (StrMode::Padded, Some(Count::Expr(e))) => {
@@ -277,7 +297,7 @@ impl StepEmitter for Encoder<'_> {
     }
 
     fn scalar(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec) {
-        write_elem(out, codec, ty, &format!("p->{}", ident(&m.name)));
+        write_elem(&self.scope, out, codec, ty, &format!("p->{}", ident(&m.name)));
     }
 
     fn array(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec, count: &Count) {
@@ -302,7 +322,7 @@ impl StepEmitter for Encoder<'_> {
             out.line("size_t pb_i;");
             out.open(format!("for (pb_i = 0; pb_i < {}; pb_i++) {{", len));
             out.line("pb_at_index(&pb_w->tr, pb_i);");
-            write_elem(out, codec, ty, &format!("{}[pb_i]", place));
+            write_elem(&self.scope, out, codec, ty, &format!("{}[pb_i]", place));
             out.close("}");
             out.close("}");
         }

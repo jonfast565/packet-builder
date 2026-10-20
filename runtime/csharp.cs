@@ -59,6 +59,9 @@
 
         public void Leave() => frames.RemoveAt(frames.Count - 1);
 
+        /// <summary>Start from the frames of <paramref name="other"/> (for sub writers).</summary>
+        protected void CopyFrames(PbTrace other) => frames.AddRange(other.frames);
+
         public void At(string field) => frames[frames.Count - 1] = (frames[frames.Count - 1].Packet, field, -1);
 
         public void AtIndex(long index)
@@ -98,6 +101,23 @@
         }
 
         public long RemainingBits => limit - pos;
+
+        /// <summary>Read from <paramref name="offset"/> bytes after bit <paramref name="from"/>
+        /// (the packet start, or 0 for the start of the input) until JumpBack;
+        /// windows do not apply there.</summary>
+        public (long, long, int) Jump(long from, long offset)
+        {
+            if (offset < 0 || from % 8 != 0 || offset > data.Length || from + offset * 8 > (long)data.Length * 8)
+                throw Error(PbErrorKind.Invalid, $"offset {offset} is past the end of the input");
+            var saved = (pos, limit, windows);
+            pos = from + offset * 8;
+            limit = (long)data.Length * 8;
+            windows = 0;
+            return saved;
+        }
+
+        /// <summary>Return to where Jump left.</summary>
+        public void JumpBack((long, long, int) saved) => (pos, limit, windows) = saved;
 
         /// <summary>bits more bits are needed than are left: incomplete input at
         /// the top level, invalid data inside a window.</summary>
@@ -304,8 +324,55 @@
     public sealed class PbWriter : PbTrace
     {
         private readonly List<byte> buf = new List<byte>();
+        private long baseBits; // where buf goes in the output (sub writers)
+        private readonly List<(long At, byte[] Data, string Path)> placed = new List<(long, byte[], string)>();
 
         public byte[] ToArray() => buf.ToArray();
+
+        /// <summary>A writer for a packet placed <paramref name="offset"/> bytes after bit
+        /// <paramref name="from"/> of this writer (the packet start), or after the start of
+        /// the output (<paramref name="root"/>).</summary>
+        public PbWriter Sub(long from, long offset, bool root)
+        {
+            long start = root ? 0 : baseBits + from;
+            if (offset < 0 || start % 8 != 0) throw Error(PbErrorKind.Range, $"bad offset {offset} (from bit {start})");
+            var s = new PbWriter { baseBits = start + offset * 8 };
+            s.CopyFrames(this);
+            return s;
+        }
+
+        /// <summary>Keep what <paramref name="s"/> wrote, for Finish.</summary>
+        public void Place(PbWriter s)
+        {
+            placed.Add((s.baseBits / 8, s.buf.ToArray(), Path()));
+            placed.AddRange(s.placed);
+        }
+
+        /// <summary>The output, with every placed packet written at its offset: past
+        /// the end (zero-filling the gap), or over bytes that must already match.</summary>
+        public byte[] Finish()
+        {
+            foreach (var (at, data, path) in placed.OrderBy(p => p.At))
+            {
+                for (int i = 0; i < data.Length; i++)
+                {
+                    long k = at + i;
+                    if (k < buf.Count)
+                    {
+                        if (buf[(int)k] != data[i])
+                            throw new PbException(PbErrorKind.Mismatch,
+                                $"the packet placed at byte {at} does not match the bytes already there", path, k * 8);
+                    }
+                    else
+                    {
+                        while (buf.Count < k) buf.Add(0);
+                        buf.Add(data[i]);
+                    }
+                }
+            }
+            placed.Clear();
+            return buf.ToArray();
+        }
 
         public void WriteBits(ulong value, int width)
         {
