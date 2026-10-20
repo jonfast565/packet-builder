@@ -1,0 +1,104 @@
+// DNS messages, with compressed names.
+
+const DnsQr u1 {
+  query = 0,
+  response = 1,
+}
+
+const DnsOpcode u4 {
+  query = 0   "standard query",
+  iquery = 1  "inverse query (obsolete)",
+  status = 2  "server status request",
+  notify = 4,
+  update = 5,
+}
+
+const DnsRcode u4 {
+  no_error = 0,
+  format_error = 1,
+  server_failure = 2,
+  name_error = 3       "the domain name does not exist",
+  not_implemented = 4,
+  refused = 5,
+}
+
+const DnsType uint16 {
+  a = 1,
+  ns = 2,
+  cname = 5,
+  soa = 6,
+  ptr = 12,
+  mx = 15,
+  txt = 16,
+  aaaa = 28,
+}
+
+const DnsClass uint16 {
+  internet = 1,
+  chaos = 3,
+  any = 255,
+}
+
+const DnsLabelKind u2 {
+  text = 0,
+  pointer = 3  "the rest of the name is elsewhere in the message",
+}
+
+// A DNS name (RFC 1035 4.1.4) is a list of labels that ends with an empty
+// label, or with a pointer to the rest of the name earlier in the message
+// (name compression). The pointer's offset counts from the start of the
+// input, so decode a DnsMessage on its own (e.g. from Udp.payload).
+packet DnsName be {
+  labels DnsLabel[] until last.kind == DnsLabelKind.pointer or last.length == 0
+}
+
+packet DnsLabel be {
+  kind u2 : DnsLabelKind,
+  length u6,                // a pointer's high offset bits
+  body switch kind {
+    DnsLabelKind.text => text bytes[length],
+    DnsLabelKind.pointer => pointer DnsPointer(length)
+  }
+}
+
+// The rest of a compressed name, read where the 14-bit offset points.
+packet DnsPointer(high u6) be {
+  low uint8,
+  name DnsName at root high << 8 | low
+}
+
+packet DnsQuestion be {
+  name DnsName,
+  type uint16 : DnsType,
+  class uint16 : DnsClass
+}
+
+packet DnsResource be {
+  name DnsName,
+  type uint16 : DnsType,
+  class uint16 : DnsClass,
+  ttl uint32,
+  length uint16 = sizeof(data),
+  data bytes[length]
+}
+
+// A DNS message (RFC 1035 / 4035): a header with a 16-bit flags word and
+// the size of each section, then the sections.
+packet DnsMessage be {
+  id uint16,
+  flags bitfield uint16 {
+    qr u1 : DnsQr,
+    opcode u4 : DnsOpcode,
+    aa u1, tc u1, rd u1, ra u1,
+    z u1, ad u1, cd u1,
+    rcode u4 : DnsRcode
+  },
+  question_count uint16 = len(questions),
+  answer_count uint16 = len(answers),
+  authority_count uint16 = len(authorities),
+  additional_count uint16 = len(additionals),
+  questions DnsQuestion[question_count],
+  answers DnsResource[answer_count],
+  authorities DnsResource[authority_count],
+  additionals DnsResource[additional_count]
+}

@@ -88,9 +88,7 @@ fn load_spec(path: &Path) -> Spec {
     let json: Value = serde_json::from_str(&text).unwrap_or_else(|e| panic!("{}: {}", path.display(), e));
     let packet_file = json["spec"].as_str().expect("spec field");
     let source_path = path.parent().unwrap().join(packet_file);
-    let source = fs::read_to_string(&source_path).unwrap_or_else(|e| panic!("{}: {}", source_path.display(), e));
-    let module = packet_builder::compile(&source)
-        .unwrap_or_else(|e| panic!("{}", e.render(&source_path.display().to_string(), &source)));
+    let module = packet_builder::compile_file(&source_path).unwrap_or_else(|e| panic!("{}", e.render()));
 
     let mut cases = Vec::new();
     for c in json["cases"].as_array().expect("cases array") {

@@ -23,7 +23,8 @@ source ──parser──▶ PacketExprList ──ir::analyze──▶ ir::Modul
 | `src/generators/common/` | code shared by every backend (see below). |
 | `src/generators/<lang>/` | one backend per language, always split the same way: `mod.rs` (file preamble, `Backend` impl), `naming.rs` (identifiers, types, `Dialect` marker), `expr.rs` (`ExprLang` impl, `store_value`), `decode.rs` / `encode.rs` (`StepEmitter` impls), `packet.rs` (struct + method wrappers). |
 | `runtime/` | hand-written runtime support pasted into each generated file. |
-| `src/language.rs`, `src/lib.rs`, `src/main.rs` | `Language` enum, library entry points, CLI. |
+| `src/sources.rs`, `src/imports.rs` | `SourceMap` (every file gets a base offset, so a `Span` also says which file it is in; the parser adds the base) and the loader behind `compile_file`, which follows `import`s and merges the files' packets and constants. |
+| `src/language.rs`, `src/lib.rs`, `src/main.rs` | `Language` enum, library entry points (`compile` for one source, `compile_file` with imports), CLI. |
 
 ## Design rules (SOLID / GoF)
 

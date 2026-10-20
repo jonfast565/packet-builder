@@ -60,6 +60,7 @@ otherwise_kw  = @{ "otherwise" }
 
 // Packet keywords
 packet_kw     = @{ "packet" }
+import_kw     = @{ "import" }
 calc_kw       = @{ "calc" }
 const_kw      = @{ "const" }
 
@@ -108,7 +109,7 @@ default_arm = @{ "_" ~ !(alnum | underscore) }
 // Keyword reservation
 // ===============================
 keyword = _{
-    packet_kw | calc_kw | const_kw
+    packet_kw | calc_kw | const_kw | import_kw
   | when_kw | then_kw | otherwise_kw
   | sumof_kw | productof_kw
   | and_kw | or_kw | not_kw | xor_kw
@@ -336,7 +337,11 @@ const_member = { identifier ~ assign ~ expr ~ string? }
 // ===============================
 // Packets
 // ===============================
-packets = { SOI ~ wordsize_directive? ~ (const_decl | packet)+ ~ EOI }
+packets = { SOI ~ wordsize_directive? ~ import_decl* ~ (const_decl | packet)* ~ EOI }
+
+// `import "common.packet"`: the packets and constants of another file,
+// relative to this one.
+import_decl = { import_kw ~ string }
 
 // Width of a `word` in bits (16 by default, x86 style; 32 for ARM style).
 wordsize_directive = { wordsize_kw ~ numeric_constant }

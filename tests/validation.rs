@@ -24,9 +24,8 @@ fn examples_compile() {
     for file in
         ["examples/oscar.packet", "examples/p3.packet", "examples/network.packet", "tests/specs/features.packet"]
     {
-        let src = std::fs::read_to_string(file).unwrap();
-        if let Err(e) = compile(&src) {
-            panic!("{}:\n{}", file, e.render(file, &src));
+        if let Err(e) = packet_builder::compile_file(std::path::Path::new(file)) {
+            panic!("{}:\n{}", file, e.render());
         }
     }
 }

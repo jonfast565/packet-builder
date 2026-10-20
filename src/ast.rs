@@ -419,6 +419,8 @@ pub struct PacketExprList {
     pub constants: Vec<ConstDecl>,
     /// Bits in a `word` (16 unless the file says `wordsize 32`).
     pub word_size: u32,
+    /// `import "file"` declarations: the path as written, and where.
+    pub imports: Vec<(String, Span)>,
 }
 
 impl TypeNode {

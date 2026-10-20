@@ -25,9 +25,29 @@ use crate::ast::{PacketExprList, Span};
 #[grammar = "../grammar.pest"]
 pub struct PacketParser;
 
+thread_local! {
+    /// Added to every span: where the file being parsed starts in a
+    /// [`SourceMap`](crate::sources::SourceMap).
+    static SPAN_BASE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 // Entry point
 #[allow(clippy::result_large_err)] // pest's error type; returned once per parse
 pub fn parse_file(input: &str) -> Result<PacketExprList, Error<Rule>> {
+    parse_at(input, 0)
+}
+
+/// Parse a file whose spans start at `base` (see [`SourceMap`](crate::sources::SourceMap)).
+#[allow(clippy::result_large_err)]
+pub fn parse_at(input: &str, base: usize) -> Result<PacketExprList, Error<Rule>> {
+    let outer = SPAN_BASE.with(|b| b.replace(base));
+    let result = parse_inner(input);
+    SPAN_BASE.with(|b| b.set(outer));
+    result
+}
+
+#[allow(clippy::result_large_err)]
+fn parse_inner(input: &str) -> Result<PacketExprList, Error<Rule>> {
     let mut pairs = PacketParser::parse(Rule::packets, input)?;
     let root = pairs.next().expect("packets rule must produce a pair");
     let word_size = root
@@ -40,8 +60,17 @@ pub fn parse_file(input: &str) -> Result<PacketExprList, Error<Rule>> {
     literals::check_literals(root.clone(), word_size)?;
     let builder = items::TreeBuilder { word_size };
     let constants = builder.constants(root.clone());
+    let imports = root
+        .clone()
+        .into_inner()
+        .filter(|p| p.as_rule() == Rule::import_decl)
+        .filter_map(|d| {
+            let span = span_of(&d);
+            d.into_inner().find(|p| p.as_rule() == Rule::string).map(|s| (expr::parse_string_constant(s), span))
+        })
+        .collect();
     let packets = builder.packets(root);
-    Ok(PacketExprList { packets, constants, word_size })
+    Ok(PacketExprList { packets, constants, word_size, imports })
 }
 
 /// Parse an integer literal already validated by check_literals.
@@ -57,5 +86,6 @@ fn int_literal(s: &str) -> u64 {
 
 fn span_of(pair: &Pair<Rule>) -> Span {
     let s = pair.as_span();
-    Span { start: s.start(), end: s.end() }
+    let base = SPAN_BASE.with(|b| b.get());
+    Span { start: base + s.start(), end: base + s.end() }
 }

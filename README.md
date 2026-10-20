@@ -524,6 +524,26 @@ UDP expect.
 * `lenient` turns off the check when decoding; encoding still computes the
   value.
 
+### Imports
+
+A file can use the packets and constants of other files:
+
+```
+import "net/ip.packet"        // relative to this file
+
+packet Ethernet be {
+  ...
+  payload switch ethertype { EtherType.ipv4 => ipv4 Ipv4, _ => other bytes[] }
+}
+```
+
+Imports come first in a file, before any constant or packet. Each file is
+loaded once however many files import it; an import cycle is an error.
+Names share one namespace, so a packet or constant declared in two files
+is an error, reported in the file that declares it second. Generated code
+is still one self-contained file holding the packets of every file
+imported. `examples/network.packet` imports `examples/net/*.packet`.
+
 ### Constants
 
 Name a protocol's magic numbers instead of leaving them in comments. A

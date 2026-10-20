@@ -4,7 +4,7 @@ use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand};
 use packet_builder::ir::Module;
-use packet_builder::{GenOptions, Language, compile, generate_module};
+use packet_builder::{GenOptions, Language, compile_file, generate_module};
 
 /// Generate binary packet parsers and serializers from packet descriptions.
 #[derive(Parser)]
@@ -142,8 +142,7 @@ fn package_from(input: &Path) -> String {
 
 /// Read and compile a file; errors are rendered with source snippets.
 fn load(input: &Path) -> Result<Module, String> {
-    let source = fs::read_to_string(input).map_err(|e| format!("cannot read {}: {}", input.display(), e))?;
-    compile(&source).map_err(|e| e.render(&input.display().to_string(), &source))
+    compile_file(input).map_err(|e| e.render())
 }
 
 fn generate(args: GenerateArgs) -> Result<(), String> {
