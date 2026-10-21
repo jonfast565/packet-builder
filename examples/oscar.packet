@@ -15,6 +15,11 @@
 // exports them (Channel::SNAC in Rust, ChannelSnac in Go, ...).
 // =====================================================================
 
+// Protocol versions: the OService family version a client negotiates.
+// Version 1 (AIM 1.x clients) gets shorter rate classes (RateClass); 2 is
+// everyone else, and the default.
+version 2
+
 // ---------------------------------------------------------------------
 // FLAP: framing layer
 // ---------------------------------------------------------------------
@@ -191,19 +196,15 @@ packet FamilyVersions be {
   versions FamilyVersion[]
 }
 
-// SNAC(01,07) rate limit information. Servers send two layouts:
-// AIM 1.x clients get 30-byte classes (v1), everyone else 35 bytes (v2:
-// last_time and state follow). Nothing in the SNAC says which; a server
-// picks by the client id sent at login (Retro AIM Server: rateLimitSNACV1/V2
-// in foodgroup/oservice.go). RateInfo tells them apart by size, with
-// `remaining` (the bytes left in the FLAP payload): the groups after the
-// classes take a multiple of 4 bytes, so `remaining - 35 * class_count` is
-// a multiple of 4 (`& 3 == 0`) for v2, and `remaining - 30 * class_count`
-// for v1. The two agree only when class_count is a multiple of 4; such
-// replies are taken as v2 (a v1 reply with 4, 8, ... classes would decode
-// wrongly). Retro AIM Server sends one class to either kind of client.
-// Encoding writes the layout `version` says (1 or 2), not recomputing it.
-packet RateClass(version uint8) be {
+// SNAC(01,07) rate limit information. Its classes have two layouts: v1
+// (AIM 1.x clients, 30 bytes) and v2 (everyone else: `last_time` and
+// `state` follow, 35 bytes). Nothing in the SNAC says which: the server
+// picks by the OService family version the client negotiated in
+// SNAC(01,17)/(01,18) (Open OSCAR Server), or by the client id sent at
+// login (Retro AIM Server; foodgroup/oservice.go). That is this file's
+// protocol version (`version 2` above): a client decodes its connection at
+// the version it negotiated; tools default to v2.
+packet RateClass be {
   id uint16,
   window_size uint32,
   clear_level uint32,
@@ -212,12 +213,8 @@ packet RateClass(version uint8) be {
   disconnect_level uint32,
   current_level uint32,
   max_level uint32,
-  v2 RateClassV2[version >= 2]    // present in v2 replies only
-}
-
-packet RateClassV2 be {
-  last_time uint32,
-  state uint8
+  @2 last_time uint32,      // v2 only
+  @2 state uint8
 }
 
 packet FamilySubtype be {
@@ -233,8 +230,7 @@ packet RateGroup be {
 
 packet RateInfo be {
   class_count uint16 = len(classes),
-  calc version uint8 = when (remaining - 35 * class_count) & 3 == 0 then 2 otherwise 1,
-  classes RateClass(version)[class_count],
+  classes RateClass[class_count],
   groups RateGroup[]
 }
 

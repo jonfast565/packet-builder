@@ -308,7 +308,7 @@ The OSCAR description models these SNACs, each with test vectors:
 | (01,02) client online | `ClientOnline`, `ClientFamily` |
 | (01,03) server ready | `ServerReady` |
 | (01,06) rate request | an empty arm |
-| (01,07) rate limits | `RateInfo`, `RateClass`, `RateClassV2`, `RateGroup`, `FamilySubtype`; v1 (AIM 1.x) and v2 class layouts, told apart with `remaining` |
+| (01,07) rate limits | `RateInfo`, `RateClass`, `RateGroup`, `FamilySubtype`; v1 (AIM 1.x) and v2 class layouts (see below) |
 | (01,08) rate ack | `RateAck` |
 | (01,13) message of the day | `Motd` (`MotdType`, `MotdTlv`) |
 | (01,17) / (01,18) family versions | `FamilyVersions`, `FamilyVersion` |
@@ -321,3 +321,25 @@ The OSCAR description models these SNACs, each with test vectors:
 
 Adding another SNAC is usually a few lines: a packet with its fixed fields
 and `tlvs Tlv[]`, and an arm in `Snac.body`.
+
+### Versions
+
+The rate classes of SNAC(01,07) come in two layouts, and nothing in the
+SNAC says which: AIM 1.x clients get 30-byte classes, everyone else 35
+(`last_time` and `state` follow). The server chooses by the OService family
+version the client negotiated in SNAC(01,17)/(01,18) (or, in Retro AIM
+Server, by the client id sent at login). The description declares that as
+its protocol version (`version 2`, and `@2 last_time uint32` in `RateClass`),
+so one parser handles both: a client decodes its connection at the version
+it negotiated, and tools default to 2.
+
+```python
+info = RateInfo.decode(data, version=1)    # an AIM 1.x connection
+```
+
+```sh
+packet_builder decode examples/oscar.packet -k Flap --version 1 --hex ...
+```
+
+The Wireshark dissector has a `version` preference for captures of AIM 1.x
+clients.

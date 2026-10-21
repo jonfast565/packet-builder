@@ -148,16 +148,14 @@ impl<'a> PacketBuilder<'a> {
                         ctx.rules("_", &f.rules, false, false, f.span);
                         continue;
                     }
-                    if versioned && f.id == VERSION {
-                        ctx.diags.push(
-                            Diagnostic::new(
-                                "a field cannot be called `version` in a file with versions: it names the protocol version",
-                                f.span,
-                            )
-                            .with_note("call it `ver` and write `ver uint8 = version` to carry the version in-band"),
-                        );
-                    }
-                    if versioned && matches!(&f.derive, Some(ExprNode::ValueReference(n, None)) if n == VERSION) {
+                    // `ver uint8 = version` carries the version in-band (unless
+                    // `version` names a field or parameter of this packet).
+                    let shadowed = ctx.params.iter().any(|x| x.name == VERSION)
+                        || self.p.items.iter().any(|it| matches!(it, PacketItem::Field(g) if g.id == VERSION));
+                    if versioned
+                        && !shadowed
+                        && matches!(&f.derive, Some(ExprNode::ValueReference(n, None)) if n == VERSION)
+                    {
                         self.version_member = Some(ctx.members.len());
                     }
                     ctx.declare(&f.id, field_value_type(f), MemberKind::Stored, f.span);

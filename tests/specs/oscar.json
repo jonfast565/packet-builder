@@ -224,7 +224,6 @@
           "kind": "rate_info",
           "value": {
             "class_count": 1,
-            "version": 2,
             "classes": [
               {
                 "id": 1,
@@ -235,12 +234,8 @@
                 "disconnect_level": 800,
                 "current_level": 3433,
                 "max_level": 6000,
-                "v2": [
-                  {
-                    "last_time": 0,
-                    "state": 0
-                  }
-                ]
+                "last_time": 0,
+                "state": 0
               }
             ],
             "groups": [
@@ -273,7 +268,6 @@
       "hex": "0001000100000050000009c4000007d0000005dc0000032000000d6900001770000000000000010003000100030004000600130002",
       "expect": {
         "class_count": 1,
-        "version": 2,
         "classes": [
           {
             "id": 1,
@@ -284,12 +278,8 @@
             "disconnect_level": 800,
             "current_level": 3433,
             "max_level": 6000,
-            "v2": [
-              {
-                "last_time": 0,
-                "state": 0
-              }
-            ]
+            "last_time": 0,
+            "state": 0
           }
         ],
         "groups": [
@@ -329,7 +319,6 @@
           "kind": "rate_info",
           "value": {
             "class_count": 1,
-            "version": 1,
             "classes": [
               {
                 "id": 1,
@@ -339,8 +328,7 @@
                 "limit_level": 1500,
                 "disconnect_level": 800,
                 "current_level": 3433,
-                "max_level": 6000,
-                "v2": []
+                "max_level": 6000
               }
             ],
             "groups": [
@@ -365,7 +353,8 @@
             ]
           }
         }
-      }
+      },
+      "version": 1
     },
     {
       "name": "SNAC(01,07) rate limit info, v1 classes",
@@ -373,7 +362,6 @@
       "hex": "0001000100000050000009c4000007d0000005dc0000032000000d690000177000010003000100030004000600130002",
       "expect": {
         "class_count": 1,
-        "version": 1,
         "classes": [
           {
             "id": 1,
@@ -383,8 +371,7 @@
             "limit_level": 1500,
             "disconnect_level": 800,
             "current_level": 3433,
-            "max_level": 6000,
-            "v2": []
+            "max_level": 6000
           }
         ],
         "groups": [
@@ -407,7 +394,8 @@
             ]
           }
         ]
-      }
+      },
+      "version": 1
     },
     {
       "name": "SNAC(01,07) v1 rate info inside its FLAP frame",
@@ -431,7 +419,6 @@
               "kind": "rate_info",
               "value": {
                 "class_count": 1,
-                "version": 1,
                 "classes": [
                   {
                     "id": 1,
@@ -441,8 +428,7 @@
                     "limit_level": 1500,
                     "disconnect_level": 800,
                     "current_level": 3433,
-                    "max_level": 6000,
-                    "v2": []
+                    "max_level": 6000
                   }
                 ],
                 "groups": [
@@ -469,17 +455,14 @@
             }
           }
         }
-      }
+      },
+      "version": 1
     },
     {
-      "name": "SNAC(01,07) a v2 reply encoded as v1 when version is set to 1",
+      "name": "SNAC(01,07) v1 classes read as v2 (the default) do not fit",
       "packet": "RateInfo",
-      "hex": "0001000100000050000009c4000007d0000005dc0000032000000d6900001770000000000000010003000100030004000600130002",
-      "set": {
-        "version": 1
-      },
-      "encode_error": true,
-      "encode_error_kind": "mismatch"
+      "hex": "0001000100000050000009c4000007d0000005dc0000032000000d690000177000010003000100030004000600130002",
+      "error": true
     },
     {
       "name": "SNAC(01,07) class count larger than the data",

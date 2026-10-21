@@ -19,8 +19,13 @@ use crate::ast::{
 use crate::errors::Diagnostic;
 use crate::ir::expr::{CmpOp, LogicOp, TExpr};
 
-/// The builtin naming the version being decoded or encoded.
+/// The builtin naming the version being decoded or encoded. A field or
+/// parameter called `version` takes precedence over it in its packet.
 pub(super) const VERSION: &str = "version";
+
+/// The same builtin in expressions analysis builds: users cannot write the
+/// name, so no field can hide it.
+pub(super) const BUILTIN: &str = "@version";
 
 /// An inclusive range of versions, both ends known.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,7 +36,7 @@ pub struct VRange {
 
 /// `version`, as an expression.
 fn version() -> ExprNode {
-    ExprNode::ValueReference(VERSION.into(), None)
+    ExprNode::ValueReference(BUILTIN.into(), None)
 }
 
 fn lit(v: u32) -> Box<ExprNode> {

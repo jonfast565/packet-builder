@@ -220,7 +220,7 @@ fn version_flags() {
 
 #[test]
 fn files_without_versions_get_no_version_code() {
-    let out = bin().args(["generate", "examples/oscar.packet", "-l", "rust", "--stdout"]).output().unwrap();
+    let out = bin().args(["generate", "examples/p3.packet", "-l", "rust", "--stdout"]).output().unwrap();
     let text = String::from_utf8(out.stdout).unwrap();
     assert!(!text.contains("fn version_or") && !text.contains("decode_v"));
 }

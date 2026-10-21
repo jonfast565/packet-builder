@@ -477,8 +477,9 @@ packet Frame be {
   version`) carries it in-band: decoding adopts its value (for the rest of
   the packet and everything nested in it); encoding writes the caller's
   version, or else the value's own, so a decoded v1 message re-encodes as
-  v1. It must come before the fields that depend on it. In a file with
-  versions, no field may be called `version`.
+  v1. It must come before the fields that depend on it. A field or
+  parameter called `version` takes precedence over the builtin in its
+  packet (so existing descriptions keep their `version` fields).
 * **Where the version comes from** otherwise: the caller (default: the
   latest).
 

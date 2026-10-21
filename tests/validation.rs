@@ -610,7 +610,10 @@ fn overrides_change_existing_derived_fields() {
 
 #[test]
 fn version_is_the_protocol_version_in_versioned_files() {
-    assert_error("version 2\npacket P { version uint8 }", "cannot be called `version`");
+    // A field (or parameter) called `version` takes precedence in its packet.
+    let m = compile("version 2\npacket P { version uint8, n uint8 = version, @2 a uint8 }").unwrap();
+    assert!(m.packets[0].version_member.is_none());
+    assert!(compile("version 2\npacket Q(version uint8) { a uint8[version] }").is_ok());
     assert_error("version 2\npacket P { @2 a uint8, ver uint8 = version }", "must come before");
     assert!(
         compile(

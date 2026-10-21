@@ -66,7 +66,15 @@ impl<'a> Ctx<'a> {
                 let ty = self.scalar_ty(mty, field)?;
                 TExpr::Last { field: Some((n.clone(), field.clone())), ty }
             }
-            ValueReference(name, None) if name == super::versions::VERSION && self.consts.latest.is_some() => {
+            ValueReference(name, None) if name == super::versions::BUILTIN => TExpr::Version,
+            // `version` is the protocol version, unless a field or parameter
+            // has that name.
+            ValueReference(name, None)
+                if name == super::versions::VERSION
+                    && self.consts.latest.is_some()
+                    && !self.names.contains_key(name)
+                    && self.param(name).is_none() =>
+            {
                 TExpr::Version
             }
             ValueReference(name, None) if !self.names.contains_key(name) && self.param(name).is_some() => {
