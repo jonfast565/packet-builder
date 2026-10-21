@@ -35,6 +35,7 @@ typedef struct pb_frame {
 typedef struct pb_trace {
     pb_frame frames[PB_MAX_DEPTH];
     unsigned depth;
+    unsigned version; /* protocol version; 0 until set */
 } pb_trace;
 
 /* The first error: its code, where it happened (frames[0..depth) of the

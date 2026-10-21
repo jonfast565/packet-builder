@@ -6,15 +6,19 @@ use std::collections::HashMap;
 use super::context::Ctx;
 use super::params::Sigs;
 use super::types::{type_label, value_type};
+use super::versions::{VRange, resolve_ends, version_test};
 use crate::ast::{ConstDecl, ConstItem, ConstKind, PacketExpr, PacketExprList, Span, TypeNode};
 use crate::errors::Diagnostic;
-use crate::ir::model::{Category, Constant, ValueType};
+use crate::ir::expr::{TExpr, Ty};
+use crate::ir::model::{Category, ConstVersion, Constant, ValueType};
 
 /// Every constant of a file, in source order.
 #[derive(Debug, Default)]
 pub(super) struct ConstTable {
     pub constants: Vec<Constant>,
     pub categories: Vec<Category>,
+    /// `version N`: the latest protocol version, if the file has versions.
+    pub latest: Option<u32>,
 }
 
 /// Names that generated code already uses at file level (compared after
@@ -83,7 +87,7 @@ fn fold_name(name: &str) -> String {
 
 impl ConstTable {
     pub fn build(list: &PacketExprList, diags: &mut Vec<Diagnostic>) -> ConstTable {
-        let mut table = ConstTable::default();
+        let mut table = ConstTable { latest: super::versions::latest(list), ..Default::default() };
         // An empty packet to type-check values in: no fields, so only constants resolve.
         let scope = PacketExpr {
             name: String::new(),
@@ -91,6 +95,7 @@ impl ConstTable {
             items: Vec::new(),
             endianness: None,
             align: None,
+            versions: Vec::new(),
             span: Span::default(),
         };
         // Folded name -> what it names, for collision messages.
@@ -115,12 +120,36 @@ impl ConstTable {
             }
         };
 
+        // Re-declarations of a standalone constant for other versions.
+        let mut singles = HashMap::<&str, Vec<&ConstDecl>>::new();
+        for decl in &list.constants {
+            if matches!(decl.kind, ConstKind::Single(_)) {
+                singles.entry(decl.name.as_str()).or_default().push(decl);
+            }
+        }
         for decl in &list.constants {
             let Some(ty) = table.const_type(decl, diags) else { continue };
             match &decl.kind {
                 ConstKind::Single(item) => {
+                    let decls = &singles[decl.name.as_str()];
+                    let versioned = table.latest.is_some() && decls.iter().any(|d| d.versions.is_some());
+                    if versioned && !std::ptr::eq(decls[0], decl) {
+                        continue; // folded with the first declaration
+                    }
                     claim(&decl.name, format!("constant `{}`", decl.name), decl.span, diags);
-                    if let Some(c) = table.fold(item, &ty, &scope, diags) {
+                    let c = if versioned {
+                        let items: Vec<(&ConstItem, Option<crate::ast::VersionRange>)> = decls
+                            .iter()
+                            .filter_map(|d| match &d.kind {
+                                ConstKind::Single(i) => Some((i, d.versions)),
+                                _ => None,
+                            })
+                            .collect();
+                        table.fold_versions(&items, &ty, &scope, &format!("constant `{}`", decl.name), diags)
+                    } else {
+                        table.fold(item, &ty, &scope, diags)
+                    };
+                    if let Some(c) = c {
                         table.constants.push(c);
                     }
                 }
@@ -136,7 +165,26 @@ impl ConstTable {
                         );
                     }
                     let mut members = Vec::<Constant>::new();
-                    for item in items {
+                    for (k, item) in items.iter().enumerate() {
+                        // Re-declarations of a member for other versions.
+                        let same: Vec<&ConstItem> = items.iter().filter(|i| i.name == item.name).collect();
+                        if table.latest.is_some() && same.len() > 1 && same.iter().any(|i| i.versions.is_some()) {
+                            if !std::ptr::eq(same[0], &items[k]) {
+                                continue;
+                            }
+                            claim(
+                                &format!("{}{}", decl.name, item.name),
+                                format!("`{}.{}`", decl.name, item.name),
+                                item.span,
+                                diags,
+                            );
+                            let pairs: Vec<_> = same.iter().map(|i| (*i, i.versions)).collect();
+                            let what = format!("`{}.{}`", decl.name, item.name);
+                            if let Some(c) = table.fold_versions(&pairs, &ty, &scope, &what, diags) {
+                                members.push(c);
+                            }
+                            continue;
+                        }
                         if fold_name(&item.name) == fold_name(&decl.name) {
                             diags.push(Diagnostic::new(
                                 format!("`{}` has the same name as its category `{}`", item.name, decl.name),
@@ -157,7 +205,14 @@ impl ConstTable {
                             item.span,
                             diags,
                         );
-                        if let Some(c) = table.fold(item, &ty, &scope, diags) {
+                        let folded = match item.versions {
+                            Some(r) if table.latest.is_some() => {
+                                let what = format!("`{}.{}`", decl.name, item.name);
+                                table.fold_versions(&[(item, Some(r))], &ty, &scope, &what, diags)
+                            }
+                            _ => table.fold(item, &ty, &scope, diags),
+                        };
+                        if let Some(c) = folded {
                             members.push(c);
                         }
                     }
@@ -210,7 +265,64 @@ impl ConstTable {
             ));
             return None;
         }
-        Some(Constant { name: item.name.clone(), ty: ty.clone(), value, radix: item.radix, note: item.note.clone() })
+        Some(Constant {
+            name: item.name.clone(),
+            ty: ty.clone(),
+            value,
+            radix: item.radix,
+            note: item.note.clone(),
+            versions: Vec::new(),
+        })
+    }
+
+    /// One constant from its declarations for different versions: the
+    /// value of each range, and the latest one's (or, when the constant no
+    /// longer exists, the last one's) as `value`.
+    fn fold_versions(
+        &self,
+        items: &[(&ConstItem, Option<crate::ast::VersionRange>)],
+        ty: &ValueType,
+        scope: &PacketExpr,
+        what: &str,
+        diags: &mut Vec<Diagnostic>,
+    ) -> Option<Constant> {
+        let latest = self.latest.expect("versioned");
+        let decls: Vec<_> = items.iter().map(|(i, r)| (*r, i.span)).collect();
+        let ranges: Vec<VRange> = resolve_ends(&decls, latest, what, diags);
+        let mut versions = Vec::new();
+        for ((item, _), r) in items.iter().zip(&ranges) {
+            let c = self.fold(item, ty, scope, diags)?;
+            versions.push(ConstVersion { from: r.from, to: r.to, value: c.value, radix: c.radix });
+        }
+        versions.sort_by_key(|v| v.from);
+        let current = versions.iter().find(|v| v.to >= latest).or(versions.last()).cloned()?;
+        let first = items[0].0;
+        let note = items.iter().rev().find_map(|(i, _)| i.note.clone());
+        Some(Constant {
+            name: first.name.clone(),
+            ty: ty.clone(),
+            value: current.value,
+            radix: current.radix,
+            note,
+            versions,
+        })
+    }
+
+    /// A constant's value in an expression: a literal, or for a versioned
+    /// constant the value for the version being coded.
+    pub fn value_expr(&self, c: &Constant) -> TExpr {
+        let (Some(latest), Some((last, rest))) = (self.latest, c.versions.split_last()) else {
+            return TExpr::IntLit(c.value);
+        };
+        if rest.iter().all(|v| v.value == last.value) {
+            return TExpr::IntLit(last.value);
+        }
+        rest.iter().rev().fold(TExpr::IntLit(last.value), |other, v| TExpr::Guard {
+            cond: Box::new(version_test(VRange { from: v.from, to: v.to }, latest)),
+            then: Box::new(TExpr::IntLit(v.value)),
+            other: Box::new(other),
+            ty: Ty::Int,
+        })
     }
 
     pub fn single(&self, name: &str) -> Option<&Constant> {
@@ -263,7 +375,9 @@ impl Ctx<'_> {
             ));
             return;
         }
-        if let Some(bad) = cat.members.iter().find(|m| !ty.holds(m.value)) {
+        if let Some(bad) =
+            cat.members.iter().find(|m| !ty.holds(m.value) || m.versions.iter().any(|v| !ty.holds(v.value)))
+        {
             self.diags.push(Diagnostic::new(
                 format!(
                     "`{}.{}` = {} does not fit `{}` ({})",

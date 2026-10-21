@@ -98,4 +98,14 @@ impl Cursor {
         self.align = self.align.advance_multiple(step);
         self.exact = None;
     }
+
+    /// Where a gate leaves the offset: `self` if its steps were skipped,
+    /// `after` if they ran.
+    pub fn join(self, after: Cursor) -> Cursor {
+        let (a, b) = (self.align, after.align);
+        let diff = (a.offset as i64 - b.offset as i64).unsigned_abs();
+        let modulus = gcd(gcd(a.modulus as u64, b.modulus as u64), diff) as u32;
+        let align = if a == b { a } else { Align { offset: a.offset % modulus.max(1), modulus: modulus.max(1) } };
+        Cursor { align, exact: if self.exact == after.exact { self.exact } else { None }, min_bits: self.min_bits }
+    }
 }

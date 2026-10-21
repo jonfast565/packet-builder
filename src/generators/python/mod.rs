@@ -31,7 +31,7 @@ impl Backend for PythonGenerator {
         out.line("from typing import List, Optional, Tuple");
         out.line("");
         out.line("");
-        out.buf.push_str(RUNTIME);
+        out.buf.push_str(&crate::generators::common::runtime_source(RUNTIME, module.versions.is_some()));
         self.emit_constants(&mut out, module);
         for u in &module.unions {
             out.line("");

@@ -98,6 +98,16 @@ pub fn emit_packet(out: &mut Out, module: &Module, p: &Packet, types: &Types) {
     out.line(format!("Self::decode_from(&mut pb_r{})", pass));
     out.close("}");
     out.line("");
+    let versions = p.versions.map(|_| p.version_bounds());
+    if let Some((min, latest)) = versions {
+        out.line(format!("/// Decode as protocol version `version` ({}..={}).", min, latest));
+        out.open(format!("pub fn decode_v(data: {}, version: u32{}) -> Result<Self, PbError> {{", data_ty, decl));
+        out.line("let mut pb_r = PbReader::new(data);");
+        out.line(format!("pb_r.set_version(version as i64, {}, {})?;", min, latest));
+        out.line(format!("Self::decode_from(&mut pb_r{})", pass));
+        out.close("}");
+        out.line("");
+    }
     out.open(format!("pub fn decode_from(pb_r: &mut {}{}) -> Result<Self, PbError> {{", reader_ty, decl));
     touch(out);
     out.line(format!("pb_r.enter(\"{}\")?;", name));
@@ -118,6 +128,16 @@ pub fn emit_packet(out: &mut Out, module: &Module, p: &Packet, types: &Types) {
     out.line("pb_w.finish()");
     out.close("}");
     out.line("");
+    if let Some((min, latest)) = versions {
+        out.line(format!("/// Encode as protocol version `version` ({}..={}).", min, latest));
+        out.open(format!("pub fn encode_v(&self, version: u32{}) -> Result<Vec<u8>, PbError> {{", decl));
+        out.line("let mut pb_w = PbWriter::new();");
+        out.line(format!("pb_w.set_version(version as i64, {}, {})?;", min, latest));
+        out.line(format!("self.encode_to(&mut pb_w{})?;", pass));
+        out.line("pb_w.finish()");
+        out.close("}");
+        out.line("");
+    }
     out.open(format!("pub fn encode_to(&self, pb_w: &mut PbWriter{}) -> Result<(), PbError> {{", decl));
     touch(out);
     out.line(format!("pb_w.enter(\"{}\")?;", name));
@@ -126,9 +146,7 @@ pub fn emit_packet(out: &mut Out, module: &Module, p: &Packet, types: &Types) {
         out.line("let pb_start = pb_w.position_bits();");
     }
     let encoder = Encoder::new(p);
-    for (m, e) in p.encode_calc_members() {
-        encoder.define_local(out, m, e);
-    }
+    encoder.emit_locals(out);
     encoder.emit_steps(out);
     out.line("pb_w.leave();");
     out.line("Ok(())");

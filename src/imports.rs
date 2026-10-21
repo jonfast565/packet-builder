@@ -31,6 +31,7 @@ impl Loader {
                 word_size: 16,
                 imports: Vec::new(),
                 dissectors: Vec::new(),
+                version: None,
             },
             diags: Vec::new(),
             stack: Vec::new(),
@@ -84,6 +85,15 @@ impl Loader {
         self.merged.packets.extend(list.packets);
         self.merged.constants.extend(list.constants);
         self.merged.dissectors.extend(list.dissectors);
+        if let Some((n, span)) = list.version {
+            match self.merged.version {
+                Some((m, _)) if m != n => self.diags.push(Diagnostic::new(
+                    format!("this file declares `version {}`, but an imported file declares `version {}`", n, m),
+                    span,
+                )),
+                _ => self.merged.version = Some((n, span)),
+            }
+        }
         Ok(())
     }
 }

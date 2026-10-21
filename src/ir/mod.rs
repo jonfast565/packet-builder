@@ -20,6 +20,7 @@ pub mod frame;
 pub mod interp;
 pub mod layout;
 pub mod model;
+mod subset;
 pub mod wire;
 
 pub use analysis::analyze;

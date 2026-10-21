@@ -17,6 +17,17 @@ pub struct Module {
     pub unions: Vec<Union>,
     /// Wireshark dissectors to generate (`dissector` declarations).
     pub dissectors: Vec<Dissector>,
+    /// `version N`: the versions generated code accepts, `min..=latest`
+    /// (1..=N unless generated for a subset); None without versions.
+    pub versions: Option<Versions>,
+}
+
+/// The protocol versions a module speaks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Versions {
+    pub min: u32,
+    /// The default when nothing else says which version to use.
+    pub latest: u32,
 }
 
 /// A Wireshark dissector for a packet.
@@ -106,6 +117,18 @@ pub struct Constant {
     /// How the value was written, so generated code can keep the spelling.
     pub radix: Radix,
     pub note: Option<String>,
+    /// For versioned constants: the value of each range of versions, in
+    /// increasing order (`value` is the latest one's). Empty otherwise.
+    pub versions: Vec<ConstVersion>,
+}
+
+/// The value a constant has for versions `from..=to`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConstVersion {
+    pub from: u32,
+    pub to: u32,
+    pub value: i64,
+    pub radix: Radix,
 }
 
 impl Constant {
@@ -226,6 +249,12 @@ pub struct Packet {
     /// Members only known after encoding the body: `patches` and the
     /// calculated members that depend on them.
     pub wire_dependent: Vec<usize>,
+    /// A member derived from `version` (`ver uint8 = version`): decoding
+    /// adopts its value as the reader's version, encoding takes the
+    /// writer's (or, if the caller gave none, the member's).
+    pub version_member: Option<usize>,
+    /// The module's versions (`Module::versions`), for generated code.
+    pub versions: Option<Versions>,
 }
 
 /// A packet parameter: an integer the containing packet passes in. It is
@@ -287,6 +316,28 @@ impl Packet {
         deps.iter().any(|d| self.wire_dependent.contains(d))
     }
 
+    /// The versions generated code accepts: (min, latest); (1, 1) without versions.
+    pub fn version_bounds(&self) -> (u32, u32) {
+        self.versions.map(|v| (v.min, v.latest)).unwrap_or((1, 1))
+    }
+
+    /// The indices of the steps inside a version gate.
+    pub fn gated_steps(&self) -> HashSet<usize> {
+        let mut out = HashSet::new();
+        let mut depth = 0usize;
+        for (i, s) in self.steps.iter().enumerate() {
+            match s {
+                Step::OpenGate { .. } => depth += 1,
+                Step::CloseGate { .. } => depth = depth.saturating_sub(1),
+                _ if depth > 0 => {
+                    out.insert(i);
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+
     /// The step that reads or writes stored member `member`.
     pub fn field_step(&self, member: usize) -> Option<usize> {
         self.steps.iter().position(|s| matches!(s, Step::Field { member: Some(m), .. } if *m == member))
@@ -338,6 +389,9 @@ pub struct Member {
     pub lenient: bool,
     /// For strings: how characters become bytes.
     pub encoding: TextEncoding,
+    /// The test for the versions the member is on the wire in, when that is
+    /// not every version (it keeps its default value in the others).
+    pub present: Option<TExpr>,
 }
 
 /// A declared check on a member's value. Decoding fails with a `constraint`

@@ -80,7 +80,35 @@ impl<'a> Ctx<'a> {
             checks: Vec::new(),
             lenient: false,
             encoding: Default::default(),
+            present: None,
         });
+    }
+
+    /// A re-declaration of `name` for other versions: the member's type
+    /// becomes one that holds both (the wider integer).
+    pub fn redeclare(&mut self, name: &str, ty: ValueType, span: Span) {
+        let Some(&idx) = self.names.get(name) else { return };
+        let cur = &self.members[idx].ty;
+        let joined = match (cur, &ty) {
+            (a, b) if a == b => Some(a.clone()),
+            (ValueType::Int { width: w1, signed: s1 }, ValueType::Int { width: w2, signed: s2 }) if s1 == s2 => {
+                Some(ValueType::Int { width: (*w1).max(*w2), signed: *s1 })
+            }
+            (ValueType::Float { width: w1 }, ValueType::Float { width: w2 }) => {
+                Some(ValueType::Float { width: (*w1).max(*w2) })
+            }
+            _ => None,
+        };
+        match joined {
+            Some(t) => self.members[idx].ty = t,
+            None => self.diags.push(
+                Diagnostic::new(
+                    format!("`{}` changes to an incompatible type; use a new name for the new field", name),
+                    span,
+                )
+                .with_note("a re-declaration may widen an integer (keeping its signedness), or change a length, encoding or byte order"),
+            ),
+        }
     }
 
     /// Add calculated fields to the decode steps once their inputs are known.

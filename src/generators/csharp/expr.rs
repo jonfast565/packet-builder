@@ -90,6 +90,14 @@ impl ExprLang for Scope<'_, CSharp> {
         format!("((long){})", self.field(self.member(member)))
     }
 
+    fn version(&self) -> String {
+        let latest = self.packet.version_bounds().1;
+        match self.mode {
+            Mode::Decode => format!("pbR.VersionOr({})", latest),
+            Mode::Encode => format!("pbW.VersionOr({})", latest),
+        }
+    }
+
     fn remaining(&self) -> String {
         "pbR.RemainingBytes".into()
     }

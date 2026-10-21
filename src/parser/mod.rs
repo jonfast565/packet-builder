@@ -19,7 +19,7 @@ use pest::error::Error;
 use pest::iterators::Pair;
 use pest_derive::Parser;
 
-use crate::ast::{PacketExprList, Span};
+use crate::ast::{PacketExprList, Span, VersionRange};
 
 #[derive(Parser)]
 #[grammar = "../grammar.pest"]
@@ -70,8 +70,13 @@ fn parse_inner(input: &str) -> Result<PacketExprList, Error<Rule>> {
         })
         .collect();
     let dissectors = root.clone().into_inner().filter(|p| p.as_rule() == Rule::dissector_decl).map(dissector).collect();
+    let version = root.clone().into_inner().find(|p| p.as_rule() == Rule::version_directive).map(|d| {
+        let span = span_of(&d);
+        let n = d.into_inner().find(|p| p.as_rule() == Rule::numeric_constant).map(|n| int_literal(n.as_str()));
+        (n.unwrap_or(0).min(u32::MAX as u64) as u32, span)
+    });
     let packets = builder.packets(root);
-    Ok(PacketExprList { packets, constants, word_size, imports, dissectors })
+    Ok(PacketExprList { packets, constants, word_size, imports, dissectors, version })
 }
 
 fn dissector(pair: Pair<Rule>) -> crate::ast::DissectorExpr {
@@ -109,6 +114,17 @@ fn int_literal(s: &str) -> u64 {
         u64::from_str_radix(rest, 2).unwrap_or(0)
     } else {
         s.parse().unwrap_or(0)
+    }
+}
+
+/// `@2..`, `@..3`, `@2..3` or `@2` (from 2 on).
+fn version_range(pair: Pair<Rule>) -> VersionRange {
+    let span = span_of(&pair);
+    let text = pair.as_str().trim_start_matches('@');
+    let bound = |s: &str| if s.is_empty() { None } else { Some(s.parse::<u32>().unwrap_or(u32::MAX)) };
+    match text.split_once("..") {
+        Some((from, to)) => VersionRange { from: bound(from), to: bound(to), span },
+        None => VersionRange { from: bound(text), to: None, span },
     }
 }
 

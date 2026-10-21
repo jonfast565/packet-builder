@@ -83,6 +83,14 @@ impl ExprLang for Scope<'_, Go> {
         format!("int64({})", self.field(self.member(member)))
     }
 
+    fn version(&self) -> String {
+        let latest = self.packet.version_bounds().1;
+        match self.mode {
+            Mode::Decode => format!("pbR.VersionOr({})", latest),
+            Mode::Encode => format!("pbW.VersionOr({})", latest),
+        }
+    }
+
     fn remaining(&self) -> String {
         "pbR.RemainingBytes()".into()
     }
@@ -136,4 +144,24 @@ pub fn store_value(expr: &TExpr, code: String, ty: &ValueType) -> String {
         }
         _ => format!("{}({})", scalar_type(ty), code),
     }
+}
+
+/// `e` without parentheses around the whole of it (gofmt drops them after `if`).
+pub fn unparen(e: &str) -> &str {
+    let Some(inner) = e.strip_prefix('(').and_then(|x| x.strip_suffix(')')) else { return e };
+    // Only when the first `(` closes at the very end.
+    let mut depth = 0i32;
+    for (i, c) in e.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 && i != e.len() - 1 {
+                    return e;
+                }
+            }
+            _ => {}
+        }
+    }
+    inner
 }

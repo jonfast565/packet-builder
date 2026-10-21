@@ -66,13 +66,16 @@ impl<'a> Ctx<'a> {
                 let ty = self.scalar_ty(mty, field)?;
                 TExpr::Last { field: Some((n.clone(), field.clone())), ty }
             }
+            ValueReference(name, None) if name == super::versions::VERSION && self.consts.latest.is_some() => {
+                TExpr::Version
+            }
             ValueReference(name, None) if !self.names.contains_key(name) && self.param(name).is_some() => {
                 self.param(name).expect("checked")
             }
             ValueReference(name, None) if !self.names.contains_key(name) && self.consts.single(name).is_some() => {
-                TExpr::IntLit(self.consts.single(name).expect("checked").value)
+                self.consts.value_expr(self.consts.single(name).expect("checked"))
             }
-            QualifiedReference(group, name) => TExpr::IntLit(self.consts.member(group, name)?.value),
+            QualifiedReference(group, name) => self.consts.value_expr(self.consts.member(group, name)?),
             ValueReference(name, None) if name == "remaining" && !self.names.contains_key(name) => {
                 if !self.allow_remaining {
                     return Err(

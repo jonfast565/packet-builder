@@ -145,6 +145,10 @@ impl ExprLang for Scope<'_, Lua> {
         self.field(self.member(member))
     }
 
+    fn version(&self) -> String {
+        format!("r:version_or({})", self.packet.version_bounds().1)
+    }
+
     fn remaining(&self) -> String {
         "r:remaining_bytes()".into()
     }

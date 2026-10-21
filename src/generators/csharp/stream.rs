@@ -14,9 +14,17 @@ pub fn emit_streaming(out: &mut Out, module: &Module, p: &Packet) {
     out.line("");
     out.line("/// <summary>Decode from a buffer that may end mid-packet (a stream): the packet and the");
     out.line("/// bytes it took, or how many more bytes are needed at least.</summary>");
-    out.line(format!("public static PbStatus<{}> TryDecode(byte[] data)", name));
-    out.open("{");
-    out.line("var pbR = new PbReader(data);");
+    if p.versions.is_some() {
+        let (min, latest) = p.version_bounds();
+        out.line(format!("public static PbStatus<{}> TryDecode(byte[] data, int version = 0)", name));
+        out.open("{");
+        out.line("var pbR = new PbReader(data);");
+        out.line(format!("if (version != 0) pbR.SetVersion(version, {}, {});", min, latest));
+    } else {
+        out.line(format!("public static PbStatus<{}> TryDecode(byte[] data)", name));
+        out.open("{");
+        out.line("var pbR = new PbReader(data);");
+    }
     out.line("try");
     out.open("{");
     out.line("var p = DecodeFrom(pbR);");

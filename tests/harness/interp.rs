@@ -43,7 +43,7 @@ fn error_json(e: &interp::Error, pre: &str) -> String {
 fn run_case(module: &Module, c: &Case) -> String {
     let data: Vec<u8> =
         (0..c.hex.len()).step_by(2).map(|i| u8::from_str_radix(&c.hex[i..i + 2], 16).unwrap()).collect();
-    let mut value = match interp::decode(module, &c.packet, &data) {
+    let mut value = match interp::decode_version(module, &c.packet, &data, c.version) {
         Ok(v) => v,
         Err(e) => return format!("{{\"ok\":false,{}}}", error_json(&e, "")),
     };
@@ -51,7 +51,7 @@ fn run_case(module: &Module, c: &Case) -> String {
         set(module, &c.packet, &mut value, path, v);
     }
     let dumped = value.to_json();
-    match interp::encode(module, &c.packet, &value) {
+    match interp::encode_version(module, &c.packet, &value, c.version) {
         Ok(b) => format!("{{\"ok\":true,\"value\":{},\"encoded\":{}}}", dumped, Value::Bytes(b).to_json()),
         Err(e) => format!("{{\"ok\":true,\"value\":{},{}}}", dumped, error_json(&e, "encode_")),
     }
@@ -63,6 +63,9 @@ fn stream_case(module: &Module, c: &Case) -> String {
     let data: Vec<u8> =
         (0..c.hex.len()).step_by(2).map(|i| u8::from_str_radix(&c.hex[i..i + 2], 16).unwrap()).collect();
     let mut r = interp::Reader::new(&data);
+    if let Some((v, min, latest)) = c.versions(module) {
+        let _ = r.set_version(v as i64, min, latest);
+    }
     let mut line = match interp::decode_from(module, &c.packet, &mut r) {
         Ok(_) => format!("{{\"try\":\"done\",\"n\":{}", r.position_bits().div_ceil(8)),
         Err(e) if e.kind == interp::ErrorKind::Incomplete => {

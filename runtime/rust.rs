@@ -129,6 +129,16 @@ pub struct PbJump {
     windows: usize,
 }
 
+// @versions{
+/// `v` if it is one of the versions `min..=latest`.
+fn pb_check_version(v: i64, min: u32, latest: u32) -> Result<u32, String> {
+    if v < min as i64 || v > latest as i64 {
+        return Err(format!("version {} is not one of the versions {}..{}", v, min, latest));
+    }
+    Ok(v as u32)
+}
+// @versions}
+
 /// Reads integers of any bit width (MSB-first) and byte-aligned values.
 pub struct PbReader<'a> {
     data: &'a [u8],
@@ -136,12 +146,26 @@ pub struct PbReader<'a> {
     limit: usize, // end of the readable data in bits (a window inside `data`)
     windows: usize, // windows open
     trace: PbTrace,
+    version: u32, // protocol version; 0 until set
 }
 
 impl<'a> PbReader<'a> {
     pub fn new(data: &'a [u8]) -> Self {
-        PbReader { data, pos: 0, limit: data.len() * 8, windows: 0, trace: PbTrace::default() }
+        PbReader { data, pos: 0, limit: data.len() * 8, windows: 0, trace: PbTrace::default(), version: 0 }
     }
+
+    // @versions{
+    /// The protocol version (`version`), or `latest` while none is set.
+    pub fn version_or(&self, latest: u32) -> i64 {
+        (if self.version == 0 { latest } else { self.version }) as i64
+    }
+
+    /// Decode as protocol version `v`, which must be in `min..=latest`.
+    pub fn set_version(&mut self, v: i64, min: u32, latest: u32) -> Result<(), PbError> {
+        self.version = pb_check_version(v, min, latest).map_err(|m| self.error(PbErrorKind::Constraint, m))?;
+        Ok(())
+    }
+    // @versions}
 
     pub fn position_bits(&self) -> usize {
         self.pos
@@ -475,12 +499,31 @@ pub struct PbWriter {
     /// Packets placed at an offset (`at`): byte position, bytes and the
     /// field's path. `finish` writes them.
     placed: Vec<(usize, Vec<u8>, String)>,
+    version: u32, // protocol version; 0 until set
 }
 
 impl PbWriter {
     pub fn new() -> Self {
         PbWriter::default()
     }
+
+    // @versions{
+    /// The protocol version (`version`), or `latest` while none is set.
+    pub fn version_or(&self, latest: u32) -> i64 {
+        (if self.version == 0 { latest } else { self.version }) as i64
+    }
+
+    /// Encode as protocol version `v`, which must be in `min..=latest`.
+    pub fn set_version(&mut self, v: i64, min: u32, latest: u32) -> Result<(), PbError> {
+        self.version = pb_check_version(v, min, latest).map_err(|m| self.error(PbErrorKind::Constraint, m))?;
+        Ok(())
+    }
+
+    /// The version a value carries in-band: used unless one is set already.
+    pub fn adopt_version(&mut self, v: i64, min: u32, latest: u32) -> Result<(), PbError> {
+        if self.version == 0 { self.set_version(v, min, latest) } else { Ok(()) }
+    }
+    // @versions}
 
     pub fn position_bits(&self) -> usize {
         self.pos
@@ -585,7 +628,7 @@ impl PbWriter {
             return Err(self.error(PbErrorKind::Range, format!("bad offset {} (from bit {})", offset, start)));
         }
         let base = (offset as usize).saturating_mul(8).saturating_add(start);
-        Ok(PbWriter { base, trace: self.trace.clone(), ..PbWriter::default() })
+        Ok(PbWriter { base, trace: self.trace.clone(), version: self.version, ..PbWriter::default() })
     }
 
     /// Keep what `sub` wrote, for `finish`.

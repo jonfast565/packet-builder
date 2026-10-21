@@ -245,6 +245,19 @@ impl StepEmitter for Encoder<'_> {
         }
     }
 
+    fn open_gate(&self, out: &mut Out, cond: &TExpr) {
+        out.open(format!("if ({}) {{", self.scope.expr(cond)));
+    }
+
+    fn close_gate(&self, out: &mut Out) {
+        out.close("}");
+    }
+
+    fn adopt_version(&self, out: &mut Out, m: &Member) {
+        let (min, latest) = self.scope.packet.version_bounds();
+        out.line(format!("try pb_w.adoptVersion(@as(i64, @intCast({})), {}, {});", self.scope.field(m), min, latest));
+    }
+
     fn scalar(&self, out: &mut Out, m: &Member, _ty: &ValueType, codec: &Codec) {
         write_elem(&self.scope, out, codec, &format!("p.{}", ident(&m.name)));
     }

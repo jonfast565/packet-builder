@@ -64,8 +64,14 @@ impl Target for CSharpTarget {
             let p = packet(module, &c.packet);
             s.push_str("        {\n");
             let _ = writeln!(s, "            {} p;", p.name);
-            let _ =
-                writeln!(s, "            try {{ p = {}.Decode(Convert.FromHexString({})); }}", p.name, quote(&c.hex));
+            let ver = c.version.map(|v| format!(", version: {}", v)).unwrap_or_default();
+            let _ = writeln!(
+                s,
+                "            try {{ p = {}.Decode(Convert.FromHexString({}){}); }}",
+                p.name,
+                quote(&c.hex),
+                ver
+            );
             s.push_str("            catch (PbException e) { Console.WriteLine(\"{\\\"ok\\\":false\" + E(e, \"\") + \"}\"); goto done; }\n");
             for (name, v) in &c.set {
                 let _ = writeln!(
@@ -77,7 +83,7 @@ impl Target for CSharpTarget {
             }
             s.push_str("            var v = p.ToJson();\n");
             s.push_str("            byte[] b;\n");
-            s.push_str("            try { b = p.Encode(); }\n");
+            let _ = writeln!(s, "            try {{ b = p.Encode({}); }}", ver.trim_start_matches(", "));
             s.push_str("            catch (PbException e) { Console.WriteLine(\"{\\\"ok\\\":true,\\\"value\\\":\" + v + E(e, \"encode_\") + \"}\"); goto done; }\n");
             s.push_str("            Console.WriteLine(\"{\\\"ok\\\":true,\\\"value\\\":\" + v + \",\\\"encoded\\\":\" + Hx(b) + \"}\");\n");
             s.push_str("            done:;\n        }\n");
@@ -86,8 +92,8 @@ impl Target for CSharpTarget {
             s.push_str("            string s;\n");
             let _ = writeln!(
                 s,
-                "            try {{ var st = {}.TryDecode(d); s = st.IsDone ? \"{{\\\"try\\\":\\\"done\\\",\\\"n\\\":\" + st.Consumed : \"{{\\\"try\\\":\\\"incomplete\\\",\\\"n\\\":\" + st.Needed; }}",
-                p.name
+                "            try {{ var st = {}.TryDecode(d{}); s = st.IsDone ? \"{{\\\"try\\\":\\\"done\\\",\\\"n\\\":\" + st.Consumed : \"{{\\\"try\\\":\\\"incomplete\\\",\\\"n\\\":\" + st.Needed; }}",
+                p.name, ver
             );
             s.push_str("            catch (PbException) { s = \"{\\\"try\\\":\\\"error\\\"\"; }\n");
             if super::has_frame(module, p) {

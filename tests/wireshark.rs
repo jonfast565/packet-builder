@@ -89,6 +89,11 @@ fn expect_packet(
     for (name, v) in want {
         let Some(member) = p.members.iter().find(|x| &x.name == name) else { continue };
         let field = format!("pbtest.{}.{}", p.name.to_ascii_lowercase(), name.to_ascii_lowercase());
+        // A member that exists in some versions only is not in the tree of
+        // a frame of another version (where it keeps its default).
+        if member.present.is_some() && !fields.contains_key(&field) && (v == &Value::from(0) || v == &Value::from("")) {
+            continue;
+        }
         let bytes = member.array.is_some() && member.ty.is_byte();
         match (&member.ty, v) {
             (ValueType::Packet(n), Value::Object(o)) => expect_packet(m, harness::packet(m, n), o, fields, errors),
@@ -133,14 +138,23 @@ fn run_spec(tshark: &str, spec: &Spec) -> Vec<String> {
     let package = format!("spec_{}", spec.name);
     fs::write(dir.join("gen.lua"), generate_dissector(&spec.module, &[], &package)).unwrap();
     let table: Vec<String> = names.iter().enumerate().map(|(i, n)| format!("[{}] = \"{}\"", i, n)).collect();
+    // Frames start with the packet's index, and for files with versions the
+    // version the case gives (0: none).
+    let versioned = spec.module.versions.is_some();
+    let skip = if versioned { 2 } else { 1 };
+    let call = if versioned {
+        "M.dissect(names[tvb(0, 1):uint()], F, X, rest, item, tvb(1, 1):uint())"
+    } else {
+        "M.dissect(names[tvb(0, 1):uint()], F, X, rest, item)"
+    };
     let wrapper = format!(
         r#"local M = dofile("{gen}")
 local names = {{ {table} }}
 local proto, F, X = M.register("pbtest", "PB test", names[0])
 function proto.dissector(tvb, pinfo, tree)
   local item = tree:add(proto, tvb())
-  local rest = tvb:len() > 1 and tvb(1):tvb() or ByteArray.new():tvb("empty")
-  M.dissect(names[tvb(0, 1):uint()], F, X, rest, item)
+  local rest = tvb:len() > {skip} and tvb({skip}):tvb() or ByteArray.new():tvb("empty")
+  {call}
 end
 "#,
         gen = dir.join("gen.lua").display(),
@@ -156,6 +170,9 @@ end
     let cases: Vec<&Case> = spec.cases.iter().collect();
     for c in &cases {
         let mut frame = vec![names.iter().position(|n| *n == c.packet).unwrap() as u8];
+        if versioned {
+            frame.push(c.version.unwrap_or(0) as u8);
+        }
         frame.extend(hex(&c.hex));
         for v in [0u32, 0, frame.len() as u32, frame.len() as u32] {
             pcap.extend_from_slice(&v.to_le_bytes());

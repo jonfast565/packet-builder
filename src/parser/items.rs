@@ -5,11 +5,11 @@ use pest::iterators::Pair;
 use super::expr::parse_expr;
 use super::expr::parse_string_constant;
 use super::types::{to_endianness, type_from_name};
-use super::{Rule, int_literal, span_of};
+use super::{Rule, int_literal, span_of, version_range};
 use crate::ast::{
     ArmExpr, ArrayLength, AssertExpr, AtExpr, BitOrder, BitfieldExpr, BitfieldMember, CalculatedField, Constraint,
-    Endianness, ExprNode, FieldRules, PacketExpr, PacketItem, ParamExpr, Span, SwitchExpr, TextEncoding, TypeExpr,
-    TypeNode, WindowExpr,
+    Endianness, ExprNode, FieldRules, OverrideExpr, PacketExpr, PacketItem, ParamExpr, Span, SwitchExpr, TextEncoding,
+    TypeExpr, TypeNode, WindowExpr,
 };
 
 fn parse_alignment(pair: Pair<Rule>) -> u64 {
@@ -65,6 +65,7 @@ impl TreeBuilder {
         let mut packet_endianness: Option<Endianness> = None;
         let mut packet_align: Option<u64> = None;
         let mut params = Vec::new();
+        let mut versions = Vec::new();
 
         for detail in packet.into_inner() {
             match detail.as_rule() {
@@ -85,8 +86,12 @@ impl TreeBuilder {
                         if rule.as_rule() != Rule::rule {
                             continue;
                         }
+                        let mut range = None;
                         for elem in rule.into_inner() {
+                            let before = items.len();
                             match elem.as_rule() {
+                                Rule::version_range => range = Some(version_range(elem)),
+                                Rule::override_decl => items.push(PacketItem::Override(override_decl(elem))),
                                 Rule::declaration => items.push(PacketItem::Field(self.declaration(elem))),
                                 Rule::bitfield_declaration => items.push(PacketItem::Bitfield(self.bitfield(elem))),
                                 Rule::calculated_field => {
@@ -100,6 +105,9 @@ impl TreeBuilder {
                                 Rule::switch_field => items.push(PacketItem::Switch(self.switch_field(elem))),
                                 _ => {}
                             }
+                            if items.len() > before {
+                                versions.push(range);
+                            }
                         }
                     }
                 }
@@ -107,7 +115,15 @@ impl TreeBuilder {
             }
         }
 
-        PacketExpr { name: identifier, params, items, endianness: packet_endianness, align: packet_align, span }
+        PacketExpr {
+            name: identifier,
+            params,
+            items,
+            endianness: packet_endianness,
+            align: packet_align,
+            versions,
+            span,
+        }
     }
 
     fn declaration(&self, parser_rule: Pair<Rule>) -> TypeExpr {
@@ -241,12 +257,19 @@ impl TreeBuilder {
                 Rule::window => sw.window = Some(window_clause(part)),
                 Rule::switch_arm => {
                     let aspan = span_of(&part);
-                    let mut arm =
-                        ArmExpr { values: None, name: String::new(), ty: None, args: Vec::new(), span: aspan };
+                    let mut arm = ArmExpr {
+                        versions: None,
+                        values: None,
+                        name: String::new(),
+                        ty: None,
+                        args: Vec::new(),
+                        span: aspan,
+                    };
                     let mut array = None;
                     let mut endian = None;
                     for x in part.into_inner() {
                         match x.as_rule() {
+                            Rule::version_range => arm.versions = Some(version_range(x)),
                             Rule::arm_values => {
                                 arm.values =
                                     Some(x.into_inner().filter(|v| v.as_rule() == Rule::expr).map(parse_expr).collect())
@@ -346,6 +369,26 @@ impl TreeBuilder {
             span,
         }
     }
+}
+
+/// `@3 retries = 5`: a new derivation or check for an existing field.
+fn override_decl(pair: Pair<Rule>) -> OverrideExpr {
+    let span = span_of(&pair);
+    let mut o = OverrideExpr { id: String::new(), derive: None, placeholder: None, rules: FieldRules::default(), span };
+    for p in pair.into_inner() {
+        match p.as_rule() {
+            Rule::identifier => o.id = p.as_str().to_string(),
+            Rule::constraint => o.rules.constraint = constraint(p),
+            Rule::lenient_kw => o.rules.lenient = true,
+            Rule::derivation => {
+                let mut exprs = p.into_inner().filter(|e| e.as_rule() == Rule::expr).map(parse_expr);
+                o.derive = exprs.next();
+                o.placeholder = exprs.next();
+            }
+            _ => {}
+        }
+    }
+    o
 }
 
 fn assert_directive(pair: Pair<Rule>) -> AssertExpr {

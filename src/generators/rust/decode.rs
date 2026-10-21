@@ -218,7 +218,23 @@ impl StepEmitter for Decoder<'_> {
     }
 
     fn scalar(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec) {
-        out.line(format!("p.{} = {};", ident(&m.name), read_elem(&self.scope, codec, ty)));
+        let read = read_elem(&self.scope, codec, ty);
+        // A re-declaration narrower than the member (`@3 count uint32`).
+        let read = if &m.ty != ty { format!("({}) as {}", read, scalar_type(&m.ty)) } else { read };
+        out.line(format!("p.{} = {};", ident(&m.name), read));
+    }
+
+    fn open_gate(&self, out: &mut Out, cond: &TExpr) {
+        out.open(format!("if {} {{", self.scope.expr(cond)));
+    }
+
+    fn close_gate(&self, out: &mut Out) {
+        out.close("}");
+    }
+
+    fn adopt_version(&self, out: &mut Out, m: &Member) {
+        let (min, latest) = self.scope.packet.version_bounds();
+        out.line(format!("pb_r.set_version(p.{} as i64, {}, {})?;", ident(&m.name), min, latest));
     }
 
     fn array(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec, count: &Count) {

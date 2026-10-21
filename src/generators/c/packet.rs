@@ -106,6 +106,21 @@ pub fn emit_declarations(out: &mut Out, p: &Packet, zero_copy: bool) {
     out.line("/* Encode into a new malloc'ed buffer (*out, *out_len). */");
     out.line(format!("int {}_encode(const {} *p, uint8_t **out, size_t *out_len{});", name, name, decl));
     out.line(format!("int {}_encode_to(const {} *p, pb_writer *pb_w{});", name, name, decl));
+    if p.versions.is_some() {
+        let (min, latest) = p.version_bounds();
+        out.line(format!(
+            "/* As protocol version `version` ({}..{}); PB_ERR_CONSTRAINT for another version. */",
+            min, latest
+        ));
+        out.line(format!(
+            "int {}_decode_v({} *p, const uint8_t *data, size_t len, unsigned version{});",
+            name, name, decl
+        ));
+        out.line(format!(
+            "int {}_encode_v(const {} *p, uint8_t **out, size_t *out_len, unsigned version{});",
+            name, name, decl
+        ));
+    }
     out.line(format!("void {}_free({} *p);", name, name));
     out.line("/* Zero *p, then give members declared `== value` that value. */");
     out.line(format!("void {}_init({} *p);", name, name));
@@ -196,6 +211,23 @@ pub fn emit_implementation(out: &mut Out, p: &Packet, zero_copy: bool) {
     out.line(format!("return {}_decode_from(p, &pb_r{});", name, pass));
     out.close("}");
     out.line("");
+    let versions = p.versions.map(|_| p.version_bounds());
+    if let Some((min, latest)) = versions {
+        out.open(format!(
+            "int {}_decode_v({} *p, const uint8_t *data, size_t len, unsigned version{}) {{",
+            name, name, decl
+        ));
+        out.line("pb_reader pb_r;");
+        out.line("pb_reader_init(&pb_r, data, len);");
+        out.line("memset(p, 0, sizeof *p);");
+        out.line(format!(
+            "if (pb_set_version(&pb_r.tr, version, {}, {}) != PB_OK) return PB_ERR_CONSTRAINT;",
+            min, latest
+        ));
+        out.line(format!("return {}_decode_from(p, &pb_r{});", name, pass));
+        out.close("}");
+        out.line("");
+    }
 
     let mut body = Out::new("    ");
     body.push();
@@ -241,12 +273,34 @@ pub fn emit_implementation(out: &mut Out, p: &Packet, zero_copy: bool) {
     out.line("return *out ? PB_OK : PB_ERR_NOMEM;");
     out.close("}");
     out.line("");
+    if let Some((min, latest)) = versions {
+        out.open(format!(
+            "int {}_encode_v(const {} *p, uint8_t **out, size_t *out_len, unsigned version{}) {{",
+            name, name, decl
+        ));
+        out.line("pb_writer pb_w;");
+        out.line("int rc;");
+        out.line("pb_writer_init(&pb_w);");
+        out.line(format!(
+            "if (pb_set_version(&pb_w.tr, version, {}, {}) != PB_OK) return PB_ERR_CONSTRAINT;",
+            min, latest
+        ));
+        out.line(format!("rc = {}_encode_to(p, &pb_w{});", name, pass));
+        out.line("if (rc == PB_OK) rc = pb_writer_finish(&pb_w);");
+        out.open("if (rc != PB_OK) {");
+        out.line("pb_writer_free(&pb_w);");
+        out.line("return rc;");
+        out.close("}");
+        out.line("*out = pb_w.buf ? pb_w.buf : (uint8_t *)malloc(1);");
+        out.line("*out_len = pb_w.len;");
+        out.line("return *out ? PB_OK : PB_ERR_NOMEM;");
+        out.close("}");
+        out.line("");
+    }
 
     out.open(format!("int {}_encode_to(const {} *p, pb_writer *pb_w{}) {{", name, name, decl));
     let encoder = Encoder::new(p);
-    for (m, e) in p.encode_calc_members() {
-        encoder.define_local(out, m, e);
-    }
+    encoder.emit_locals(out);
     out.line("(void)p;");
     out.line("(void)pb_w;");
     touch_params(out, p);

@@ -32,6 +32,18 @@ pub const PbTrace = struct {
     frames: [PB_MAX_DEPTH]PbFrame = undefined,
     depth: usize = 0,
     diag: PbDiag = .{},
+    version: u32 = 0, // protocol version; 0 until set
+
+    // @versions{
+    fn versionOr(self: *const PbTrace, latest: u32) i64 {
+        return if (self.version == 0) latest else self.version;
+    }
+
+    fn setVersion(self: *PbTrace, v: i64, min: u32, latest: u32, pos: usize) PbError!void {
+        if (v < min or v > latest) return self.fail(PbError.Constraint, pos, 0);
+        self.version = @intCast(v);
+    }
+    // @versions}
 
     fn fail(self: *PbTrace, err: PbError, pos: usize, needed_bits: usize) PbError {
         if (!self.diag.failed) {
@@ -122,6 +134,18 @@ pub const PbReader = struct {
     pub fn fail(self: *PbReader, err: PbError) PbError {
         return self.trace.fail(err, self.pos, 0);
     }
+
+    // @versions{
+    /// The protocol version (`version`), or `latest` while none is set.
+    pub fn versionOr(self: *const PbReader, latest: u32) i64 {
+        return self.trace.versionOr(latest);
+    }
+
+    /// Decode as protocol version `v`, which must be in `min..latest`.
+    pub fn setVersion(self: *PbReader, v: i64, min: u32, latest: u32) PbError!void {
+        return self.trace.setVersion(v, min, latest, self.pos);
+    }
+    // @versions}
 
     /// `bits` more bits are needed than are left: incomplete input at the
     /// top level, invalid data inside a window.
@@ -480,6 +504,23 @@ pub const PbWriter = struct {
     pub fn fail(self: *PbWriter, err: PbError) PbError {
         return self.trace.fail(err, self.pos, 0);
     }
+
+    // @versions{
+    /// The protocol version (`version`), or `latest` while none is set.
+    pub fn versionOr(self: *const PbWriter, latest: u32) i64 {
+        return self.trace.versionOr(latest);
+    }
+
+    /// Encode as protocol version `v`, which must be in `min..latest`.
+    pub fn setVersion(self: *PbWriter, v: i64, min: u32, latest: u32) PbError!void {
+        return self.trace.setVersion(v, min, latest, self.pos);
+    }
+
+    /// The version a value carries in-band: used unless one is set already.
+    pub fn adoptVersion(self: *PbWriter, v: i64, min: u32, latest: u32) PbError!void {
+        if (self.trace.version == 0) try self.setVersion(v, min, latest);
+    }
+    // @versions}
 
     pub fn enter(self: *PbWriter, packet: []const u8) PbError!void {
         return self.trace.enter(packet, self.pos);

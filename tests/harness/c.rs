@@ -44,6 +44,9 @@ impl Target for CTarget {
             // Copy into an exact-size heap buffer so ASan catches over-reads.
             s.push_str("        uint8_t *in = malloc(n ? n : 1); memcpy(in, data, n);\n");
             s.push_str("        pb_reader_init(&r, in, n);\n");
+            if let Some((v, min, latest)) = c.versions(module) {
+                let _ = writeln!(s, "        pb_set_version(&r.tr, {}, {}, {});", v, min, latest);
+            }
             let _ = writeln!(s, "        rc = {}_decode_from(&p, &r);", p.name);
             s.push_str("        if (rc != PB_OK) { printf(\"{\\\"ok\\\":false,\"); err(\"\", rc, pb_reader_describe(&r, desc, sizeof desc), pb_reader_path(&r, path, sizeof path)); printf(\"}\\n\"); }\n");
             s.push_str("        else {\n");
@@ -69,6 +72,9 @@ impl Target for CTarget {
             s.push_str("            printf(\"{\\\"ok\\\":true,\\\"value\\\":\");\n");
             let _ = writeln!(s, "            {{ char *j = {}_to_json(&p); printf(\"%s\", j); free(j); }}", p.name);
             s.push_str("            pb_writer_init(&w);\n");
+            if let Some((v, min, latest)) = c.versions(module) {
+                let _ = writeln!(s, "            pb_set_version(&w.tr, {}, {}, {});", v, min, latest);
+            }
             let _ = writeln!(s, "            rc = {}_encode_to(&p, &w);", p.name);
             s.push_str("            if (rc == PB_OK) rc = pb_writer_finish(&w);\n");
             s.push_str(
@@ -83,7 +89,14 @@ impl Target for CTarget {
             let _ = writeln!(s, "        size_t n = unhex({}, data), used = 0, size = 0;", quote(&c.hex));
             let _ = writeln!(s, "        {} p;", p.name);
             s.push_str("        int rc;\n        uint8_t *in = malloc(n ? n : 1); memcpy(in, data, n);\n");
-            let _ = writeln!(s, "        rc = {}_try_decode(&p, in, n, &used);", p.name);
+            match c.version {
+                Some(v) => {
+                    let _ = writeln!(s, "        rc = {}_try_decode_v(&p, in, n, &used, {});", p.name, v);
+                }
+                None => {
+                    let _ = writeln!(s, "        rc = {}_try_decode(&p, in, n, &used);", p.name);
+                }
+            }
             let _ = writeln!(
                 s,
                 "        if (rc == PB_OK) {{ printf(\"{{\\\"try\\\":\\\"done\\\",\\\"n\\\":%zu\", used); {}_free(&p); }}",

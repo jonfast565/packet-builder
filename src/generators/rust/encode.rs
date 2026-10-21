@@ -233,6 +233,19 @@ impl StepEmitter for Encoder<'_> {
         write_elem(&self.scope, out, codec, ty, &format!("p.{}", ident(&m.name)));
     }
 
+    fn open_gate(&self, out: &mut Out, cond: &TExpr) {
+        out.open(format!("if {} {{", self.scope.expr(cond)));
+    }
+
+    fn close_gate(&self, out: &mut Out) {
+        out.close("}");
+    }
+
+    fn adopt_version(&self, out: &mut Out, m: &Member) {
+        let (min, latest) = self.scope.packet.version_bounds();
+        out.line(format!("pb_w.adopt_version(p.{} as i64, {}, {})?;", ident(&m.name), min, latest));
+    }
+
     fn array(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec, count: &Count) {
         let place = format!("p.{}", ident(&m.name));
         if let Count::Expr(e) = count

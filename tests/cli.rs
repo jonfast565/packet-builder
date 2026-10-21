@@ -177,3 +177,50 @@ fn decode_reads_captures() {
 fn hex(s: &str) -> Vec<u8> {
     (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
 }
+
+#[test]
+fn one_parser_decodes_a_stream_of_mixed_versions() {
+    // A v1, a v3 and a v2 frame back to back, each with its version in-band.
+    let hex = "01 10 0005 07 03 02aabb 01 09  03 30 00000005 01 05 ab 02aabb 1234 01 09  \
+               02 10 0005 02 07 03 ab 02aabb 1234 02 0009";
+    let out = bin()
+        .args(["decode", "tests/specs/versions.packet", "-k", "Frame", "--all", "--json", "--hex", hex])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let text = String::from_utf8(out.stdout).unwrap();
+    let vers: Vec<&str> = text.lines().map(|l| &l[..8]).collect();
+    assert_eq!(vers, ["{\"ver\":1", "{\"ver\":3", "{\"ver\":2"]);
+    assert!(text.lines().nth(1).unwrap().contains("\"retries\":5"));
+}
+
+#[test]
+fn version_flags() {
+    let ok = |args: &[&str]| bin().args(args).output().unwrap();
+    let out = ok(&["decode", "tests/specs/versions.packet", "-k", "Plain", "--version", "1", "--hex", "01 0203"]);
+    assert!(String::from_utf8_lossy(&out.stdout).contains("c: 515"));
+    assert!(
+        !ok(&["decode", "tests/specs/versions.packet", "-k", "Plain", "--version", "4", "--hex", "01"])
+            .status
+            .success()
+    );
+    assert!(!ok(&["decode", "examples/oscar.packet", "-k", "Flap", "--version", "1", "--hex", "2a"]).status.success());
+    let out = ok(&["layout", "tests/specs/versions.packet", "-k", "Plain", "--version", "1"]);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains(" c ") && !text.contains(" b "), "{}", text);
+    let dir = out_dir("versions-subset");
+    let status = bin()
+        .args(["generate", "tests/specs/versions.packet", "--versions", "2..3", "-l", "python", "-o"])
+        .arg(&dir)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    assert!(std::fs::read_to_string(dir.join("versions.py")).unwrap().contains("set_version(version, 2, 3)"));
+}
+
+#[test]
+fn files_without_versions_get_no_version_code() {
+    let out = bin().args(["generate", "examples/oscar.packet", "-l", "rust", "--stdout"]).output().unwrap();
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert!(!text.contains("fn version_or") && !text.contains("decode_v"));
+}

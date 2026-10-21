@@ -52,13 +52,56 @@ pub struct LayoutRow {
 impl Module {
     /// Field-by-field layout of `packet`, including padding inserted by alignment.
     pub fn layout(&self, packet: &Packet) -> Vec<LayoutRow> {
+        self.layout_version(packet, None)
+    }
+
+    /// The layout of `packet` in protocol `version`; with None, fields that
+    /// exist in some versions only are listed under the versions they
+    /// exist in.
+    pub fn layout_version(&self, packet: &Packet, version: Option<u32>) -> Vec<LayoutRow> {
         let mut rows = Vec::new();
         let mut offset = Some(0u64);
         // An open window: where it starts and its size.
         let mut window: Option<(Option<u64>, Option<u64>)> = None;
+        // Inside a gate: skipping it (another version), or listing it.
+        let mut skipping = false;
+        let mut in_gate = false;
         for step in &packet.steps {
+            if skipping && !matches!(step, Step::CloseGate { .. }) {
+                continue;
+            }
             match step {
                 Step::Calc { .. } | Step::Assert { .. } => {}
+                Step::OpenGate { from, to, .. } => {
+                    match version {
+                        Some(v) => skipping = !(*from..=*to).contains(&v),
+                        None => {
+                            let name = if from == to {
+                                format!("(version {})", from)
+                            } else {
+                                format!("(versions {}..{})", from, to)
+                            };
+                            rows.push(LayoutRow {
+                                offset_bits: offset,
+                                size_bits: None,
+                                name,
+                                kind: "the next fields exist in these versions only".into(),
+                                nested: false,
+                            });
+                            in_gate = true;
+                        }
+                    }
+                    continue;
+                }
+                Step::CloseGate { .. } => {
+                    if in_gate {
+                        // Skipped in the other versions: the size is not known.
+                        offset = None;
+                    }
+                    skipping = false;
+                    in_gate = false;
+                    continue;
+                }
                 Step::OpenWindow { size, exact } => {
                     let bits = size.const_int().map(|n| n.max(0) as u64 * 8);
                     rows.push(LayoutRow {

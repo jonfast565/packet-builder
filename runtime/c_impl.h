@@ -125,6 +125,24 @@ PB_FN size_t pb_remaining_bits(const pb_reader *r) { return r->limit - r->pos; }
 /* Whole bytes left before the end of the window or input (`remaining`). */
 PB_FN int64_t pb_remaining_bytes(const pb_reader *r) { return (int64_t)(pb_remaining_bits(r) / 8); }
 
+// @versions{
+/* The protocol version (`version`) of a reader or writer (its trace), or
+ * `latest` while none is set. */
+PB_FN int64_t pb_version_or(const pb_trace *t, unsigned latest) { return (int64_t)(t->version ? t->version : latest); }
+
+/* Code as protocol version v, which must be in min..latest. */
+PB_FN int pb_set_version(pb_trace *t, int64_t v, unsigned min, unsigned latest) {
+    if (v < (int64_t)min || v > (int64_t)latest) return PB_ERR_CONSTRAINT;
+    t->version = (unsigned)v;
+    return PB_OK;
+}
+
+/* The version a value carries in-band: used unless one is set already. */
+PB_FN int pb_adopt_version(pb_trace *t, int64_t v, unsigned min, unsigned latest) {
+    return t->version ? PB_OK : pb_set_version(t, v, min, latest);
+}
+// @versions}
+
 /* `bits` more bits are needed: incomplete input at the top level, invalid
  * data inside a window. */
 PB_FN int pb_short(pb_reader *r, size_t bits) {

@@ -24,6 +24,22 @@ pub fn emit_streaming(out: &mut Out, module: &Module, p: &Packet, data_ty: &str)
     out.line("Err(e) => Err(e),");
     out.close("}");
     out.close("}");
+    if p.versions.is_some() {
+        let (min, latest) = p.version_bounds();
+        out.line("");
+        out.line("/// `try_decode` as protocol version `version`.");
+        out.open(format!("pub fn try_decode_v(data: {}, version: u32) -> Result<PbStatus<Self>, PbError> {{", data_ty));
+        out.line("let mut pb_r = PbReader::new(data);");
+        out.line(format!("pb_r.set_version(version as i64, {}, {})?;", min, latest));
+        out.open("match Self::decode_from(&mut pb_r) {");
+        out.line("Ok(p) => Ok(PbStatus::Done(p, pb_r.position_bits().div_ceil(8))),");
+        out.line(
+            "Err(e) if e.kind == PbErrorKind::Incomplete => Ok(PbStatus::Incomplete(e.needed_bits.div_ceil(8).max(1))),",
+        );
+        out.line("Err(e) => Err(e),");
+        out.close("}");
+        out.close("}");
+    }
     let Some(f) = module.frame_length(p) else { return };
     let scope = Scope::<Rust>::new(p, Mode::Decode);
     out.line("");

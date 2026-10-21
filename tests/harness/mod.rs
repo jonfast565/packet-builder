@@ -20,6 +20,8 @@
 //!   ] }
 //! ```
 //! Unless `encoded` or an error is given, re-encoding must reproduce `hex`.
+//! `version` (files with `version N`) is the protocol version the caller
+//! passes to decode, encode and try_decode.
 //! `error_kind` / `error_path` (and `encode_error_kind` / `encode_error_path`)
 //! also check the error's kind (`incomplete`, `invalid`, `range`, `text`,
 //! `mismatch`, `constraint`) and where it happened (`Packet.field[1].field`).
@@ -66,6 +68,17 @@ pub struct Case {
     /// Derived robustness case: any outcome is fine as long as the decoder
     /// reports it cleanly (no crash, leak or hang).
     pub any: bool,
+    /// The protocol version the caller passes (files with `version N`);
+    /// None: the version in the data, or the latest.
+    pub version: Option<u32>,
+}
+
+impl Case {
+    /// `(version, min, latest)` when the case gives a version.
+    pub fn versions(&self, module: &Module) -> Option<(u32, u32, u32)> {
+        let vs = module.versions?;
+        self.version.map(|v| (v, vs.min, vs.latest))
+    }
 }
 
 pub struct Spec {
@@ -127,6 +140,7 @@ fn load_spec(path: &Path) -> Spec {
             encode_error_kind,
             encode_error_path,
             any: false,
+            version: c.get("version").and_then(|v| v.as_u64()).map(|v| v as u32),
         };
         assert!(
             module.packets.iter().any(|p| p.name == case.packet),
@@ -179,6 +193,7 @@ fn derived_cases(cases: &[Case]) -> Vec<Case> {
                 encode_error_kind: None,
                 encode_error_path: None,
                 any: true,
+                version: c.version,
             });
         }
     }

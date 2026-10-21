@@ -5,9 +5,10 @@ use std::collections::{HashMap, HashSet};
 use super::cursor::Cursor;
 use super::packet::PacketBuilder;
 use super::types::value_type;
+use super::versions::{VRange, version_test};
 use crate::ast::{ArrayLength, Span, SwitchExpr, TypeNode, WindowExpr};
 use crate::errors::Diagnostic;
-use crate::ir::expr::{TExpr, Ty, coerce};
+use crate::ir::expr::{CmpOp, LogicOp, TExpr, Ty, UnaryOp, coerce};
 use crate::ir::model::{Arm, Codec, Count, Step, ValueType};
 
 /// A window opened before a field and closed after it.
@@ -93,10 +94,14 @@ impl PacketBuilder<'_> {
                         continue;
                     };
                     if let Some(other) = seen.insert(v, a.name.clone()) {
-                        self.ctx.diags.push(Diagnostic::new(
-                            format!("value {} selects both `{}` and `{}`", v, other, a.name),
-                            a.span,
-                        ));
+                        // Arms of different versions may share a value.
+                        let other_range = sw.arms.iter().find(|x| x.name == other).and_then(|x| x.versions);
+                        if !disjoint(a.versions, other_range) {
+                            self.ctx.diags.push(Diagnostic::new(
+                                format!("value {} selects both `{}` and `{}`", v, other, a.name),
+                                a.span,
+                            ));
+                        }
                     }
                     values.push(v);
                 }
@@ -182,7 +187,79 @@ impl PacketBuilder<'_> {
         self.aligned_before = self.cursor.align.is_aligned();
         self.cursor.advance(if min_bits == u64::MAX { 0 } else { min_bits }, None, 1);
         self.cursor.advance_unknown(8);
+        let selector = self.gate_arms(sw, &mut arms, selector);
         self.steps.push(Step::Switch { member, selector, arms });
         self.available.insert(member);
+    }
+
+    /// Arms for some versions only (`@2.. Kind.x => x X`): in the other
+    /// versions their values select nothing, so they fall to the default arm
+    /// (or fail when there is none); the selector maps them to a value no
+    /// arm lists. Arms of different versions that share a value get a value
+    /// of their own instead, which the selector maps to in their versions.
+    fn gate_arms(&mut self, sw: &SwitchExpr, arms: &mut [Arm], selector: TExpr) -> TExpr {
+        let Some(latest) = self.ctx.consts.latest else { return selector };
+        let mut used: HashSet<i64> = arms.iter().flat_map(|a| a.values.iter().copied()).collect();
+        let mut fresh = || {
+            let v = (1..).map(|n: i64| -n).find(|v| !used.contains(v)).unwrap_or(-1);
+            used.insert(v);
+            v
+        };
+        let nothing = fresh();
+        let shared: Vec<i64> = {
+            let mut count = HashMap::<i64, usize>::new();
+            for v in arms.iter().flat_map(|a| a.values.iter()) {
+                *count.entry(*v).or_default() += 1;
+            }
+            count.into_iter().filter(|(_, n)| *n > 1).map(|(v, _)| v).collect()
+        };
+        let mut out = selector.clone();
+        for (a, arm) in sw.arms.iter().zip(arms.iter_mut()) {
+            let Some(r) = a.versions else { continue };
+            let r = VRange { from: r.from.unwrap_or(1), to: r.to.unwrap_or(latest) };
+            if arm.default {
+                if !(r.from <= 1 && r.to >= latest) {
+                    self.ctx.diags.push(Diagnostic::new("the `_` arm cannot have a version range", a.span));
+                }
+                continue;
+            }
+            if r.from <= 1 && r.to >= latest {
+                continue;
+            }
+            let picks = arm
+                .values
+                .iter()
+                .map(|v| TExpr::Cmp { op: CmpOp::Eq, a: Box::new(selector.clone()), b: Box::new(TExpr::IntLit(*v)) })
+                .reduce(|x, y| TExpr::Logic { op: LogicOp::Or, a: Box::new(x), b: Box::new(y) });
+            let Some(picks) = picks else { continue };
+            let present = version_test(r, latest);
+            let (cond, value) = if arm.values.iter().any(|v| shared.contains(v)) {
+                let own = fresh();
+                arm.values = vec![own];
+                (TExpr::Logic { op: LogicOp::And, a: Box::new(present), b: Box::new(picks) }, own)
+            } else {
+                let absent = TExpr::Unary { op: UnaryOp::Not, e: Box::new(present), ty: Ty::Bool };
+                (TExpr::Logic { op: LogicOp::And, a: Box::new(absent), b: Box::new(picks) }, nothing)
+            };
+            out = TExpr::Guard {
+                cond: Box::new(cond),
+                then: Box::new(TExpr::IntLit(value)),
+                other: Box::new(out),
+                ty: Ty::Int,
+            };
+        }
+        out
+    }
+}
+
+/// Whether two `@range`s (None: every version) have no version in common.
+fn disjoint(a: Option<crate::ast::VersionRange>, b: Option<crate::ast::VersionRange>) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) => {
+            let (af, at) = (a.from.unwrap_or(1), a.to.unwrap_or(u32::MAX));
+            let (bf, bt) = (b.from.unwrap_or(1), b.to.unwrap_or(u32::MAX));
+            at < bf || bt < af
+        }
+        _ => false,
     }
 }

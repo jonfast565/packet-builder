@@ -34,11 +34,29 @@ class _PbTrace:
     """The packets being decoded or encoded, innermost last, each with the
     field it is working on: the path reported in errors."""
 
-    __slots__ = ("frames", "pos")
+    __slots__ = ("frames", "pos", "version")
 
     def __init__(self):
         self.frames = []  # [packet, field, index]
         self.pos = 0  # in bits
+        self.version = 0  # protocol version; 0 until set
+
+    # @versions{
+    def version_or(self, latest):
+        """The protocol version (`version`), or `latest` while none is set."""
+        return self.version or latest
+
+    def set_version(self, v, lo, latest):
+        """Code as protocol version `v`, which must be in `lo..latest`."""
+        if not lo <= v <= latest:
+            raise self.error(PbError.CONSTRAINT, "version %d is not one of the versions %d..%d" % (v, lo, latest))
+        self.version = v
+
+    def adopt_version(self, v, lo, latest):
+        """The version a value carries in-band: used unless one is set already."""
+        if not self.version:
+            self.set_version(v, lo, latest)
+    # @versions}
 
     def enter(self, packet):
         self.frames.append([packet, "", None])
@@ -299,6 +317,7 @@ class PbWriter(_PbTrace):
         if offset < 0 or start % 8:
             raise self.error(PbError.RANGE, "bad offset %d (from bit %d)" % (offset, start))
         s = PbWriter()
+        s.version = self.version
         s.base = start + offset * 8
         s.frames = [list(f) for f in self.frames]
         return s

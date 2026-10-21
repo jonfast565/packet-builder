@@ -100,7 +100,52 @@ type pbFrame struct {
 
 // pbTrace holds the packets being decoded or encoded, innermost last, each
 // with the field it is working on: the path reported in errors.
-type pbTrace struct{ frames []pbFrame }
+type pbTrace struct {
+	frames  []pbFrame
+	version int // protocol version; 0 until set
+}
+
+// @versions{
+func (t *pbTrace) versionOr(latest int) int64 {
+	if t.version == 0 {
+		return int64(latest)
+	}
+	return int64(t.version)
+}
+
+func pbVersionOk(v int64, min, latest int) bool { return v >= int64(min) && v <= int64(latest) }
+
+// VersionOr is the protocol version (`version`), or latest while none is set.
+func (r *PbReader) VersionOr(latest int) int64 { return r.tr.versionOr(latest) }
+
+// SetVersion decodes as protocol version v, which must be in min..latest.
+func (r *PbReader) SetVersion(v int64, min, latest int) {
+	if !pbVersionOk(v, min, latest) {
+		r.Fail(PbConstraint, "version %d is not one of the versions %d..%d", v, min, latest)
+		return
+	}
+	r.tr.version = int(v)
+}
+
+// VersionOr is the protocol version (`version`), or latest while none is set.
+func (w *PbWriter) VersionOr(latest int) int64 { return w.tr.versionOr(latest) }
+
+// SetVersion encodes as protocol version v, which must be in min..latest.
+func (w *PbWriter) SetVersion(v int64, min, latest int) {
+	if !pbVersionOk(v, min, latest) {
+		w.Fail(PbConstraint, "version %d is not one of the versions %d..%d", v, min, latest)
+		return
+	}
+	w.tr.version = int(v)
+}
+
+// AdoptVersion takes the version a value carries in-band, unless one is set.
+func (w *PbWriter) AdoptVersion(v int64, min, latest int) {
+	if w.tr.version == 0 {
+		w.SetVersion(v, min, latest)
+	}
+}
+// @versions}
 
 func (t *pbTrace) enter(packet string) bool {
 	t.frames = append(t.frames, pbFrame{packet, "", -1})
@@ -555,7 +600,7 @@ func (w *PbWriter) Sub(from int, offset int64, root bool) *PbWriter {
 	if root {
 		start = 0
 	}
-	s := &PbWriter{tr: pbTrace{frames: append([]pbFrame{}, w.tr.frames...)}}
+	s := &PbWriter{tr: pbTrace{frames: append([]pbFrame{}, w.tr.frames...), version: w.tr.version}}
 	if offset < 0 || start%8 != 0 {
 		w.Fail(PbRange, "bad offset %d (from bit %d)", offset, start)
 		return s

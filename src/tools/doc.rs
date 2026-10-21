@@ -126,10 +126,31 @@ fn packet(out: &mut String, module: &Module, p: &Packet) {
             let _ = writeln!(out, "Size: variable, at least {} bytes.\n", bytes(Some(p.min_bits)));
         }
     }
-    let rows = module.layout(p);
-    let _ = writeln!(out, "```\n{}```\n", diagram(&rows));
+    // A packet that differs between protocol versions: one layout per version.
+    let versions: Vec<Option<u32>> = match p.versions {
+        Some(v) if p.steps.iter().any(|s| matches!(s, crate::ir::Step::OpenGate { .. })) => {
+            (v.min..=v.latest).map(Some).collect()
+        }
+        _ => vec![None],
+    };
+    for (i, version) in versions.into_iter().enumerate() {
+        if let Some(v) = version {
+            let gap = if i > 0 { "\n" } else { "" };
+            let _ = writeln!(out, "{}#### Version {}\n", gap, v);
+        }
+        layout_table(out, &module.layout_version(p, version));
+    }
+    for m in p.members.iter().filter(|m| m.is_calculated()) {
+        let _ = writeln!(out, "| - | - | `{}` | calculated |", m.name);
+    }
+    out.push('\n');
+}
+
+/// A layout's bit diagram and table.
+fn layout_table(out: &mut String, rows: &[LayoutRow]) {
+    let _ = writeln!(out, "```\n{}```\n", diagram(rows));
     out.push_str("| offset | size | field | type |\n|-------:|-----:|-------|------|\n");
-    for r in &rows {
+    for r in rows {
         let name = if r.nested { format!("&nbsp;&nbsp;{}", r.name) } else { format!("`{}`", r.name) };
         let _ = writeln!(
             out,
@@ -140,10 +161,6 @@ fn packet(out: &mut String, module: &Module, p: &Packet) {
             r.kind.replace('|', "\\|")
         );
     }
-    for m in p.members.iter().filter(|m| m.is_calculated()) {
-        let _ = writeln!(out, "| - | - | `{}` | calculated |", m.name);
-    }
-    out.push('\n');
 }
 
 /// The Markdown reference for `module`, titled `title`.

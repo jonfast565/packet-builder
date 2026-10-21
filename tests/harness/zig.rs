@@ -87,6 +87,9 @@ impl Target for ZigTarget {
             s.push_str("    var buf: [4096]u8 = undefined;\n");
             let _ = writeln!(s, "    const data = try std.fmt.hexToBytes(&buf, {});", quote(&c.hex));
             s.push_str("    var r = pk.PbReader.init(data);\n");
+            if let Some((v, min, latest)) = c.versions(module) {
+                let _ = writeln!(s, "    try r.setVersion({}, {}, {});", v, min, latest);
+            }
             let _ = writeln!(s, "    if (pk.{}.decodeFrom(allocator, &r)) |decoded| {{", p.name);
             s.push_str("        var p = decoded;\n        defer p.deinit(allocator);\n");
             let mut compile_time_reject = false;
@@ -113,13 +116,24 @@ impl Target for ZigTarget {
                 s.push_str("        try w.writeAll(\",\\\"encode_error\\\":\\\"value does not fit the field type (rejected by the Zig compiler)\\\",\\\"encode_kind\\\":\\\"range\\\"}\");\n");
             } else {
                 s.push_str("        var pw = pk.PbWriter.init(allocator);\n        defer pw.deinit();\n");
+                if let Some((v, min, latest)) = c.versions(module) {
+                    let _ = writeln!(s, "        try pw.setVersion({}, {}, {});", v, min, latest);
+                }
                 s.push_str("        if (encodeAll(&p, &pw)) |_| {\n");
                 s.push_str("            try w.writeAll(\",\\\"encoded\\\":\");\n            try hx(w, pw.buf.items);\n            try w.writeAll(\"}\");\n");
                 s.push_str("        } else |err| {\n            try pbErr(w, \"encode_\", err, &pw.trace);\n            try w.writeAll(\"}\");\n        }\n");
             }
             s.push_str("    } else |err| {\n        try w.writeAll(\"{\\\"ok\\\":false\");\n        try pbErr(w, \"\", err, &r.trace);\n        try w.writeAll(\"}\");\n    }\n");
             s.push_str("    try w.writeAll(\"\\n\");\n");
-            let _ = writeln!(s, "    if (pk.{}.tryDecode(allocator, data)) |st| switch (st) {{", p.name);
+            match c.version {
+                Some(v) => {
+                    let _ =
+                        writeln!(s, "    if (pk.{}.tryDecodeV(allocator, data, {})) |st| switch (st) {{", p.name, v);
+                }
+                None => {
+                    let _ = writeln!(s, "    if (pk.{}.tryDecode(allocator, data)) |st| switch (st) {{", p.name);
+                }
+            }
             s.push_str("        .done => |d| {\n            var v = d.value;\n            v.deinit(allocator);\n            try w.print(\"{{\\\"try\\\":\\\"done\\\",\\\"n\\\":{d}\", .{d.consumed});\n        },\n");
             s.push_str(
                 "        .incomplete => |n| try w.print(\"{{\\\"try\\\":\\\"incomplete\\\",\\\"n\\\":{d}\", .{n}),\n",

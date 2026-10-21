@@ -16,7 +16,7 @@ source ──parser──▶ PacketExprList ──ir::analyze──▶ ir::Modul
 | `src/ir/model.rs` | the validated model every backend consumes: `Packet`, `Member`, `ValueType`, `Param`, `PacketRef`, unions and constants. |
 | `src/ir/wire.rs` | how fields travel on the wire: `Codec`, `Count`, `StrMode`, `Step` (re-exported from `model`). |
 | `src/ir/expr.rs` | type-checked expressions (`TExpr`). |
-| `src/ir/analysis/` | builds the model. `packet.rs` is a `PacketBuilder` that runs the passes in order (declare → counts → calcs → derived → lay out → finish); `consts.rs` folds named constants into a `ConstTable` (run before packets) and checks `: Category` tags; `checks.rs` turns `==`/`in`/`strict` into checks; `bitfield.rs` lays out bitfield containers; `derive.rs` orders derived fields and their marks; `union.rs` lays out `switch` fields and `size n` windows; `repeat.rs` resolves `until`, `term` and text encodings; `params.rs` holds packet signatures (parameters, member types known before analysis), arguments, `at` fields and the analysis order, which lets packets contain themselves through arrays and `at`; `cursor.rs` tracks the bit offset; `typecheck.rs`, `codec.rs`, `context.rs`, `types.rs` hold the rest. |
+| `src/ir/analysis/` | builds the model. `packet.rs` is a `PacketBuilder` that runs the passes in order (declare → counts → calcs → derived → lay out → finish); `consts.rs` folds named constants into a `ConstTable` (run before packets) and checks `: Category` tags; `checks.rs` turns `==`/`in`/`strict` into checks; `versions.rs` runs first (`version N`, `@range`): it resolves ranges and merges re-declarations into one derivation/check per field, so later passes only see gated items, which lay out between `Step::OpenGate`/`CloseGate`; `bitfield.rs` lays out bitfield containers; `derive.rs` orders derived fields and their marks; `union.rs` lays out `switch` fields and `size n` windows; `repeat.rs` resolves `until`, `term` and text encodings; `params.rs` holds packet signatures (parameters, member types known before analysis), arguments, `at` fields and the analysis order, which lets packets contain themselves through arrays and `at`; `cursor.rs` tracks the bit offset; `typecheck.rs`, `codec.rs`, `context.rs`, `types.rs` hold the rest. |
 | `src/ir/layout.rs` | the `layout` command's report. |
 | `src/ir/interp/` | the reference interpreter: decodes/encodes a `Module` directly, using `runtime/rust.rs` (included as `interp::rt`). `show.rs` renders decoded values for the `decode` command. |
 | `src/pcap.rs` | pcap/pcapng reading and pcap writing (no dependencies). |
@@ -39,7 +39,8 @@ code between backends.
   Callers depend on the trait, not on concrete generators.
 - **Template Method** — `common::StepEmitter` walks a packet's `Step`s and
   dispatches each to a hook (`align`, `calc`, `string`, `padding`, `scalar`,
-  `array`, `bitfield`, `switch`, `open_window`/`close_window`, `at`, `check`).
+  `array`, `bitfield`, `switch`, `open_window`/`close_window`,
+  `open_gate`/`close_gate` (protocol versions), `at`, `check`).
   Each backend's `Decoder` and `Encoder` only fill in the hooks; the
   dispatch lives in one place. Encoders keep the default `calc`. Before
   every field it calls `locate`, which records the field name for error
@@ -79,7 +80,9 @@ calls. Running out of data is
 (`push_limit`/`pop_limit`) it is `invalid`. Checks that can fail live on the
 reader/writer so they can report the path. When adding a runtime function,
 add it to all six runtimes with the same semantics, and to the interpreter
-if it changes what values mean.
+if it changes what values mean. Code only files with protocol versions need
+sits between `@versions{` and `@versions}` comment lines
+(`common::runtime_source` drops it from other files).
 
 When code is the same in two or more places, move it into `common/` (or onto
 an IR type) behind a trait or helper. Keep files focused: one responsibility

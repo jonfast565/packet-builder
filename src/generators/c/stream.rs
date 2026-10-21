@@ -15,6 +15,12 @@ pub fn declare_streaming(out: &mut Out, module: &Module, p: &Packet) {
     out.line(" * the bytes taken, or PB_ERR_INCOMPLETE with *used set to how many more bytes are");
     out.line(" * needed at least. */");
     out.line(format!("int {}_try_decode({} *p, const uint8_t *data, size_t len, size_t *used);", name, name));
+    if p.versions.is_some() {
+        out.line(format!(
+            "int {}_try_decode_v({} *p, const uint8_t *data, size_t len, size_t *used, unsigned version);",
+            name, name
+        ));
+    }
     if let Some(f) = module.frame_length(p) {
         out.line(format!(
             "/* The packet's size from its first {} byte(s): PB_OK with *size, or PB_ERR_INCOMPLETE",
@@ -40,6 +46,29 @@ pub fn emit_streaming(out: &mut Out, module: &Module, p: &Packet) {
     out.line("else if (rc == PB_ERR_INCOMPLETE) *used = pb_r.err.needed_bits ? (pb_r.err.needed_bits + 7) / 8 : 1;");
     out.line("return rc;");
     out.close("}");
+    if p.versions.is_some() {
+        let (min, latest) = p.version_bounds();
+        out.line("");
+        out.open(format!(
+            "int {}_try_decode_v({} *p, const uint8_t *data, size_t len, size_t *used, unsigned version) {{",
+            name, name
+        ));
+        out.line("pb_reader pb_r;");
+        out.line("int rc;");
+        out.line("pb_reader_init(&pb_r, data, len);");
+        out.line("memset(p, 0, sizeof *p);");
+        out.line(format!(
+            "if (pb_set_version(&pb_r.tr, version, {}, {}) != PB_OK) return PB_ERR_CONSTRAINT;",
+            min, latest
+        ));
+        out.line(format!("rc = {}_decode_from(p, &pb_r);", name));
+        out.line("if (rc == PB_OK) *used = (pb_r.pos + 7) / 8;");
+        out.line(
+            "else if (rc == PB_ERR_INCOMPLETE) *used = pb_r.err.needed_bits ? (pb_r.err.needed_bits + 7) / 8 : 1;",
+        );
+        out.line("return rc;");
+        out.close("}");
+    }
     let Some(f) = module.frame_length(p) else { return };
     let scope = Scope::<C>::new(p, Mode::Decode);
     out.line("");

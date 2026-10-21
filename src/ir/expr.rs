@@ -295,6 +295,9 @@ pub enum TExpr {
     /// or of the input, while decoding. Only calculated fields use it
     /// (encoders take their stored value instead).
     Remaining,
+    /// `version`: the protocol version being decoded or encoded (files with
+    /// `version N` only), as i64.
+    Version,
     /// The value a derived member holds in the struct (decoded, or set by
     /// the caller before encoding), never its encode-time local. Used for
     /// `placeholder`; it adds no dependency.
@@ -323,6 +326,7 @@ impl TExpr {
             | TExpr::Size { .. }
             | TExpr::Checksum { .. }
             | TExpr::Remaining
+            | TExpr::Version
             | TExpr::Stored { .. }
             | TExpr::Param { .. } => Ty::Int,
             TExpr::FloatLit(_) => Ty::Float,
@@ -348,6 +352,7 @@ impl TExpr {
             | TExpr::Checksum { .. }
             | TExpr::Last { .. }
             | TExpr::Remaining
+            | TExpr::Version
             | TExpr::Stored { .. }
             | TExpr::Param { .. } => {}
             TExpr::Ref { member, .. } | TExpr::Aggregate { member, .. } | TExpr::Len { member } => out.push(*member),

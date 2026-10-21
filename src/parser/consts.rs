@@ -4,7 +4,7 @@ use pest::iterators::Pair;
 
 use super::expr::{parse_expr, parse_string_constant};
 use super::items::TreeBuilder;
-use super::{Rule, span_of};
+use super::{Rule, span_of, version_range};
 use crate::ast::{ConstDecl, ConstItem, ConstKind, ExprNode, Radix, TypeNode};
 
 impl TreeBuilder {
@@ -17,8 +17,10 @@ impl TreeBuilder {
         let mut name = String::new();
         let mut ty = TypeNode::UnsignedInteger8;
         let mut kind = ConstKind::Group(Vec::new());
+        let mut versions = None;
         for part in decl.into_inner() {
             match part.as_rule() {
+                Rule::version_range => versions = Some(version_range(part)),
                 Rule::identifier => name = part.as_str().to_string(),
                 Rule::type_name | Rule::bit_type => ty = self.type_from_name(part.as_str()),
                 Rule::const_value => kind = ConstKind::Single(const_item(name.clone(), part, span)),
@@ -37,7 +39,7 @@ impl TreeBuilder {
                 _ => {}
             }
         }
-        ConstDecl { name, ty, kind, span }
+        ConstDecl { versions, name, ty, kind, span }
     }
 }
 
@@ -46,8 +48,10 @@ fn const_item(name: String, pair: Pair<Rule>, span: crate::ast::Span) -> ConstIt
     let mut value = ExprNode::NoExpr;
     let mut note = None;
     let mut radix = Radix::Dec;
+    let mut versions = None;
     for part in pair.into_inner() {
         match part.as_rule() {
+            Rule::version_range => versions = Some(version_range(part)),
             Rule::expr => {
                 let text = part.as_str().trim();
                 value = parse_expr(part);
@@ -65,5 +69,5 @@ fn const_item(name: String, pair: Pair<Rule>, span: crate::ast::Span) -> ConstIt
             _ => {}
         }
     }
-    ConstItem { name, value, note, radix, span }
+    ConstItem { versions, name, value, note, radix, span }
 }

@@ -30,7 +30,7 @@ impl Backend for RustGenerator {
             out.line("use std::borrow::Cow;");
         }
         out.line("");
-        out.buf.push_str(RUNTIME);
+        out.buf.push_str(&crate::generators::common::runtime_source(RUNTIME, module.versions.is_some()));
         self.emit_constants(&mut out, module);
         for u in &module.unions {
             packet::emit_union(&mut out, u, &types);

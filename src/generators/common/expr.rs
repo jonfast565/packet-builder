@@ -48,6 +48,9 @@ pub trait ExprLang {
     /// `remaining`: whole bytes the reader has left before the end of its
     /// window or input, as i64. Only emitted while decoding.
     fn remaining(&self) -> String;
+    /// `version`: the protocol version being decoded or encoded, as i64
+    /// (the runtime's `version_or(latest)`).
+    fn version(&self) -> String;
     /// The struct's own value of derived `member` as i64, even while
     /// encoding (where `member_ref` reads the encode-time local).
     fn stored(&self, member: usize) -> String;
@@ -99,6 +102,7 @@ pub fn emit_expr<L: ExprLang + ?Sized>(l: &L, e: &TExpr) -> String {
         TExpr::Len { member } => l.len(*member),
         TExpr::Param { index } => l.param(*index),
         TExpr::Remaining => l.remaining(),
+        TExpr::Version => l.version(),
         TExpr::Stored { member } => l.stored(*member),
         TExpr::Last { field, ty } => l.last(field.as_ref().map(|(p, f)| (p.as_str(), f.as_str())), *ty),
         TExpr::Size { from, to } => l.size(&mark_var(*from), &mark_var(*to)),

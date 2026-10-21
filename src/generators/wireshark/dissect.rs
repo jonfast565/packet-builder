@@ -223,6 +223,19 @@ impl StepEmitter for Dissector<'_> {
         }
     }
 
+    fn open_gate(&self, out: &mut Out, cond: &TExpr) {
+        out.open(format!("if {} then", self.scope.expr(cond)));
+    }
+
+    fn close_gate(&self, out: &mut Out) {
+        out.close("end");
+    }
+
+    fn adopt_version(&self, out: &mut Out, m: &Member) {
+        let (min, latest) = self.scope.packet.version_bounds();
+        out.line(format!("r:set_version({}, {}, {})", self.place(m), min, latest));
+    }
+
     fn scalar(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec) {
         if matches!(codec, Codec::Packet(_)) {
             let label = string_literal(&m.name);

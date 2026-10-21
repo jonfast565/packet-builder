@@ -571,3 +571,88 @@ fn dissector_declarations_are_checked() {
     assert_eq!(m.dissectors[0].tables, [("udp.port".to_string(), 4000)]);
     assert!(m.dissectors[0].heuristic);
 }
+
+#[test]
+fn version_ranges_need_a_version_declaration() {
+    assert_error("packet P { @2 a uint8 }", "need a `version N` declaration");
+    assert_error("packet P { a uint8 = 1, @2 a = 2 }", "need a `version N` declaration");
+}
+
+#[test]
+fn version_ranges_stay_within_the_versions() {
+    assert_error("version 3\npacket P { @4 a uint8 }", "outside 1..3");
+    assert_error("version 3\npacket P { @3..2 a uint8 }", "outside 1..3");
+    assert_error("version 3\nconst C uint8 = 1\n@5 const C uint8 = 2", "outside 1..3");
+}
+
+#[test]
+fn a_name_is_declared_once_per_version() {
+    assert_error("version 3\npacket P { @1..2 a uint8, @2.. a uint16 }", "declared twice for version 2");
+    assert_error("version 3\npacket P { a uint8, a uint16 }", "declared more than once");
+    assert!(compile("version 3\npacket P { a uint8, @3 a uint16 }").is_ok());
+}
+
+#[test]
+fn re_declarations_keep_the_kind_of_value() {
+    assert_error("version 2\npacket P { a uint8, @2 a string(uint8) }", "incompatible type");
+    assert_error("version 2\npacket P { a uint16, @2 a int32 }", "incompatible type");
+    assert_error("version 2\npacket P { n uint8, a uint8[n], @2 a uint16[n] }", "cannot change type");
+    assert_error("version 2\npacket P { a uint8, @2 a uint8[2] }", "stay an array");
+    assert_error("version 2\npacket P { a uint8 = 1, @2 a uint16 }", "derived (`= ...`) in every version");
+}
+
+#[test]
+fn overrides_change_existing_derived_fields() {
+    assert_error("version 2\npacket P { a uint8, @2 b = 1 }", "does not have");
+    assert_error("version 2\npacket P { a uint8, @2 a = 1 }", "not derived");
+    assert!(compile("version 2\npacket P { a uint8 = 1, @2 a = 2, b uint8 == 3, @2 b == 4 }").is_ok());
+}
+
+#[test]
+fn version_is_the_protocol_version_in_versioned_files() {
+    assert_error("version 2\npacket P { version uint8 }", "cannot be called `version`");
+    assert_error("version 2\npacket P { @2 a uint8, ver uint8 = version }", "must come before");
+    assert!(
+        compile(
+            "version 2\npacket P { ver uint8 = version, @2 a uint8, n uint8 = when version >= 2 then 1 otherwise 0 }"
+        )
+        .is_ok()
+    );
+}
+
+#[test]
+fn versioned_fields_cannot_be_measured() {
+    assert_error("version 2\npacket P { n uint8 = sizeof(a), @2 a uint16 }", "exists in some versions only");
+    assert!(compile("version 2\npacket P { n uint8 = sizeof(b), b B }\npacket B { @2 a uint16 }").is_ok());
+}
+
+#[test]
+fn union_arms_and_re_declared_unions() {
+    assert_error(
+        "version 2\npacket P { k uint8, b switch k { 1 => a uint8, @2 _ => r bytes[] } }",
+        "`_` arm cannot have a version range",
+    );
+    assert_error(
+        "version 2\npacket P { k uint8, b switch k { 1 => a uint8 }, @2 b switch k { 1 => a uint16 } }",
+        "changes between versions",
+    );
+    assert!(compile("version 2\npacket P { k uint8, b switch k { 1 => a uint8, @2 1 => c uint16 } }").is_err());
+    assert!(compile("version 2\npacket P { k uint8, b switch k { @..1 1 => a uint8, @2 1 => c uint16 } }").is_ok());
+}
+
+#[test]
+fn a_subset_of_the_versions_leaves_the_others_out() {
+    use packet_builder::ir::interp;
+    let mut m = packet_builder::compile_file(std::path::Path::new("tests/specs/versions.packet")).unwrap();
+    let all = m.packets.iter().find(|p| p.name == "Frame").unwrap().steps.len();
+    m.restrict_versions(2, 3).unwrap();
+    let frame = m.packets.iter().find(|p| p.name == "Frame").unwrap();
+    assert!(frame.steps.len() < all, "gates for every version left are unwrapped");
+    let v1 = [0x01, 0x10, 0x00, 0x05, 0x07, 0x03, 0x02, 0xaa, 0xbb, 0x01, 0x09];
+    let e = interp::decode(&m, "Frame", &v1).unwrap_err();
+    assert_eq!(e.kind, interp::ErrorKind::Constraint, "{}", e);
+    let v3 = [0x03, 0x30, 0, 0, 0, 5, 0x01, 0x05, 0xab, 0x02, 0xaa, 0xbb, 0x12, 0x34, 0x01, 0x09];
+    let value = interp::decode(&m, "Frame", &v3).unwrap();
+    assert_eq!(interp::encode(&m, "Frame", &value).unwrap(), v3);
+    assert!(m.clone().restrict_versions(0, 3).is_err());
+}

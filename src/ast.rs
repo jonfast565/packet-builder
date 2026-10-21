@@ -73,6 +73,17 @@ pub enum FieldRange {
     Fields(String, Option<String>),
 }
 
+/// `@2..`, `@..3`, `@2..3` or `@2` (the same as `@2..`) before a
+/// declaration: the protocol versions it applies to, inclusive. An open end
+/// is filled in by analysis (from 1, or until the next re-declaration or the
+/// latest version).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VersionRange {
+    pub from: Option<u32>,
+    pub to: Option<u32>,
+    pub span: Span,
+}
+
 /// Source location of a declaration (byte offsets into the input).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Span {
@@ -281,6 +292,8 @@ pub struct SwitchExpr {
 /// One arm of a union.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ArmExpr {
+    /// `@range`: the versions in which the arm exists.
+    pub versions: Option<VersionRange>,
     /// The selector values that pick this arm; None for the default (`_`).
     pub values: Option<Vec<ExprNode>>,
     pub name: String,
@@ -307,6 +320,9 @@ pub enum Constraint {
     Equals(ExprNode),
     /// `in lo..hi`, inclusive
     Range(ExprNode, ExprNode),
+    /// A different check per range of protocol versions: (versions,
+    /// check), the latest first. Built by analysis from re-declarations.
+    Versioned(Vec<(ExprNode, Constraint)>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -361,6 +377,19 @@ pub enum PacketItem {
     Assert(AssertExpr),
     /// A tagged union.
     Switch(SwitchExpr),
+    /// `@3 retries = 5`: a re-declaration that keeps the field's type and
+    /// changes only its derivation or check for some versions.
+    Override(OverrideExpr),
+}
+
+/// `name = expr`, `name == v` or `name in a..b` after `@range`, without a type.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OverrideExpr {
+    pub id: String,
+    pub derive: Option<ExprNode>,
+    pub placeholder: Option<ExprNode>,
+    pub rules: FieldRules,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -380,6 +409,8 @@ pub struct PacketExpr {
     pub endianness: Option<Endianness>,
     /// `packet P align N`: C-struct-like natural alignment, packed to N bytes.
     pub align: Option<u64>,
+    /// `@range` of each item (same order as `items`).
+    pub versions: Vec<Option<VersionRange>>,
     pub span: Span,
 }
 
@@ -395,6 +426,8 @@ pub enum Radix {
 /// One named value: `NAME = expr "note"`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConstItem {
+    /// `@range` on a category member.
+    pub versions: Option<VersionRange>,
     pub name: String,
     pub value: ExprNode,
     pub note: Option<String>,
@@ -413,6 +446,8 @@ pub enum ConstKind {
 /// A file-level `const` declaration.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConstDecl {
+    /// `@range` before `const`.
+    pub versions: Option<VersionRange>,
     pub name: String,
     pub ty: TypeNode,
     pub kind: ConstKind,
@@ -429,6 +464,8 @@ pub struct PacketExprList {
     /// `import "file"` declarations: the path as written, and where.
     pub imports: Vec<(String, Span)>,
     pub dissectors: Vec<DissectorExpr>,
+    /// `version N`: the protocol has versions 1..N, N being the latest.
+    pub version: Option<(u32, Span)>,
 }
 
 impl TypeNode {

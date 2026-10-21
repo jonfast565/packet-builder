@@ -33,7 +33,14 @@ impl Target for GoTarget {
             let p = packet(module, &c.packet);
             s.push_str("\tfunc() {\n");
             let _ = writeln!(s, "\t\tdata, _ := hex.DecodeString({})", quote(&c.hex));
-            let _ = writeln!(s, "\t\tp, err := Decode{}(data)", p.name);
+            match c.version {
+                Some(v) => {
+                    let _ = writeln!(s, "\t\tp, err := Decode{}V(data, {})", p.name, v);
+                }
+                None => {
+                    let _ = writeln!(s, "\t\tp, err := Decode{}(data)", p.name);
+                }
+            }
             s.push_str("\t\tif err != nil {\n\t\t\tfmt.Printf(\"{\\\"ok\\\":false,%s}\\n\", pbE(err, \"\"))\n\t\t\treturn\n\t\t}\n");
             for (name, v) in &c.set {
                 let _ = writeln!(
@@ -44,14 +51,26 @@ impl Target for GoTarget {
                 );
             }
             s.push_str("\t\tv := p.ToJSON()\n");
-            s.push_str("\t\tb, err := p.Encode()\n");
+            match c.version {
+                Some(v) => {
+                    let _ = writeln!(s, "\t\tb, err := p.EncodeV({})", v);
+                }
+                None => s.push_str("\t\tb, err := p.Encode()\n"),
+            }
             s.push_str("\t\tif err != nil {\n\t\t\tfmt.Printf(\"{\\\"ok\\\":true,\\\"value\\\":%s,%s}\\n\", v, pbE(err, \"encode_\"))\n\t\t\treturn\n\t\t}\n");
             s.push_str("\t\tfmt.Printf(\"{\\\"ok\\\":true,\\\"value\\\":%s,\\\"encoded\\\":%s}\\n\", v, hx(b))\n");
             s.push_str("\t}()\n");
             s.push_str("\tfunc() {\n");
             let _ = writeln!(s, "\t\tdata, _ := hex.DecodeString({})", quote(&c.hex));
             s.push_str("\t\ts := \"\"\n");
-            let _ = writeln!(s, "\t\tif p, n, err := TryDecode{}(data); err != nil {{", p.name);
+            match c.version {
+                Some(v) => {
+                    let _ = writeln!(s, "\t\tif p, n, err := TryDecode{}V(data, {}); err != nil {{", p.name, v);
+                }
+                None => {
+                    let _ = writeln!(s, "\t\tif p, n, err := TryDecode{}(data); err != nil {{", p.name);
+                }
+            }
             s.push_str("\t\t\ts = `{\"try\":\"error\"`\n\t\t} else if p == nil {\n\t\t\ts = fmt.Sprintf(`{\"try\":\"incomplete\",\"n\":%d`, n)\n\t\t} else {\n\t\t\ts = fmt.Sprintf(`{\"try\":\"done\",\"n\":%d`, n)\n\t\t}\n");
             if super::has_frame(module, p) {
                 let _ = writeln!(s, "\t\tif size, ok, err := FrameLen{}(data); err != nil {{", p.name);

@@ -208,9 +208,25 @@ impl StepEmitter for Decoder<'_> {
         }
     }
 
+    fn open_gate(&self, out: &mut Out, cond: &TExpr) {
+        out.open(format!("if {} {{", super::expr::unparen(&self.scope.expr(cond))));
+    }
+
+    fn close_gate(&self, out: &mut Out) {
+        out.close("}");
+    }
+
+    fn adopt_version(&self, out: &mut Out, m: &Member) {
+        let (min, latest) = self.scope.packet.version_bounds();
+        out.line(format!("pbR.SetVersion(int64({}), {}, {})", self.scope.field(m), min, latest));
+    }
+
     fn scalar(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec) {
         with_args(&self.scope, out, codec, |out| {
-            out.line(format!("p.{} = {}", field_name(&m.name), read_elem(codec, ty)))
+            let read = read_elem(codec, ty);
+            // A re-declaration narrower than the member (`@3 count uint32`).
+            let read = if &m.ty != ty { format!("{}({})", scalar_type(&m.ty), read) } else { read };
+            out.line(format!("p.{} = {}", field_name(&m.name), read))
         });
     }
 

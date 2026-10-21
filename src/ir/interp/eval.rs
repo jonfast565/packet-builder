@@ -54,11 +54,13 @@ pub struct Env<'a> {
     pub last: Option<&'a Value>,
     /// While decoding a calculated field: whole bytes left (`TExpr::Remaining`).
     pub remaining: Option<i64>,
+    /// The protocol version being coded (`TExpr::Version`).
+    pub version: i64,
 }
 
 impl<'a> Env<'a> {
     pub fn new(values: &'a [Value], params: &[i64]) -> Self {
-        Env { values, params: params.to_vec(), marks: None, checksum: None, last: None, remaining: None }
+        Env { values, params: params.to_vec(), marks: None, checksum: None, last: None, remaining: None, version: 0 }
     }
 
     fn mark(&self, m: Mark) -> usize {
@@ -95,6 +97,7 @@ pub fn eval(e: &TExpr, env: &Env) -> Ev {
         TExpr::IntLit(v) => Ev::I(*v),
         TExpr::FloatLit(v) => Ev::F(*v),
         TExpr::Remaining => Ev::I(env.remaining.unwrap_or(0)),
+        TExpr::Version => Ev::I(env.version),
         TExpr::Ref { member, ty } => scalar(&env.values[*member], *ty),
         TExpr::Stored { member } => scalar(&env.values[*member], Ty::Int),
         TExpr::Index { member, index, ty } => {

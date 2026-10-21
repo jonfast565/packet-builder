@@ -34,6 +34,9 @@ enum Command {
         /// Only show these packets.
         #[arg(short = 'k', long = "packet")]
         packets: Vec<String>,
+        /// Show the layout of this protocol version only.
+        #[arg(long)]
+        version: Option<u32>,
     },
     /// Decode bytes with a packet description and print the fields.
     Decode(DecodeArgs),
@@ -83,6 +86,11 @@ struct DecodeArgs {
     /// Print JSON, one object per decoded packet, instead of a tree.
     #[arg(long)]
     json: bool,
+
+    /// Decode as this protocol version (files with `version N`); without
+    /// it, a version field in the data or else the latest version applies.
+    #[arg(long)]
+    version: Option<u32>,
 }
 
 #[derive(Args)]
@@ -119,6 +127,10 @@ struct DissectorArgs {
     #[arg(long, requires = "packet")]
     heuristic: bool,
 
+    /// Only these protocol versions (`2..3`, or `3`), for files with `version N`.
+    #[arg(long, value_parser = parse_versions)]
+    versions: Option<(u32, u32)>,
+
     /// The global table the file exports (packet_builder_<package>); taken
     /// from the input file name when omitted.
     #[arg(short, long)]
@@ -151,6 +163,20 @@ struct GenerateArgs {
     /// to the input instead of copying it.
     #[arg(long)]
     zero_copy: bool,
+
+    /// Only these protocol versions (`2..3`, or `3`), for files with
+    /// `version N`: code for other versions is left out, and they are rejected.
+    #[arg(long, value_parser = parse_versions)]
+    versions: Option<(u32, u32)>,
+}
+
+/// `2..3` or `3`.
+fn parse_versions(s: &str) -> Result<(u32, u32), String> {
+    let num = |t: &str| t.trim().parse::<u32>().map_err(|_| format!("bad version range `{}` (expected e.g. 2..3)", s));
+    match s.split_once("..") {
+        Some((a, b)) => Ok((num(a)?, num(b)?)),
+        None => num(s).map(|v| (v, v)),
+    }
 }
 
 fn parse_language(s: &str) -> Result<Language, String> {
@@ -165,7 +191,7 @@ fn main() -> ExitCode {
     let result = match cli.command {
         Command::Generate(args) => generate(args),
         Command::Check { inputs } => check(&inputs),
-        Command::Layout { input, packets } => layout(&input, &packets),
+        Command::Layout { input, packets, version } => layout(&input, &packets, version),
         Command::Decode(args) => decode(args),
         Command::Dissector(args) => dissector(args),
         Command::Doc(args) => commands::doc(args),
@@ -207,7 +233,10 @@ fn load(input: &Path) -> Result<Module, String> {
 
 fn dissector(args: DissectorArgs) -> Result<(), String> {
     use packet_builder::ir::Dissector;
-    let module = load(&args.input)?;
+    let mut module = load(&args.input)?;
+    if let Some((min, latest)) = args.versions {
+        module.restrict_versions(min, latest)?;
+    }
     let mut list = module.dissectors.clone();
     if let Some(packet) = &args.packet {
         let p = module
@@ -263,7 +292,10 @@ fn parse_number(s: &str) -> Option<u64> {
 }
 
 fn generate(args: GenerateArgs) -> Result<(), String> {
-    let module = load(&args.input)?;
+    let mut module = load(&args.input)?;
+    if let Some((min, latest)) = args.versions {
+        module.restrict_versions(min, latest)?;
+    }
     let langs = if args.langs.is_empty() { Language::ALL.to_vec() } else { args.langs };
     let opts =
         GenOptions { package: args.package.unwrap_or_else(|| package_from(&args.input)), zero_copy: args.zero_copy };
@@ -301,8 +333,9 @@ fn check(inputs: &[PathBuf]) -> Result<(), String> {
     if failed { Err(String::new()) } else { Ok(()) }
 }
 
-fn layout(input: &Path, only: &[String]) -> Result<(), String> {
+fn layout(input: &Path, only: &[String], version: Option<u32>) -> Result<(), String> {
     let module = load(input)?;
+    check_version(&module, version)?;
     for name in only {
         if !module.packets.iter().any(|p| &p.name == name) {
             return Err(format!("no packet named `{}` in {}", name, input.display()));
@@ -321,7 +354,7 @@ fn layout(input: &Path, only: &[String]) -> Result<(), String> {
         };
         println!("packet {}: {}, alignment {}", p.name, size, p.alignment);
         println!("  {:>8}  {:>6}  {:<24} type", "offset", "size", "field");
-        for row in module.layout(p) {
+        for row in module.layout_version(p, version) {
             let name = if row.nested { format!("  {}", row.name) } else { row.name.clone() };
             println!("  {:>8}  {:>6}  {:<24} {}", fmt_bits(row.offset_bits), fmt_bits(row.size_bits), name, row.kind);
         }
@@ -378,6 +411,18 @@ fn parse_hex(text: &str) -> Result<Vec<u8>, String> {
         .collect()
 }
 
+/// `--version`, which needs a file with versions and one of them.
+fn check_version(module: &Module, version: Option<u32>) -> Result<(), String> {
+    match (version, module.versions) {
+        (None, _) => Ok(()),
+        (Some(_), None) => Err("--version needs a file with versions (`version N`)".into()),
+        (Some(v), Some(vs)) if v < vs.min || v > vs.latest => {
+            Err(format!("version {} is not one of the versions {}..{}", v, vs.min, vs.latest))
+        }
+        _ => Ok(()),
+    }
+}
+
 fn decode(args: DecodeArgs) -> Result<(), String> {
     use packet_builder::ir::interp;
 
@@ -385,6 +430,7 @@ fn decode(args: DecodeArgs) -> Result<(), String> {
     if !module.packets.iter().any(|p| p.name == args.packet) {
         return Err(format!("no packet named `{}` in {}", args.packet, args.input.display()));
     }
+    check_version(&module, args.version)?;
     let read = |path: &Path| fs::read(path).map_err(|e| format!("cannot read {}: {}", path.display(), e));
     let inputs: Vec<(String, Vec<u8>)> = if let Some(hex) = &args.hex {
         vec![(String::new(), parse_hex(hex)?)]
@@ -400,6 +446,9 @@ fn decode(args: DecodeArgs) -> Result<(), String> {
     for (label, data) in inputs {
         let data = data.get(args.offset..).unwrap_or(&[]);
         let mut r = interp::Reader::new(data);
+        if let (Some(v), Some(vs)) = (args.version, module.versions) {
+            r.set_version(v as i64, vs.min, vs.latest).map_err(|e| e.to_string())?;
+        }
         let mut n = 0;
         let mut ok = true;
         loop {

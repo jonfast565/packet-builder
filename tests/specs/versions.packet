@@ -1,0 +1,66 @@
+// Protocol versions: one parser for versions 1..3. Used by tests/codegen.rs.
+version 3
+
+const MAGIC uint8 = 0x10
+@3 const MAGIC uint8 = 0x30          // value changed in v3
+
+const Kind uint8 {
+  ping = 1,
+  @2.. data = 2,                     // added in v2
+  @..2 legacy = 9,                   // removed in v3
+}
+
+// The version travels in the first byte: decoding adopts it for the rest
+// of the frame (nested packets included); encoding writes it back.
+packet Frame be {
+  ver uint8 = version,
+  magic uint8 == MAGIC,
+  count uint16,
+  @3 count uint32,                   // widened in v3
+  @2.. flags uint8 : Kind strict,    // added in v2
+  @..2 legacy uint8,                 // removed in v3
+  retries uint8 = 3,
+  @3 retries = 5,                    // its value changed in v3
+  @2.. tag bitfield uint8 { hi u4, lo u4 },
+  @3 tag bitfield uint8 { lo u4, hi u4 },   // halves swapped in v3
+  body Body,
+  calc doubled uint32 = count * 2,
+}
+
+// No version field: it follows the frame's.
+packet Body be {
+  len uint8 = len(data),
+  data bytes[len],
+  @2.. extra uint16,
+  kind uint8,
+  payload switch kind {
+    1 => one uint8,
+    @2.. 2 => two uint16,            // only from v2 on
+    _ => raw bytes[]
+  }
+}
+
+// Decoded at the version the caller gives (no version field).
+packet Plain be {
+  a uint8,
+  @2 b uint8,                        // from v2 on
+  @..1 c uint16,                     // only in v1
+}
+
+// A union declared again for v3: value 2 now holds a wider arm, and the
+// union moves after `sub`. Both declarations share one union type.
+packet Msg be {
+  ver uint8 = version,
+  op uint8,
+  body switch op {
+    1 => ping uint8,
+    2 => old uint16,
+    _ => other bytes[]
+  } size 2,
+  sub uint8,
+  @3 body switch op {
+    1 => ping uint8,
+    2 => wide uint32,
+    _ => other bytes[]
+  } size 4,
+}

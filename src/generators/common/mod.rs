@@ -19,6 +19,30 @@ pub mod out;
 pub mod steps;
 pub mod union;
 
+/// A runtime's source for a module: the parts between `@versions{` and
+/// `@versions}` comment lines only when the module has protocol versions.
+/// The marker lines always go, and so does the blank line after a dropped
+/// part.
+pub fn runtime_source(text: &str, versioned: bool) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut skipping = false;
+    let mut dropped = false;
+    for line in text.split_inclusive('\n') {
+        if line.contains("@versions{") {
+            skipping = !versioned;
+        } else if line.contains("@versions}") {
+            dropped = skipping;
+            skipping = false;
+        } else if dropped && line.trim().is_empty() {
+            dropped = false;
+        } else if !skipping {
+            dropped = false;
+            out.push_str(line);
+        }
+    }
+    out
+}
+
 pub use consts::{ConstEmitter, const_pascal, member_category};
 pub use dialect::{Dialect, Scope, param_var};
 pub use expr::{ExprLang, Mode, cmp_symbol, emit_expr, mark_var};

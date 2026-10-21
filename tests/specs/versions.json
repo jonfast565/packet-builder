@@ -1,0 +1,128 @@
+{
+  "spec": "versions.packet",
+  "cases": [
+    {
+      "name": "v1 frame: the version comes from the data",
+      "packet": "Frame",
+      "hex": "01 10 0005 07 03 02aabb 01 09",
+      "expect": {
+        "ver": 1, "magic": 16, "count": 5, "flags": 0, "legacy": 7, "retries": 3, "hi": 0, "lo": 0,
+        "body": { "len": 2, "data": "aabb", "extra": 0, "kind": 1, "payload": { "kind": "one", "value": 9 } },
+        "doubled": 10
+      }
+    },
+    {
+      "name": "v2 frame: flags, the bitfield, extra and arm two appear",
+      "packet": "Frame",
+      "hex": "02 10 0005 02 07 03 ab 02aabb 1234 02 0009",
+      "expect": {
+        "ver": 2, "magic": 16, "count": 5, "flags": 2, "legacy": 7, "retries": 3, "hi": 10, "lo": 11,
+        "body": { "len": 2, "data": "aabb", "extra": 4660, "kind": 2, "payload": { "kind": "two", "value": 9 } },
+        "doubled": 10
+      }
+    },
+    {
+      "name": "v3 frame: count widened, legacy gone, new magic and retries, halves swapped",
+      "packet": "Frame",
+      "hex": "03 30 00000005 01 05 ab 02aabb 1234 01 09",
+      "expect": {
+        "ver": 3, "magic": 48, "count": 5, "flags": 1, "legacy": 0, "retries": 5, "hi": 11, "lo": 10,
+        "body": { "len": 2, "data": "aabb", "extra": 4660, "kind": 1, "payload": { "kind": "one", "value": 9 } },
+        "doubled": 10
+      }
+    },
+    {
+      "name": "v1 frame: arm two does not exist yet, so kind 2 is raw",
+      "packet": "Frame",
+      "hex": "01 10 0005 07 03 02aabb 02 0009",
+      "expect": { "body": { "kind": 2, "payload": { "kind": "raw", "value": "0009" } } }
+    },
+    {
+      "name": "a v1 frame converted to v3 by the caller's version",
+      "packet": "Frame",
+      "hex": "01 10 0005 07 03 02aabb 01 09",
+      "version": 3,
+      "set": { "magic": 48, "flags": 1 },
+      "encoded": "03 30 00000005 01 05 00 02aabb 0000 01 09"
+    },
+    {
+      "name": "the in-band version must be one of the versions",
+      "packet": "Frame",
+      "hex": "07 30",
+      "error_kind": "constraint",
+      "error_path": "Frame.ver"
+    },
+    {
+      "name": "Kind.legacy is gone in v3",
+      "packet": "Frame",
+      "hex": "03 30 00000005 09 05 ab 02aabb 1234 01 09",
+      "error_kind": "constraint",
+      "error_path": "Frame.flags"
+    },
+    {
+      "name": "MAGIC is 0x10 in v1",
+      "packet": "Frame",
+      "hex": "01 30 0005 07 03 02aabb 01 09",
+      "error_kind": "constraint",
+      "error_path": "Frame.magic"
+    },
+    {
+      "name": "retries is 5 in v3",
+      "packet": "Frame",
+      "hex": "03 30 00000005 01 03 ab 02aabb 1234 01 09",
+      "error_kind": "mismatch",
+      "error_path": "Frame.retries"
+    },
+    {
+      "name": "the caller's version: v1 has c",
+      "packet": "Plain",
+      "hex": "01 0203",
+      "version": 1,
+      "expect": { "a": 1, "b": 0, "c": 515 }
+    },
+    {
+      "name": "the caller's version: v2 has b",
+      "packet": "Plain",
+      "hex": "01 02",
+      "version": 2,
+      "expect": { "a": 1, "b": 2, "c": 0 }
+    },
+    {
+      "name": "no version given: the latest",
+      "packet": "Plain",
+      "hex": "01 02",
+      "expect": { "a": 1, "b": 2, "c": 0 }
+    },
+    {
+      "name": "v1 is too short for c",
+      "packet": "Plain",
+      "hex": "01 02",
+      "version": 1,
+      "error_kind": "incomplete"
+    },
+    {
+      "name": "re-declared union, v1: value 2 is old",
+      "packet": "Msg",
+      "hex": "01 02 1234 07",
+      "expect": { "ver": 1, "op": 2, "body": { "kind": "old", "value": 4660 }, "sub": 7 }
+    },
+    {
+      "name": "re-declared union, v3: it moved, and value 2 is wide",
+      "packet": "Msg",
+      "hex": "03 02 07 12345678",
+      "expect": { "ver": 3, "op": 2, "body": { "kind": "wide", "value": 305419896 }, "sub": 7 }
+    },
+    {
+      "name": "re-declared union, v3: an arm both declarations have",
+      "packet": "Msg",
+      "hex": "03 01 07 09000000",
+      "expect": { "body": { "kind": "ping", "value": 9 } }
+    },
+    {
+      "name": "re-declared union, v3: the default arm",
+      "packet": "Msg",
+      "hex": "03 05 07 aabbccdd",
+      "expect": { "body": { "kind": "other", "value": "aabbccdd" } }
+    }
+  ]
+}

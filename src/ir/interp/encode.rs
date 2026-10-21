@@ -3,7 +3,7 @@
 use super::eval::{Env, eval, store};
 use super::rt::{PbError, PbErrorKind, PbWriter};
 use super::value::{Struct, Value};
-use super::{arguments, check, checked_members, intern, pad};
+use super::{arguments, check, checked_members, gate_end, intern, pad, versions};
 use crate::ast::Endianness;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -13,7 +13,17 @@ use crate::ir::{BitPart, Codec, Count, Mark, Module, Packet, Step, StrMode, Text
 /// Encode `value`, a packet named `name`. Members missing from the value
 /// count as zero.
 pub fn encode(module: &Module, name: &str, value: &Value) -> Result<Vec<u8>, PbError> {
+    encode_version(module, name, value, None)
+}
+
+/// Encode as protocol `version` (None: the version the value carries
+/// in-band, or the latest).
+pub fn encode_version(module: &Module, name: &str, value: &Value, version: Option<u32>) -> Result<Vec<u8>, PbError> {
     let mut w = PbWriter::new();
+    if let Some(v) = version {
+        let (min, latest) = versions(module);
+        w.set_version(v as i64, min, latest)?;
+    }
     let p = find(module, name, &w)?;
     let s = match value {
         Value::Struct(s) => s.clone(),
@@ -23,7 +33,7 @@ pub fn encode(module: &Module, name: &str, value: &Value) -> Result<Vec<u8>, PbE
         let msg = format!("packet `{}` takes {} argument(s); encode the packet containing it", name, p.params.len());
         return Err(w.error(PbErrorKind::Invalid, msg));
     }
-    Encoder { module, params: RefCell::new(Vec::new()) }.packet(p, &s, &mut w)?;
+    Encoder { module, params: RefCell::new(Vec::new()), version: RefCell::new(0) }.packet(p, &s, &mut w)?;
     w.finish()
 }
 
@@ -43,11 +53,13 @@ struct Encoder<'m> {
     module: &'m Module,
     /// The arguments of the packet being encoded.
     params: RefCell<Vec<i64>>,
+    /// The writer's protocol version, for expressions.
+    version: RefCell<i64>,
 }
 
 impl Encoder<'_> {
     fn env<'v>(&self, values: &'v [Value]) -> Env<'v> {
-        Env::new(values, &self.params.borrow())
+        Env { version: *self.version.borrow(), ..Env::new(values, &self.params.borrow()) }
     }
 
     fn packet_with(&self, p: &Packet, s: &Struct, args: Vec<i64>, w: &mut PbWriter) -> Result<(), PbError> {
@@ -59,11 +71,23 @@ impl Encoder<'_> {
 
     fn packet(&self, p: &Packet, s: &Struct, w: &mut PbWriter) -> Result<(), PbError> {
         w.enter(intern(&p.name))?;
+        let (min, latest) = versions(self.module);
+        self.version.replace(w.version_or(latest));
         let mut values: Vec<Value> = p
             .members
             .iter()
             .map(|m| s.get(&m.name).cloned().unwrap_or_else(|| Value::default_for(self.module, m)))
             .collect();
+        // The version the value carries in-band, before anything uses it.
+        if let Some(vm) = p.version_member {
+            let v = match values[vm] {
+                Value::Int(v) => v as i64,
+                _ => 0,
+            };
+            w.adopt_version(v, min, latest)?;
+            self.version.replace(w.version_or(latest));
+            values[vm] = Value::Int(w.version_or(latest) as i128);
+        }
         // Calculated members that lengths depend on are recomputed, as in
         // generated encoders.
         for (m, e) in p.encode_calc_members() {
@@ -75,7 +99,9 @@ impl Encoder<'_> {
         let start = w.position_bits();
         let mut marks = HashMap::from([(Mark::PacketStart, start)]);
         let mut windows: HashMap<usize, (usize, Option<i64>)> = HashMap::new();
-        for (i, step) in p.steps.iter().enumerate() {
+        let mut i = 0;
+        while i < p.steps.len() {
+            let step = &p.steps[i];
             for mi in checked_members(step).into_iter().filter(|m| !p.patches.contains(m)) {
                 for c in p.members[mi].enforced_checks() {
                     w.at(intern(self.field_name(p, step)));
@@ -84,6 +110,12 @@ impl Encoder<'_> {
             }
             marks.insert(Mark::Before(i), w.position_bits());
             match step {
+                Step::OpenGate { cond, .. } => {
+                    if !eval(cond, &self.env(&values)).bool() {
+                        i = gate_end(p, i);
+                    }
+                }
+                Step::CloseGate { .. } => {}
                 Step::OpenWindow { size, .. } => {
                     if let Some(name) = p.steps.get(i + 1).and_then(|s| super::decode::step_name(p, s)) {
                         w.at(intern(name));
@@ -103,6 +135,7 @@ impl Encoder<'_> {
                 _ => self.step(p, step, &values, start, w)?,
             }
             marks.insert(Mark::After(i), w.position_bits());
+            i += 1;
         }
         marks.insert(Mark::PacketEnd, w.position_bits());
         // Fields derived from the encoded bytes: compute, check, patch.
@@ -238,7 +271,9 @@ impl Encoder<'_> {
                 w.place(sub);
                 Ok(())
             }
-            Step::OpenWindow { .. } | Step::CloseWindow { .. } => Ok(()),
+            Step::OpenWindow { .. } | Step::CloseWindow { .. } | Step::OpenGate { .. } | Step::CloseGate { .. } => {
+                Ok(())
+            }
         }
     }
 

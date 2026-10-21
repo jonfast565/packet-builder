@@ -103,6 +103,11 @@ pub enum Step {
     OpenWindow { size: TExpr, exact: bool },
     /// The end of the window opened by step `open`.
     CloseWindow { open: usize, exact: bool },
+    /// The steps up to the matching `CloseGate` run only for protocol
+    /// versions `from..=to`; `cond` tests that (`TExpr::Version`).
+    OpenGate { from: u32, to: u32, cond: TExpr },
+    /// The end of the gate opened by step `open`.
+    CloseGate { open: usize },
     /// A packet stored elsewhere: `offset` bytes from the start of this
     /// packet, or of the whole input when `root`. Decoding reads it there
     /// and comes back; encoding places it there once the whole input is

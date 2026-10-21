@@ -52,10 +52,26 @@ pub fn emit_packet(out: &mut Out, module: &Module, p: &Packet, zero_copy: bool) 
     out.line("");
     // Parameters: `, pbp_a` in signatures and calls.
     let pass: String = p.params.iter().map(|x| format!(", {}", param_var(&x.name))).collect();
+    // Files with versions: an optional protocol version to code as.
+    let versions = p.versions.map(|_| p.version_bounds());
     out.line("@classmethod");
-    out.open(format!("def decode(cls, data{}) -> \"{}\":", pass, p.name));
-    out.line("\"\"\"Decode from the start of `data`. Trailing bytes are ignored.\"\"\"");
-    out.line(format!("return cls.decode_from(PbReader(data){})", pass));
+    if let Some((min, latest)) = versions {
+        out.open(format!("def decode(cls, data{}, version=None) -> \"{}\":", pass, p.name));
+        out.line(format!(
+            "\"\"\"Decode from the start of `data` as protocol `version` ({}..{}; default: the",
+            min, latest
+        ));
+        out.line("version in the data, or the latest). Trailing bytes are ignored.\"\"\"");
+        out.line("pb_r = PbReader(data)");
+        out.open("if version is not None:");
+        out.line(format!("pb_r.set_version(version, {}, {})", min, latest));
+        out.pop();
+        out.line(format!("return cls.decode_from(pb_r{})", pass));
+    } else {
+        out.open(format!("def decode(cls, data{}) -> \"{}\":", pass, p.name));
+        out.line("\"\"\"Decode from the start of `data`. Trailing bytes are ignored.\"\"\"");
+        out.line(format!("return cls.decode_from(PbReader(data){})", pass));
+    }
     out.close("");
     out.line("@classmethod");
     out.open(format!("def decode_from(cls, pb_r{}) -> \"{}\":", pass, p.name));
@@ -69,8 +85,16 @@ pub fn emit_packet(out: &mut Out, module: &Module, p: &Packet, zero_copy: bool) 
     out.line("return p");
     out.close("");
 
-    out.open(format!("def encode(self{}) -> bytes:", pass));
-    out.line("pb_w = PbWriter()");
+    if let Some((min, latest)) = versions {
+        out.open(format!("def encode(self{}, version=None) -> bytes:", pass));
+        out.line("pb_w = PbWriter()");
+        out.open("if version is not None:");
+        out.line(format!("pb_w.set_version(version, {}, {})", min, latest));
+        out.pop();
+    } else {
+        out.open(format!("def encode(self{}) -> bytes:", pass));
+        out.line("pb_w = PbWriter()");
+    }
     out.line(format!("self.encode_to(pb_w{})", pass));
     out.line("return pb_w.finish()");
     out.close("");
@@ -81,9 +105,7 @@ pub fn emit_packet(out: &mut Out, module: &Module, p: &Packet, zero_copy: bool) 
         out.line("pb_start = pb_w.position_bits()");
     }
     let encoder = Encoder::new(p);
-    for (m, e) in p.encode_calc_members() {
-        encoder.define_local(out, m, e);
-    }
+    encoder.emit_locals(out);
     encoder.emit_steps(out);
     out.line("pb_w.leave()");
     out.close("");

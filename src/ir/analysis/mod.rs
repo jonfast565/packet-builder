@@ -15,6 +15,8 @@
 //! - `typecheck`, `codec`: expression and wire-format resolution.
 //! - `cursor`: what is known about the bit offset while laying out fields.
 //! - `types`: facts about source type names.
+//! - `versions`: protocol versions; resolves `@range`s and merges
+//!   re-declarations before the other passes run.
 
 mod bitfield;
 mod checks;
@@ -30,10 +32,11 @@ mod repeat;
 mod typecheck;
 mod types;
 mod union;
+mod versions;
 
 use std::collections::HashMap;
 
-use super::model::{Module, Packet, Step, Union, ValueType};
+use super::model::{Module, Packet, Step, Union, ValueType, Versions};
 use crate::ast::PacketExprList;
 use crate::errors::Diagnostic;
 
@@ -71,6 +74,7 @@ const BUILTIN: &[&str] = &[
 
 pub fn analyze(list: &PacketExprList) -> Result<Module, Vec<Diagnostic>> {
     let mut diags = Vec::new();
+    let list = &*versions::normalize(list, &mut diags);
 
     // Packet names
     let mut by_name = HashMap::<String, usize>::new();
@@ -111,13 +115,17 @@ pub fn analyze(list: &PacketExprList) -> Result<Module, Vec<Diagnostic>> {
         return Err(diags);
     }
 
-    let packets: Vec<Packet> = list.packets.iter().map(|p| done.remove(&p.name).expect("analyzed")).collect();
+    let versions = consts.latest.map(|latest| Versions { min: 1, latest });
+    let packets: Vec<Packet> =
+        list.packets.iter().map(|p| Packet { versions, ..done.remove(&p.name).expect("analyzed") }).collect();
     let mut unions = Vec::new();
     for p in &packets {
         for s in &p.steps {
             if let Step::Switch { member, arms, .. } = s
                 && let ValueType::Union(name) = &p.members[*member].ty
+                && !unions.iter().any(|u: &Union| &u.name == name)
             {
+                // A union declared again for other versions has the same arms.
                 unions.push(Union { name: name.clone(), arms: arms.clone() });
             }
         }
@@ -141,5 +149,5 @@ pub fn analyze(list: &PacketExprList) -> Result<Module, Vec<Diagnostic>> {
     if !diags.is_empty() {
         return Err(diags);
     }
-    Ok(Module { packets, constants: consts.constants, categories: consts.categories, unions, dissectors })
+    Ok(Module { packets, constants: consts.constants, categories: consts.categories, unions, dissectors, versions })
 }

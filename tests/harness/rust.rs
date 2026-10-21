@@ -36,7 +36,14 @@ impl Target for RustTarget {
         s.push_str("fn main() {\n");
         for c in cases {
             let p = packet(module, &c.packet);
-            let _ = writeln!(s, "    match {}::decode(&pb_unhex({})) {{", p.name, quote(&c.hex));
+            match c.version {
+                Some(v) => {
+                    let _ = writeln!(s, "    match {}::decode_v(&pb_unhex({}), {}) {{", p.name, quote(&c.hex), v);
+                }
+                None => {
+                    let _ = writeln!(s, "    match {}::decode(&pb_unhex({})) {{", p.name, quote(&c.hex));
+                }
+            }
             s.push_str("        Err(e) => println!(\"{{\\\"ok\\\":false,{}}}\", pb_e(&e, \"\")),\n");
             s.push_str("        Ok(mut p) => {\n");
             for (name, v) in &c.set {
@@ -48,12 +55,24 @@ impl Target for RustTarget {
                 );
             }
             s.push_str("            let v = p.to_json();\n");
-            s.push_str("            match p.encode() {\n");
+            match c.version {
+                Some(v) => {
+                    let _ = writeln!(s, "            match p.encode_v({}) {{", v);
+                }
+                None => s.push_str("            match p.encode() {\n"),
+            }
             s.push_str("                Ok(b) => println!(\"{{\\\"ok\\\":true,\\\"value\\\":{},\\\"encoded\\\":{}}}\", v, pb_hex(&b)),\n");
             s.push_str("                Err(e) => println!(\"{{\\\"ok\\\":true,\\\"value\\\":{},{}}}\", v, pb_e(&e, \"encode_\")),\n");
             s.push_str("            }\n        }\n    }\n");
             let _ = writeln!(s, "    {{\n        let d = pb_unhex({});", quote(&c.hex));
-            let _ = writeln!(s, "        let mut s = match {}::try_decode(&d) {{", p.name);
+            match c.version {
+                Some(v) => {
+                    let _ = writeln!(s, "        let mut s = match {}::try_decode_v(&d, {}) {{", p.name, v);
+                }
+                None => {
+                    let _ = writeln!(s, "        let mut s = match {}::try_decode(&d) {{", p.name);
+                }
+            }
             s.push_str(
                 "            Ok(PbStatus::Done(_, n)) => format!(\"{{\\\"try\\\":\\\"done\\\",\\\"n\\\":{}\", n),\n",
             );

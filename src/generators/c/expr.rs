@@ -112,6 +112,14 @@ impl ExprLang for Scope<'_, C> {
         format!("((int64_t){})", self.field(self.member(member)))
     }
 
+    fn version(&self) -> String {
+        let latest = self.packet.version_bounds().1;
+        match self.mode {
+            Mode::Decode => format!("pb_version_or(&pb_r->tr, {})", latest),
+            Mode::Encode => format!("pb_version_or(&pb_w->tr, {})", latest),
+        }
+    }
+
     fn remaining(&self) -> String {
         "pb_remaining_bytes(pb_r)".into()
     }

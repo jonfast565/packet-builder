@@ -34,14 +34,36 @@ pub trait ConstEmitter {
         if !module.constants.is_empty() {
             self.separator(out);
             self.open_constants(out);
-            self.constants(out, &module.constants);
+            self.constants(out, &with_versions(&module.constants));
             self.close_constants(out);
         }
         for cat in &module.categories {
             self.separator(out);
-            self.category(out, cat);
+            self.category(out, &Category { members: with_versions(&cat.members), ..cat.clone() });
         }
     }
+}
+
+/// Constants whose value changed between protocol versions keep the latest
+/// value under their name, and each earlier value as `NAME_V<first version>`
+/// (`name_v<first version>` for names with lowercase letters).
+pub fn with_versions(constants: &[Constant]) -> Vec<Constant> {
+    let mut out = Vec::with_capacity(constants.len());
+    for c in constants {
+        out.push(c.clone());
+        let lower = c.name.chars().any(|ch| ch.is_ascii_lowercase());
+        for v in c.versions.iter().filter(|v| v.value != c.value) {
+            out.push(Constant {
+                name: format!("{}_{}{}", c.name, if lower { "v" } else { "V" }, v.from),
+                value: v.value,
+                radix: v.radix,
+                note: Some(format!("`{}` in versions {}..{}", c.name, v.from, v.to)),
+                versions: Vec::new(),
+                ..c.clone()
+            });
+        }
+    }
+    out
 }
 
 /// `keep_alive` / `KEEP_ALIVE` → `KeepAlive`: all-caps names are lowered

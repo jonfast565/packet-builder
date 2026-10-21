@@ -13,7 +13,8 @@ use super::context::Ctx;
 use super::cursor::{Cursor, const_factor};
 use super::params::Sigs;
 use super::types::{field_value_type, natural_align, value_type};
-use crate::ast::{CalculatedField, Endianness, PacketExpr, PacketItem, Span, TypeExpr, TypeNode};
+use super::versions::{VERSION, VRange, version_test};
+use crate::ast::{CalculatedField, Endianness, ExprNode, PacketExpr, PacketItem, Span, TypeExpr, TypeNode};
 use crate::errors::Diagnostic;
 use crate::ir::expr::{TExpr, Ty, coerce};
 use crate::ir::model::{Assertion, Codec, Count, MemberKind, Packet, Step, StrMode, ValueType};
@@ -41,6 +42,15 @@ pub(super) struct PacketBuilder<'a> {
     pub(super) item_steps: HashMap<usize, ItemStep>,
     /// Whether the offset was byte aligned just before the last field step.
     pub(super) aligned_before: bool,
+    /// The gate open while laying out: its step, versions and the cursor
+    /// before it.
+    gate: Option<(usize, VRange, Cursor)>,
+    /// For members laid out in gates: the versions of each declaration;
+    /// members also laid out outside any gate are in `always`.
+    member_versions: HashMap<usize, Vec<VRange>>,
+    always: HashSet<usize>,
+    /// `ver uint8 = version`.
+    version_member: Option<usize>,
 }
 
 /// Where a source item ended up: its first and last step (the window steps
@@ -70,6 +80,10 @@ impl<'a> PacketBuilder<'a> {
             asserts_scheduled: Vec::new(),
             item_steps: HashMap::new(),
             aligned_before: true,
+            gate: None,
+            member_versions: HashMap::new(),
+            always: HashSet::new(),
+            version_member: None,
         }
     }
 
@@ -85,12 +99,66 @@ impl<'a> PacketBuilder<'a> {
     /// Pass 1: declare every member so expressions can refer to any of them.
     fn declare_members(&mut self) {
         let ctx = &mut self.ctx;
-        for item in &self.p.items {
+        let versioned = ctx.consts.latest.is_some();
+        for (i, item) in self.p.items.iter().enumerate() {
+            // A re-declaration for other versions (`@3 count uint32`).
+            let gated = versioned && self.p.versions.get(i).is_some_and(Option::is_some);
+            match item {
+                PacketItem::Field(f) if gated && ctx.names.contains_key(&f.id) => {
+                    let ty = field_value_type(f);
+                    if f.array.is_some() && ctx.members[ctx.names[&f.id]].ty != ty {
+                        ctx.diags.push(Diagnostic::new(
+                            format!("the elements of `{}` cannot change type between versions (its length can)", f.id),
+                            f.span,
+                        ));
+                        continue;
+                    }
+                    ctx.redeclare(&f.id, ty, f.span);
+                    continue;
+                }
+                PacketItem::Switch(sw) if gated && ctx.names.contains_key(&sw.id) => continue,
+                PacketItem::Bitfield(b) if gated => {
+                    for m in b.members.iter().filter(|m| m.name != "_") {
+                        let ty = ValueType::Int { width: m.width, signed: m.signed };
+                        if let Some(&idx) = ctx.names.get(&m.name) {
+                            if ctx.members[idx].ty.storage_bits() != ty.storage_bits() {
+                                ctx.diags.push(Diagnostic::new(
+                                    format!(
+                                        "`{}` may move within its bitfield between versions, but not change its storage size",
+                                        m.name
+                                    ),
+                                    m.span,
+                                ));
+                                continue;
+                            }
+                            ctx.redeclare(&m.name, ty, m.span);
+                        } else {
+                            ctx.declare(&m.name, ty, MemberKind::BitfieldPart, m.span);
+                            ctx.tag(&m.name, &m.category);
+                            ctx.rules(&m.name, &m.rules, false, false, m.span);
+                        }
+                    }
+                    continue;
+                }
+                _ => {}
+            }
             match item {
                 PacketItem::Field(f) => {
                     if f.id == "_" {
                         ctx.rules("_", &f.rules, false, false, f.span);
                         continue;
+                    }
+                    if versioned && f.id == VERSION {
+                        ctx.diags.push(
+                            Diagnostic::new(
+                                "a field cannot be called `version` in a file with versions: it names the protocol version",
+                                f.span,
+                            )
+                            .with_note("call it `ver` and write `ver uint8 = version` to carry the version in-band"),
+                        );
+                    }
+                    if versioned && matches!(&f.derive, Some(ExprNode::ValueReference(n, None)) if n == VERSION) {
+                        self.version_member = Some(ctx.members.len());
                     }
                     ctx.declare(&f.id, field_value_type(f), MemberKind::Stored, f.span);
                     ctx.tag(&f.id, &f.category);
@@ -135,7 +203,7 @@ impl<'a> PacketBuilder<'a> {
                     let name = format!("{}{}", self.p.name, pascal(&sw.id));
                     ctx.declare(&sw.id, ValueType::Union(name), MemberKind::Stored, sw.span);
                 }
-                PacketItem::Align(..) | PacketItem::Assert(_) => {}
+                PacketItem::Align(..) | PacketItem::Assert(_) | PacketItem::Override(_) => {}
             }
         }
         ctx.check_param_names();
@@ -150,6 +218,7 @@ impl<'a> PacketBuilder<'a> {
                 if let Some(&idx) = ctx.names.get(&f.id)
                     && f.id != "_"
                     && field_value_type(f) != ValueType::Str
+                    && ctx.members[idx].array.is_none()
                 {
                     ctx.members[idx].array = count.clone();
                 }
@@ -193,11 +262,29 @@ impl<'a> PacketBuilder<'a> {
             .rposition(|it| matches!(it, PacketItem::Field(_) | PacketItem::Bitfield(_) | PacketItem::Switch(_)));
         let mut field_no = 0usize;
 
+        // A member declared again for later versions is only known once its
+        // last declaration is laid out.
+        let mut last_decl = HashMap::<usize, usize>::new();
+        for (item_idx, item) in p.items.iter().enumerate() {
+            for idx in self.item_members(item) {
+                last_decl.insert(idx, item_idx);
+            }
+        }
         self.schedule_calcs();
         for (item_idx, item) in p.items.iter().enumerate() {
+            let range = p
+                .versions
+                .get(item_idx)
+                .copied()
+                .flatten()
+                .map(|r| VRange { from: r.from.unwrap_or(1), to: r.to.unwrap_or(u32::MAX) });
+            if !matches!(item, PacketItem::Calculated(_) | PacketItem::Assert(_) | PacketItem::Override(_)) {
+                self.enter_gate(range);
+                self.note_versions(item, range);
+            }
             match item {
                 PacketItem::Calculated(c) => self.place_remaining_calc(c),
-                PacketItem::Assert(_) => {}
+                PacketItem::Assert(_) | PacketItem::Override(_) => {}
                 PacketItem::Align(bytes, span) => {
                     if self.open_ended {
                         self.ctx.diags.push(Diagnostic::new(
@@ -234,12 +321,63 @@ impl<'a> PacketBuilder<'a> {
                     self.note_item(item_idx);
                 }
             }
-            self.schedule_calcs();
+            for idx in self.item_members(item) {
+                if last_decl.get(&idx) != Some(&item_idx) {
+                    self.available.remove(&idx);
+                }
+            }
+            // Calculated fields and assertions run outside gates, once the
+            // gate that may define their inputs is closed.
+            if self.gate.is_none() {
+                self.schedule_calcs();
+            }
         }
+        self.enter_gate(None);
 
         // C-style tail padding: the size is a multiple of the packet's alignment.
         if p.align.is_some() && !self.open_ended {
             self.cursor.pad_to(self.alignment, &mut self.steps);
+        }
+    }
+
+    /// Close the open gate unless it is for `range`, then open one for
+    /// `range` (none when it is for every version).
+    fn enter_gate(&mut self, range: Option<VRange>) {
+        if self.gate.map(|(_, r, _)| r) == range {
+            return;
+        }
+        if let Some((open, _, before)) = self.gate.take() {
+            self.steps.push(Step::CloseGate { open });
+            self.cursor = before.join(self.cursor);
+            self.schedule_calcs();
+        }
+        if let Some(r) = range {
+            let latest = self.ctx.consts.latest.unwrap_or(r.to);
+            self.gate = Some((self.steps.len(), r, self.cursor));
+            self.steps.push(Step::OpenGate { from: r.from, to: r.to, cond: version_test(r, latest) });
+        }
+    }
+
+    /// The stored members an item lays out.
+    fn item_members(&self, item: &PacketItem) -> Vec<usize> {
+        let names: Vec<&str> = match item {
+            PacketItem::Field(f) if f.id != "_" => vec![&f.id],
+            PacketItem::Switch(sw) => vec![&sw.id],
+            PacketItem::Bitfield(b) => b.members.iter().filter(|m| m.name != "_").map(|m| m.name.as_str()).collect(),
+            _ => Vec::new(),
+        };
+        names.into_iter().filter_map(|n| self.ctx.names.get(n).copied()).collect()
+    }
+
+    /// Record the versions the members an item lays out exist in.
+    fn note_versions(&mut self, item: &PacketItem, range: Option<VRange>) {
+        for idx in self.item_members(item) {
+            match range {
+                Some(r) => self.member_versions.entry(idx).or_default().push(r),
+                None => {
+                    self.always.insert(idx);
+                }
+            }
         }
     }
 
@@ -452,12 +590,43 @@ impl<'a> PacketBuilder<'a> {
             }
         }
 
-        let plan = self.finish_derived();
+        let mut plan = self.finish_derived();
+        // The in-band version is computed where it is written.
+        plan.encode_calcs.retain(|c| Some(*c) != self.version_member);
+        // Members on the wire in some versions only.
+        if let Some(latest) = self.ctx.consts.latest {
+            for (idx, ranges) in &self.member_versions {
+                if self.always.contains(idx) {
+                    continue;
+                }
+                let test = ranges.iter().map(|r| version_test(*r, latest)).reduce(|a, b| TExpr::Logic {
+                    op: crate::ir::expr::LogicOp::Or,
+                    a: Box::new(a),
+                    b: Box::new(b),
+                });
+                self.ctx.members[*idx].present = test;
+            }
+        }
+        if let Some(vm) = self.version_member {
+            let first_gate = self.steps.iter().position(|s| matches!(s, Step::OpenGate { .. }));
+            let at = self.steps.iter().position(|s| matches!(s, Step::Field { member: Some(m), .. } if *m == vm));
+            if let (Some(g), Some(a)) = (first_gate, at)
+                && g < a
+            {
+                self.ctx.diags.push(Diagnostic::new(
+                    format!(
+                        "`{}` carries the version, so it must come before every field that exists in some versions only",
+                        self.ctx.members[vm].name
+                    ),
+                    p.span,
+                ));
+            }
+        }
         if !self.ctx.diags.is_empty() {
             return Err(self.ctx.diags);
         }
         let fixed_bits = if self.open_ended { None } else { self.cursor.exact };
-        Ok(Packet {
+        let packet = Packet {
             name: p.name.clone(),
             params: self.ctx.params,
             members: self.ctx.members,
@@ -471,7 +640,29 @@ impl<'a> PacketBuilder<'a> {
             derived: plan.derived,
             patches: plan.patches,
             wire_dependent: plan.wire_dependent,
-        })
+            version_member: self.version_member,
+            versions: None,
+        };
+        // Recorded positions are locals of the generated code, so none may
+        // be inside a gate.
+        let gated = packet.gated_steps();
+        let marked = packet.marks(true).into_iter().chain(packet.marks(false)).find(|m| match m {
+            crate::ir::expr::Mark::Before(i) | crate::ir::expr::Mark::After(i) => gated.contains(i),
+            _ => false,
+        });
+        if marked.is_some() {
+            return Err(vec![
+                Diagnostic::new(
+                    format!(
+                        "packet `{}` measures (`sizeof`, `offsetof`, a checksum) or patches a field that exists in some versions only",
+                        p.name
+                    ),
+                    p.span,
+                )
+                .with_note("measure a range of fields around it, or put the measured fields in a nested packet"),
+            ]);
+        }
+        Ok(packet)
     }
 }
 

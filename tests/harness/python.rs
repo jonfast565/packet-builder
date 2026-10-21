@@ -28,7 +28,8 @@ impl Target for PythonTarget {
             let p = packet(module, &c.packet);
             let _ = writeln!(s, "def case_{}():", i);
             s.push_str("    try:\n");
-            let _ = writeln!(s, "        p = {}.decode(bytes.fromhex({}))", p.name, quote(&c.hex));
+            let ver = c.version.map(|v| format!(", version={}", v)).unwrap_or_default();
+            let _ = writeln!(s, "        p = {}.decode(bytes.fromhex({}){})", p.name, quote(&c.hex), ver);
             s.push_str(
                 "    except PbError as e:\n        print('{\"ok\":false' + pb_e(e, '') + '}')\n        return\n",
             );
@@ -41,13 +42,13 @@ impl Target for PythonTarget {
                 );
             }
             s.push_str("    v = p.to_json()\n");
-            s.push_str("    try:\n        b = p.encode()\n");
+            let _ = writeln!(s, "    try:\n        b = p.encode({})", ver.trim_start_matches(", "));
             s.push_str("    except PbError as e:\n        print('{\"ok\":true,\"value\":' + v + pb_e(e, 'encode_') + '}')\n        return\n");
             s.push_str("    print('{\"ok\":true,\"value\":' + v + ',\"encoded\":' + hx(b) + '}')\n\n");
             let _ = writeln!(s, "def stream_{}():", i);
             let _ = writeln!(s, "    d = bytes.fromhex({})", quote(&c.hex));
             s.push_str("    try:\n");
-            let _ = writeln!(s, "        p, n = {}.try_decode(d)", p.name);
+            let _ = writeln!(s, "        p, n = {}.try_decode(d{})", p.name, ver);
             s.push_str("        s = '{\"try\":\"%s\",\"n\":%d' % (\"done\" if p is not None else \"incomplete\", n)\n");
             s.push_str("    except PbError:\n        s = '{\"try\":\"error\"'\n");
             if super::has_frame(module, p) {

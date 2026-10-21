@@ -79,6 +79,32 @@ pub trait StepEmitter {
     /// there (`sub`/`place`).
     fn at(&self, out: &mut Out, member: &Member, target: &PacketRef, offset: &TExpr, root: bool);
 
+    /// Start a block that runs only when `cond` holds: the steps of a field
+    /// that exists in some protocol versions only.
+    fn open_gate(&self, out: &mut Out, cond: &TExpr);
+
+    /// End the block of `open_gate`.
+    fn close_gate(&self, out: &mut Out);
+
+    /// The member that carries the version in-band (`ver uint8 = version`):
+    /// decoders adopt its value as the reader's version once it is read;
+    /// encoders, before writing it, take it as the writer's version unless
+    /// the caller gave one.
+    fn adopt_version(&self, out: &mut Out, member: &Member);
+
+    /// Encoders, before the steps: adopt the version the value carries
+    /// in-band (expressions below may use it), then define the locals of
+    /// `Packet::encode_calc_members`.
+    fn emit_locals(&self, out: &mut Out) {
+        let p = self.packet();
+        if let Some(vm) = p.version_member {
+            self.adopt_version(out, &p.members[vm]);
+        }
+        for (m, e) in p.encode_calc_members() {
+            self.define_local(out, m, e);
+        }
+    }
+
     /// The wire name of a step's field (`_` for padding), if it has one.
     fn step_field<'s>(&'s self, step: &'s Step) -> Option<&'s str> {
         match step {
@@ -87,7 +113,12 @@ pub trait StepEmitter {
             Step::Bitfield { name, .. } => Some(name),
             Step::Switch { member, .. } | Step::At { member, .. } => Some(&self.packet().members[*member].name),
             Step::Assert { .. } => Some(""),
-            Step::Calc { .. } | Step::Align { .. } | Step::OpenWindow { .. } | Step::CloseWindow { .. } => None,
+            Step::Calc { .. }
+            | Step::Align { .. }
+            | Step::OpenWindow { .. }
+            | Step::CloseWindow { .. }
+            | Step::OpenGate { .. }
+            | Step::CloseGate { .. } => None,
         }
     }
 
@@ -111,7 +142,13 @@ pub trait StepEmitter {
             self.locate(out, field);
         }
         let checks = self.step_checks(step);
+        let carries_version =
+            matches!(step, Step::Field { member: Some(m), .. } if self.packet().version_member == Some(*m));
         if self.encoding() {
+            if carries_version && let Step::Field { member: Some(m), .. } = step {
+                // The writer's version (adopted by `emit_locals`) is written.
+                self.define_local(out, &members[*m], &TExpr::Version);
+            }
             for c in &checks {
                 self.check(out, &c.cond, &c.message);
             }
@@ -142,10 +179,17 @@ pub trait StepEmitter {
                 // A placeholder, patched after the last step.
                 self.padding(out, codec, None)
             }
-            Step::Field { member: Some(mi), codec, array: None, .. }
+            Step::Field { member: Some(mi), codec, array: None, ty }
                 if self.encoding() && members[*mi].is_derived() =>
             {
-                self.write_derived(out, &members[*mi], codec, None)
+                // A re-declaration narrower than the member is checked
+                // against its own width.
+                if &members[*mi].ty != ty {
+                    let narrow = Member { ty: ty.clone(), ..members[*mi].clone() };
+                    self.write_derived(out, &narrow, codec, None)
+                } else {
+                    self.write_derived(out, &members[*mi], codec, None)
+                }
             }
             Step::Field { member: Some(mi), ty, codec, array: None } => self.scalar(out, &members[*mi], ty, codec),
             Step::Field { member: Some(mi), ty, codec, array: Some(count) } => {
@@ -156,9 +200,12 @@ pub trait StepEmitter {
             }
             Step::Switch { member, selector, arms } => self.switch(out, &members[*member], selector, arms),
             Step::At { member, target, offset, root } => self.at(out, &members[*member], target, offset, *root),
-            Step::OpenWindow { .. } | Step::CloseWindow { .. } => {}
+            Step::OpenWindow { .. } | Step::CloseWindow { .. } | Step::OpenGate { .. } | Step::CloseGate { .. } => {}
         }
         if !self.encoding() {
+            if carries_version && let Step::Field { member: Some(m), .. } = step {
+                self.adopt_version(out, &members[*m]);
+            }
             for c in &checks {
                 self.check(out, &c.cond, &c.message);
             }
@@ -194,6 +241,8 @@ pub trait StepEmitter {
                     };
                     self.close_window(out, *open, sized, *exact);
                 }
+                Step::OpenGate { cond, .. } => self.open_gate(out, cond),
+                Step::CloseGate { .. } => self.close_gate(out),
                 _ => self.emit_step(out, step),
             }
             if marks.contains(&Mark::After(i)) {
@@ -218,9 +267,20 @@ pub trait StepEmitter {
         } else {
             for &mi in &p.derived {
                 let m = &p.members[mi];
+                // The in-band version is adopted, not verified.
+                if p.version_member == Some(mi) {
+                    continue;
+                }
                 if let (false, Some(e)) = (m.lenient, m.derived_expr()) {
+                    // A member some versions lack keeps its default there.
+                    if let Some(present) = &m.present {
+                        self.open_gate(out, present);
+                    }
                     self.locate(out, &m.name);
                     self.verify(out, m, e);
+                    if m.present.is_some() {
+                        self.close_gate(out);
+                    }
                 }
             }
         }

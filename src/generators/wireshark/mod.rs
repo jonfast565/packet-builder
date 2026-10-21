@@ -35,7 +35,7 @@ pub fn generate(module: &Module, dissectors: &[Dissector], package: &str) -> Str
     out.line("--   wireshark -X lua_script:<this file>");
     out.line("-- or copy it into Wireshark's personal Lua plugins folder.");
     out.line("");
-    out.buf.push_str(RUNTIME);
+    out.buf.push_str(&crate::generators::common::runtime_source(RUNTIME, module.versions.is_some()));
     fields::emit_fields(&mut out, module);
     out.line("");
     out.line("local D = {}");
@@ -57,15 +57,18 @@ pub fn generate(module: &Module, dissectors: &[Dissector], package: &str) -> Str
             None => "nil, 0".into(),
         };
         let tables: Vec<String> = d.tables.iter().map(|(t, v)| format!("{{ {}, {} }}", string_literal(t), v)).collect();
+        // Files with versions: a preference for the version to dissect as.
+        let latest = module.versions.map(|v| format!(", {}", v.latest)).unwrap_or_default();
         out.line("");
         out.line(format!(
-            "pb_register(D, make_fields, {}, {}, {}, {{ {} }}, {}, {})",
+            "pb_register(D, make_fields, {}, {}, {}, {{ {} }}, {}, {}{})",
             string_literal(&d.abbrev),
             string_literal(&d.name),
             string_literal(&d.packet),
             tables.join(", "),
             d.heuristic,
-            frame_fn
+            frame_fn,
+            latest
         ));
     }
     out.line("");
@@ -74,8 +77,23 @@ pub fn generate(module: &Module, dissectors: &[Dissector], package: &str) -> Str
     out.open(format!("{} = {{", export_name(package)));
     out.line("D = D,");
     out.line("make_fields = make_fields,");
-    out.line("dissect = function(packet, F, X, tvb, tree) return pb_dissect(D, packet, F, X, tvb, tree, false) end,");
-    out.line("register = function(abbrev, name, packet) return pb_register(D, make_fields, abbrev, name, packet, {}, false) end,");
+    match module.versions {
+        Some(v) => {
+            out.line(
+                "dissect = function(packet, F, X, tvb, tree, version) return pb_dissect(D, packet, F, X, tvb, tree, false, version) end,",
+            );
+            out.line(format!(
+                "register = function(abbrev, name, packet) return pb_register(D, make_fields, abbrev, name, packet, {{}}, false, nil, 0, {}) end,",
+                v.latest
+            ));
+        }
+        None => {
+            out.line(
+                "dissect = function(packet, F, X, tvb, tree) return pb_dissect(D, packet, F, X, tvb, tree, false) end,",
+            );
+            out.line("register = function(abbrev, name, packet) return pb_register(D, make_fields, abbrev, name, packet, {}, false) end,");
+        }
+    }
     out.close("}");
     out.line(format!("return {}", export_name(package)));
     out.buf

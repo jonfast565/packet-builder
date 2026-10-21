@@ -288,7 +288,7 @@ switch_field = {
     identifier ~ switch_kw ~ expr ~ lbracket ~ switch_arm ~ (comma ~ switch_arm)* ~ comma? ~ rbracket
     ~ alignment? ~ window?
 }
-switch_arm = { (default_arm | arm_values) ~ fat_arrow ~ identifier ~ (field_type ~ array_specifier? ~ endianness?)? }
+switch_arm = { version_range? ~ (default_arm | arm_values) ~ fat_arrow ~ identifier ~ (field_type ~ array_specifier? ~ endianness?)? }
 arm_values = { expr ~ (comma ~ expr)* }
 
 // `length uint16 = len(payload)`: encoding computes the value; decoding
@@ -334,15 +334,15 @@ guard_expression = { when_kw ~ expr ~ then_kw ~ expr ~ otherwise_kw ~ expr }
 // A standalone constant or a category of them, each with an optional note:
 //   const FLAP_START uint8 = 0x2a "first byte of every frame"
 //   const Channel uint8 { signon = 1, snac = 2 "SNAC data" }
-const_decl   = { const_kw ~ identifier ~ (type_name | bit_type) ~ (const_value | const_group) }
+const_decl   = { version_range? ~ const_kw ~ identifier ~ (type_name | bit_type) ~ (const_value | const_group) }
 const_value  = { assign ~ expr ~ string? }
 const_group  = { lbracket ~ const_member ~ (comma ~ const_member)* ~ comma? ~ rbracket }
-const_member = { identifier ~ assign ~ expr ~ string? }
+const_member = { version_range? ~ identifier ~ assign ~ expr ~ string? }
 
 // ===============================
 // Packets
 // ===============================
-packets = { SOI ~ wordsize_directive? ~ import_decl* ~ (const_decl | packet | dissector_decl)* ~ EOI }
+packets = { SOI ~ wordsize_directive? ~ version_directive? ~ import_decl* ~ (const_decl | packet | dissector_decl)* ~ EOI }
 
 // A Wireshark dissector for a packet (`packet_builder dissector`):
 //   dissector Flap { name "AIM OSCAR", abbrev "oscar", tcp.port 5190, heuristic }
@@ -356,6 +356,14 @@ table_name       = @{ identifier ~ ("." ~ identifier)* }
 // `import "common.packet"`: the packets and constants of another file,
 // relative to this one.
 import_decl = { import_kw ~ string }
+
+// `version 3`: the protocol has versions 1..3 (3 is the latest). Declarations
+// may then start with a version range: `@2..`, `@..2`, `@2..3`, or `@2`
+// (from 2 on). Re-declaring a field from a later version replaces it.
+version_kw        = @{ "version" ~ !(alnum | underscore) }
+version_directive = { version_kw ~ numeric_constant }
+version_bound     = @{ digit+ }
+version_range     = ${ "@" ~ version_bound? ~ (dotdot ~ version_bound?)? }
 
 // Width of a `word` in bits (16 by default, x86 style; 32 for ARM style).
 wordsize_directive = { wordsize_kw ~ numeric_constant }
@@ -374,7 +382,14 @@ param      = { identifier ~ (type_name | bit_type) }
 
 rule_list = { rule ~ (comma ~ rule)* ~ comma? }
 
-rule = { calculated_field | align_directive | assert_directive | bitfield_declaration | switch_field | declaration }
+rule = {
+    version_range? ~ (calculated_field | align_directive | assert_directive | bitfield_declaration | switch_field
+    | declaration | override_decl)
+}
+
+// `@3 retries = 5`, `@3 magic == 2`: change only a field's derivation or
+// check from some version on, keeping its type and position.
+override_decl = { identifier ~ (derivation ~ constraint? | constraint) ~ lenient_kw? }
 
 // `assert expr "message"`: decoding and encoding fail when expr is false.
 assert_directive = { assert_kw ~ expr ~ string? }

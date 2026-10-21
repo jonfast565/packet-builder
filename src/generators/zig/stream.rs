@@ -24,6 +24,25 @@ pub fn emit_streaming(out: &mut Out, module: &Module, p: &Packet) {
     out.close("};");
     out.line("return .{ .done = .{ .value = p, .consumed = (pb_r.pos + 7) / 8 } };");
     out.close("}");
+    if p.versions.is_some() {
+        let (min, latest) = p.version_bounds();
+        out.line("");
+        out.line("/// `tryDecode` as protocol version `version`.");
+        out.open(format!(
+            "pub fn tryDecodeV(allocator: std.mem.Allocator, data: []const u8, version: u32) PbError!PbStatus({}) {{",
+            name
+        ));
+        out.line("var pb_r = PbReader.init(data);");
+        out.line(format!("try pb_r.setVersion(version, {}, {});", min, latest));
+        out.open("const p = decodeFrom(allocator, &pb_r) catch |err| {");
+        out.line(
+            "if (err == PbError.Incomplete) return .{ .incomplete = @max((pb_r.trace.diag.needed_bits + 7) / 8, 1) };",
+        );
+        out.line("return err;");
+        out.close("};");
+        out.line("return .{ .done = .{ .value = p, .consumed = (pb_r.pos + 7) / 8 } };");
+        out.close("}");
+    }
     let Some(f) = module.frame_length(p) else { return };
     let scope = Scope::<Zig>::new(p, Mode::Decode);
     out.line("");

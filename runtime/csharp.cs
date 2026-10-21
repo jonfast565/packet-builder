@@ -72,8 +72,32 @@
 
         public void Leave() => frames.RemoveAt(frames.Count - 1);
 
-        /// <summary>Start from the frames of <paramref name="other"/> (for sub writers).</summary>
-        protected void CopyFrames(PbTrace other) => frames.AddRange(other.frames);
+        /// <summary>Start from the frames (and version) of <paramref name="other"/> (for sub writers).</summary>
+        protected void CopyFrames(PbTrace other)
+        {
+            frames.AddRange(other.frames);
+            version = other.version;
+        }
+
+        private int version; // protocol version; 0 until set
+
+        // @versions{
+        /// <summary>The protocol version (<c>version</c>), or <paramref name="latest"/> while none is set.</summary>
+        public long VersionOr(int latest) => version == 0 ? latest : version;
+
+        /// <summary>Code as protocol version <paramref name="v"/>, which must be in min..latest.</summary>
+        public void SetVersion(long v, int min, int latest)
+        {
+            if (v < min || v > latest) throw Error(PbErrorKind.Constraint, $"version {v} is not one of the versions {min}..{latest}");
+            version = (int)v;
+        }
+
+        /// <summary>The version a value carries in-band: used unless one is set already.</summary>
+        public void AdoptVersion(long v, int min, int latest)
+        {
+            if (version == 0) SetVersion(v, min, latest);
+        }
+        // @versions}
 
         public void At(string field) => frames[frames.Count - 1] = (frames[frames.Count - 1].Packet, field, -1);
 

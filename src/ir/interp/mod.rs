@@ -11,8 +11,8 @@ mod frame;
 mod show;
 mod value;
 
-pub use decode::{decode, decode_from};
-pub use encode::encode;
+pub use decode::{decode, decode_from, decode_version};
+pub use encode::{encode, encode_version};
 pub use frame::frame_length;
 pub use rt::{PbError as Error, PbErrorKind as ErrorKind, PbReader as Reader};
 pub use show::render;
@@ -39,6 +39,22 @@ fn intern(name: &str) -> &'static str {
     let s: &'static str = Box::leak(name.to_string().into_boxed_str());
     set.insert(s);
     s
+}
+
+/// The versions a module accepts: (min, latest); (1, 1) without versions.
+fn versions(module: &crate::ir::Module) -> (u32, u32) {
+    module.versions.map(|v| (v.min, v.latest)).unwrap_or((1, 1))
+}
+
+/// The index of the `CloseGate` that ends the gate opened at step `open`.
+fn gate_end(p: &crate::ir::Packet, open: usize) -> usize {
+    p.steps
+        .iter()
+        .enumerate()
+        .skip(open)
+        .find(|(_, s)| matches!(s, crate::ir::Step::CloseGate { open: o } if *o == open))
+        .map(|(i, _)| i)
+        .unwrap_or(p.steps.len())
 }
 
 /// Padding after `offset` bits to reach a multiple of `unit` bits.

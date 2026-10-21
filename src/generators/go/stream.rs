@@ -26,6 +26,26 @@ pub fn emit_streaming(out: &mut Out, module: &Module, p: &Packet) {
     out.close("}");
     out.line("return &p, (pbR.PositionBits() + 7) / 8, nil");
     out.close("}");
+    if p.versions.is_some() {
+        let (min, latest) = p.version_bounds();
+        out.line("");
+        out.line(format!("// TryDecode{}V is TryDecode{} as protocol version version.", name, name));
+        out.open(format!("func TryDecode{}V(data []byte, version int) (*{}, int, error) {{", name, name));
+        out.line("pbR := NewPbReader(data)");
+        out.line(format!("pbR.SetVersion(int64(version), {}, {})", min, latest));
+        out.open("if err := pbR.Err(); err != nil {");
+        out.line("return nil, 0, err");
+        out.close("}");
+        out.line(format!("p := pbDecode{}(pbR)", name));
+        out.open("if err := pbR.Err(); err != nil {");
+        out.open("if e, ok := err.(*PbError); ok && e.Kind == PbIncomplete {");
+        out.line("return nil, max((e.NeededBits+7)/8, 1), nil");
+        out.close("}");
+        out.line("return nil, 0, err");
+        out.close("}");
+        out.line("return &p, (pbR.PositionBits() + 7) / 8, nil");
+        out.close("}");
+    }
     let Some(f) = module.frame_length(p) else { return };
     let scope = Scope::<Go>::new(p, Mode::Decode);
     out.line("");

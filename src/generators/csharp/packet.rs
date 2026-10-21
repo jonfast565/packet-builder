@@ -68,7 +68,25 @@ pub fn emit_packet(out: &mut Out, module: &Module, p: &Packet, zero_copy: bool) 
     // Parameters: `, byte pbp_a` in signatures, `, pbp_a` in calls.
     let decl: String = p.params.iter().map(|x| format!(", {} {}", scalar_type(&x.ty), param_var(&x.name))).collect();
     let pass: String = p.params.iter().map(|x| format!(", {}", param_var(&x.name))).collect();
-    out.line(format!("public static {} Decode(byte[] data{}) => DecodeFrom(new PbReader(data){});", name, decl, pass));
+    let versions = p.versions.map(|_| p.version_bounds());
+    match versions {
+        Some((min, latest)) => {
+            out.line(format!(
+                "/// <param name=\"version\">The protocol version ({}..{}); 0: the one in the data, or the latest.</param>",
+                min, latest
+            ));
+            out.line(format!("public static {} Decode(byte[] data{}, int version = 0)", name, decl));
+            out.open("{");
+            out.line("var pbR = new PbReader(data);");
+            out.line(format!("if (version != 0) pbR.SetVersion(version, {}, {});", min, latest));
+            out.line(format!("return DecodeFrom(pbR{});", pass));
+            out.close("}");
+        }
+        None => out.line(format!(
+            "public static {} Decode(byte[] data{}) => DecodeFrom(new PbReader(data){});",
+            name, decl, pass
+        )),
+    }
     out.line("");
     out.line(format!("public static {} DecodeFrom(PbReader pbR{})", name, decl));
     out.open("{");
@@ -82,9 +100,18 @@ pub fn emit_packet(out: &mut Out, module: &Module, p: &Packet, zero_copy: bool) 
     out.line("return p;");
     out.close("}");
     out.line("");
-    out.line(format!("public byte[] Encode({})", decl.trim_start_matches(", ")));
+    match versions {
+        Some(_) => out.line(format!(
+            "public byte[] Encode({}int version = 0)",
+            format!("{}, ", decl.trim_start_matches(", ")).trim_start_matches(", ")
+        )),
+        None => out.line(format!("public byte[] Encode({})", decl.trim_start_matches(", "))),
+    }
     out.open("{");
     out.line("var pbW = new PbWriter();");
+    if let Some((min, latest)) = versions {
+        out.line(format!("if (version != 0) pbW.SetVersion(version, {}, {});", min, latest));
+    }
     out.line(format!("EncodeTo(pbW{});", pass));
     out.line("return pbW.Finish();");
     out.close("}");
@@ -97,9 +124,7 @@ pub fn emit_packet(out: &mut Out, module: &Module, p: &Packet, zero_copy: bool) 
         out.line("long pb_start = pbW.PositionBits;");
     }
     let encoder = Encoder::new(p);
-    for (m, e) in p.encode_calc_members() {
-        encoder.define_local(out, m, e);
-    }
+    encoder.emit_locals(out);
     encoder.emit_steps(out);
     out.line("pbW.Leave();");
     out.close("}");

@@ -115,6 +115,14 @@ impl ExprLang for Scope<'_, Python> {
         if needs_wrap(&self.member(member).ty) { format!("_pb_wrap({})", f) } else { f }
     }
 
+    fn version(&self) -> String {
+        let latest = self.packet.version_bounds().1;
+        match self.mode {
+            Mode::Decode => format!("pb_r.version_or({})", latest),
+            Mode::Encode => format!("pb_w.version_or({})", latest),
+        }
+    }
+
     fn remaining(&self) -> String {
         "pb_r.remaining_bytes()".into()
     }

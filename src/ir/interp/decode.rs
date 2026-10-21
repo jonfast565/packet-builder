@@ -3,14 +3,23 @@
 use super::eval::{Env, eval, store};
 use super::rt::{PbError, PbErrorKind, PbReader};
 use super::value::{Struct, Value};
-use super::{arguments, check, checked_members, intern, pad, sext};
+use super::{arguments, check, checked_members, gate_end, intern, pad, sext, versions};
 use std::collections::HashMap;
 
 use crate::ir::{BitPart, Codec, Count, Mark, Module, Packet, Step, StrMode, TextEncoding, ValueType};
 
 /// Decode packet `name` from the start of `data`; trailing bytes are ignored.
 pub fn decode(module: &Module, name: &str, data: &[u8]) -> Result<Value, PbError> {
+    decode_version(module, name, data, None)
+}
+
+/// Decode as protocol `version` (None: the in-band version, or the latest).
+pub fn decode_version(module: &Module, name: &str, data: &[u8], version: Option<u32>) -> Result<Value, PbError> {
     let mut r = PbReader::new(data);
+    if let Some(v) = version {
+        let (min, latest) = versions(module);
+        r.set_version(v as i64, min, latest)?;
+    }
     decode_from(module, name, &mut r)
 }
 
@@ -42,7 +51,7 @@ struct Decoder<'m, 'r, 'd> {
 
 impl Decoder<'_, '_, '_> {
     fn env<'v>(&self, values: &'v [Value]) -> Env<'v> {
-        Env::new(values, &self.params)
+        Env { version: self.r.version_or(versions(self.module).1), ..Env::new(values, &self.params) }
     }
 
     fn packet(&mut self, p: &Packet, args: Vec<i64>) -> Result<Struct, PbError> {
@@ -58,9 +67,17 @@ impl Decoder<'_, '_, '_> {
         let start = self.r.position_bits();
         let mut marks = HashMap::from([(Mark::PacketStart, start)]);
         let mut windows = HashMap::new();
-        for (i, step) in p.steps.iter().enumerate() {
+        let mut i = 0;
+        while i < p.steps.len() {
+            let step = &p.steps[i];
             marks.insert(Mark::Before(i), self.r.position_bits());
             match step {
+                Step::OpenGate { cond, .. } => {
+                    if !eval(cond, &self.env(&values)).bool() {
+                        i = gate_end(p, i);
+                    }
+                }
+                Step::CloseGate { .. } => {}
                 Step::OpenWindow { size, .. } => {
                     if let Some(name) = p.steps.get(i + 1).and_then(|s| step_name(p, s)) {
                         self.r.at(intern(name));
@@ -78,20 +95,38 @@ impl Decoder<'_, '_, '_> {
                 _ => self.step(p, step, &mut values, start)?,
             }
             marks.insert(Mark::After(i), self.r.position_bits());
+            // The in-band version: what the rest of the input is decoded as.
+            if let Step::Field { member: Some(mi), .. } = step
+                && p.version_member == Some(*mi)
+            {
+                let (min, latest) = versions(self.module);
+                let v = match values[*mi] {
+                    Value::Int(v) => v as i64,
+                    _ => 0,
+                };
+                self.r.set_version(v, min, latest)?;
+            }
             for mi in checked_members(step) {
                 for c in p.members[mi].enforced_checks() {
                     check(&c.cond, &c.message, &self.env(&values), |m| self.r.error(PbErrorKind::Constraint, m))?;
                 }
             }
+            i += 1;
         }
         marks.insert(Mark::PacketEnd, self.r.position_bits());
         // Derived fields must hold what their expressions give.
         for &mi in &p.derived {
             let m = &p.members[mi];
             let (false, Some(e)) = (m.lenient, m.derived_expr()) else { continue };
+            // The in-band version is adopted, not verified; a member some
+            // versions lack keeps its default there.
+            if p.version_member == Some(mi) || m.present.as_ref().is_some_and(|t| !eval(t, &self.env(&values)).bool()) {
+                continue;
+            }
+            let base = self.env(&values);
             let r: &PbReader = self.r;
             let sum = |a, f, t, hf, ht| r.checksum(a, f, t, hf, ht);
-            let env = Env { marks: Some(&marks), checksum: Some(&sum), ..Env::new(&values, &self.params) };
+            let env = Env { marks: Some(&marks), checksum: Some(&sum), ..base };
             let want = eval(e, &env).int();
             let got = match values[mi] {
                 Value::Int(v) => v as i64,
@@ -194,7 +229,9 @@ impl Decoder<'_, '_, '_> {
                 self.r.jump_back(saved);
                 Ok(())
             }
-            Step::OpenWindow { .. } | Step::CloseWindow { .. } => Ok(()),
+            Step::OpenWindow { .. } | Step::CloseWindow { .. } | Step::OpenGate { .. } | Step::CloseGate { .. } => {
+                Ok(())
+            }
         }
     }
 

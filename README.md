@@ -430,6 +430,84 @@ calculated field). Generated `decode`, `decode_from`, `encode` and
 version, length)`), and nested packets pass them along. To keep a value,
 store it with a calculated field (`calc v uint8 = version`).
 
+### Protocol versions
+
+`version N` at the top of a file says the protocol has versions 1..N (N
+is the latest). Any declaration can then start with the versions it applies
+to: `@2` (from 2 on, the same as `@2..`), `@..2` (up to 2) or `@2..3`.
+Declaring a name again from a later version replaces it from then on, and it
+may sit elsewhere (the field moves). One generated parser speaks every
+version at once:
+
+```
+version 3
+
+const MAGIC uint8 = 0x10
+@3 const MAGIC uint8 = 0x30          // a constant's value changes in v3
+const Kind uint8 { ping = 1, @2.. data = 2, @..2 legacy = 9 }
+
+packet Frame be {
+  ver uint8 = version,               // the version, in-band
+  magic uint8 == MAGIC,              // checked against the version's value
+  count uint16,
+  @3 count uint32,                   // widened in v3
+  @2.. flags uint8 : Kind strict,    // added in v2 (and Kind.legacy is gone in v3)
+  @..2 legacy uint8,                 // removed in v3
+  retries uint8 = 3,
+  @3 retries = 5,                    // only the derivation changes (`== x` and `in a..b` too)
+  @3 tag bitfield uint8 { lo u4, hi u4 },   // a bitfield or a union can be declared again too
+  kind uint8,
+  body switch kind {
+    1 => one uint8,
+    @2.. 2 => two uint16,            // an arm for v2 on; before, 2 falls to `_`
+    _ => raw bytes[]
+  },
+}
+```
+
+* **One member per name.** Its type holds every declaration's value: an
+  integer becomes the widest of them (keeping its signedness); a string,
+  byte buffer or array may change its length, prefix, encoding or byte order;
+  a union keeps one type with every arm (arms of different versions may share
+  a selector value). Other changes need a new name.
+* **Absent fields** keep their default when decoded and are skipped when
+  encoded.
+* **`version`** is the version being coded, usable in any expression
+  (`when version >= 2 then ...`). A field derived from it (`ver uint8 =
+  version`) carries it in-band: decoding adopts its value (for the rest of
+  the packet and everything nested in it); encoding writes the caller's
+  version, or else the value's own, so a decoded v1 message re-encodes as
+  v1. It must come before the fields that depend on it. In a file with
+  versions, no field may be called `version`.
+* **Where the version comes from** otherwise: the caller (default: the
+  latest).
+
+| language | decode / encode / try_decode at a version |
+|----------|-------------------------------------------|
+| C | `P_decode_v(&p, data, len, v)`, `P_encode_v(&p, &buf, &len, v)`, `P_try_decode_v(...)`; or `pb_set_version(&reader.tr, v, min, latest)` |
+| Rust | `P::decode_v(&data, v)`, `p.encode_v(v)`, `P::try_decode_v(&data, v)`; or `reader.set_version(v, min, latest)` |
+| Go | `DecodePV(data, v)`, `p.EncodeV(v)`, `TryDecodePV(data, v)`; or `r.SetVersion(v, min, latest)` |
+| Python | `P.decode(data, version=v)`, `p.encode(version=v)`, `P.try_decode(data, version=v)` |
+| C# | `P.Decode(data, version: v)`, `p.Encode(version: v)`, `P.TryDecode(data, version: v)` |
+| Zig | `P.decodeV(allocator, data, v)`, `p.encodeV(allocator, v)`, `P.tryDecodeV(allocator, data, v)` |
+
+The version lives on each reader and writer, never in global state, so one
+parser decodes connections of different versions side by side, and a stream
+of frames that each carry their version. Another version is a `constraint`
+error. Constants keep their latest value under their name and each earlier
+value as `NAME_V<first version>` (`name_v<n>` for lowercase names).
+
+`generate --versions 2..3` (and `dissector --versions`) leaves out what only
+other versions have; those versions are then rejected. `decode --version N`
+and `layout --version N` work on one version, `doc` draws each version of a
+packet that changes, and the Wireshark dissector has a `version` preference
+(0: the version in the data, or the latest).
+
+Limits: `sizeof`, `offsetof` and checksums cannot measure a field that
+exists in some versions only (measure a range around it, or put such fields
+in a nested packet); a frame length needs header fields present in every
+version; arm values must be the same in every version.
+
 ### Absolute offsets
 
 `at` reads a packet from somewhere else instead of where the field is

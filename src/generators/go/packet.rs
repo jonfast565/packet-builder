@@ -96,6 +96,23 @@ pub fn emit_packet(out: &mut Out, module: &Module, p: &Packet, zero_copy: bool) 
     out.line("return &p, nil");
     out.close("}");
     out.line("");
+    let versions = p.versions.map(|_| p.version_bounds());
+    if let Some((min, latest)) = versions {
+        out.line(format!("// Decode{}V decodes a {} as protocol version version ({}..{}).", name, name, min, latest));
+        out.open(format!("func Decode{}V(data []byte, version int{}) (*{}, error) {{", name, decl, name));
+        out.line("pbR := NewPbReader(data)");
+        out.line(format!("pbR.SetVersion(int64(version), {}, {})", min, latest));
+        out.open("if err := pbR.Err(); err != nil {");
+        out.line("return nil, err");
+        out.close("}");
+        out.line(format!("p := pbDecode{}(pbR{})", name, pass));
+        out.open("if err := pbR.Err(); err != nil {");
+        out.line("return nil, err");
+        out.close("}");
+        out.line("return &p, nil");
+        out.close("}");
+        out.line("");
+    }
 
     out.line(format!("// DecodeFrom reads a {} from pbR, which keeps its position.", name));
     out.open(format!("func (p *{}) DecodeFrom(pbR *PbReader{}) error {{", name, decl));
@@ -123,6 +140,18 @@ pub fn emit_packet(out: &mut Out, module: &Module, p: &Packet, zero_copy: bool) 
     out.line("return pbW.Finish()");
     out.close("}");
     out.line("");
+    if let Some((min, latest)) = versions {
+        out.line(format!("// EncodeV encodes as protocol version version ({}..{}).", min, latest));
+        out.open(format!("func (p *{}) EncodeV(version int{}) ([]byte, error) {{", name, decl));
+        out.line("pbW := NewPbWriter()");
+        out.line(format!("pbW.SetVersion(int64(version), {}, {})", min, latest));
+        out.open(format!("if err := p.EncodeTo(pbW{}); err != nil {{", pass));
+        out.line("return nil, err");
+        out.close("}");
+        out.line("return pbW.Finish()");
+        out.close("}");
+        out.line("");
+    }
 
     out.open(format!("func (p *{}) EncodeTo(pbW *PbWriter{}) error {{", name, decl));
     out.line(format!("pbW.Enter(\"{}\")", name));
@@ -130,9 +159,7 @@ pub fn emit_packet(out: &mut Out, module: &Module, p: &Packet, zero_copy: bool) 
         out.line("pb_start := pbW.PositionBits()");
     }
     let encoder = Encoder::new(p);
-    for (m, e) in p.encode_calc_members() {
-        encoder.define_local(out, m, e);
-    }
+    encoder.emit_locals(out);
     encoder.emit_steps(out);
     out.line("pbW.Leave()");
     out.line("return pbW.Err()");

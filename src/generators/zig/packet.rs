@@ -123,6 +123,19 @@ pub fn emit_packet(out: &mut Out, module: &Module, p: &Packet, zero_copy: bool) 
     out.line(format!("return decodeFrom(allocator, &pb_r{});", pass));
     out.close("}");
     out.line("");
+    let versions = p.versions.map(|_| p.version_bounds());
+    if let Some((min, latest)) = versions {
+        out.line(format!("/// Decode as protocol version `version` ({}..{}).", min, latest));
+        out.open(format!(
+            "pub fn decodeV(allocator: std.mem.Allocator, data: []const u8, version: u32{}) PbError!{} {{",
+            decl, name
+        ));
+        out.line("var pb_r = PbReader.init(data);");
+        out.line(format!("try pb_r.setVersion(version, {}, {});", min, latest));
+        out.line(format!("return decodeFrom(allocator, &pb_r{});", pass));
+        out.close("}");
+        out.line("");
+    }
 
     let mut body = Out::new("    ");
     body.push();
@@ -164,14 +177,27 @@ pub fn emit_packet(out: &mut Out, module: &Module, p: &Packet, zero_copy: bool) 
     out.line("return pb_w.toOwnedSlice();");
     out.close("}");
     out.line("");
+    if let Some((min, latest)) = versions {
+        out.line(format!("/// Encode as protocol version `version` ({}..{}).", min, latest));
+        out.open(format!(
+            "pub fn encodeV(self: *const {}, allocator: std.mem.Allocator, version: u32{}) PbError![]u8 {{",
+            name, decl
+        ));
+        out.line("var pb_w = PbWriter.init(allocator);");
+        out.line("errdefer pb_w.deinit();");
+        out.line(format!("try pb_w.setVersion(version, {}, {});", min, latest));
+        out.line(format!("try self.encodeTo(&pb_w{});", pass));
+        out.line("try pb_w.finish();");
+        out.line("return pb_w.toOwnedSlice();");
+        out.close("}");
+        out.line("");
+    }
 
     let encoder = Encoder::new(p);
     let mut body = Out::new("    ");
     body.push();
     body.push();
-    for (m, e) in p.encode_calc_members() {
-        encoder.define_local(&mut body, m, e);
-    }
+    encoder.emit_locals(&mut body);
     encoder.emit_steps(&mut body);
     out.open(format!("pub fn encodeTo(self: *const {}, pb_w: *PbWriter{}) PbError!void {{", name, decl));
     touch(out, &body.buf);

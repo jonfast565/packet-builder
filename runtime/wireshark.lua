@@ -16,8 +16,24 @@ local Reader = {}
 Reader.__index = Reader
 
 local function pb_reader(data)
-  return setmetatable({ data = data, pos = 0, limit = #data * 8, windows = 0, frames = {} }, Reader)
+  return setmetatable({ data = data, pos = 0, limit = #data * 8, windows = 0, frames = {}, version = 0 }, Reader)
 end
+
+-- @versions{
+-- The protocol version (`version`), or `latest` while none is set.
+function Reader:version_or(latest)
+  if self.version == 0 then return latest end
+  return self.version
+end
+
+-- Decode as protocol version `v`, which must be in `min..latest`.
+function Reader:set_version(v, min, latest)
+  if v < min or v > latest then
+    self:fail("constraint", string.format("version %d is not one of the versions %d..%d", v, min, latest))
+  end
+  self.version = v
+end
+-- @versions}
 
 function Reader:path()
   local out = {}
@@ -512,9 +528,12 @@ local function pb_verify(c, tree, name, got, want)
 end
 
 -- Dissect packet `packet` (a function of D) from the start of `tvb` into
--- `tree`; returns the bytes it took, or nil and the error.
-local function pb_dissect(D, packet, F, X, tvb, tree, strict)
+-- `tree`; returns the bytes it took, or nil and the error. `version`: the
+-- protocol version to dissect as (files with versions; nil or 0: the one in
+-- the data, or the latest).
+local function pb_dissect(D, packet, F, X, tvb, tree, strict, version)
   local c = { r = pb_reader(tvb:raw()), tvb = tvb, F = F, X = X, strict = strict }
+  if version and version > 0 then c.r.version = version end
   local ok, err = pcall(D[packet], c, tree, nil)
   if ok then return (c.r.pos + 7) // 8 end
   if err == PbReject then return nil, err end
@@ -527,9 +546,15 @@ end
 
 -- Register protocol `abbrev` for packet `packet`. tables: { {"tcp.port", 5190}, ... };
 -- frame: an optional function(tvb, pinfo, offset) giving a packet's length
--- from its header (for TCP reassembly), with its header size.
-local function pb_register(D, make_fields, abbrev, name, packet, tables, heuristic, frame, header)
+-- from its header (for TCP reassembly), with its header size. latest: the
+-- latest protocol version, for files with versions (adds a preference).
+local function pb_register(D, make_fields, abbrev, name, packet, tables, heuristic, frame, header, latest)
   local proto = Proto(abbrev, name)
+  if latest then
+    proto.prefs.version = Pref.uint("Protocol version", 0,
+      "The version to dissect as (1.." .. latest .. "); 0: the version in the data, or the latest")
+  end
+  local function version() return latest and proto.prefs.version or nil end
   local F = make_fields(abbrev)
   local list = {}
   for _, f in pairs(F) do list[#list + 1] = f.field end
@@ -545,7 +570,7 @@ local function pb_register(D, make_fields, abbrev, name, packet, tables, heurist
   local function one(tvb, pinfo, tree)
     pinfo.cols.protocol = name
     local item = tree:add(proto, tvb())
-    local used = pb_dissect(D, packet, F, X, tvb, item, false)
+    local used = pb_dissect(D, packet, F, X, tvb, item, false, version())
     if used then item:set_len(used) end
     return used or tvb:len()
   end
@@ -559,7 +584,7 @@ local function pb_register(D, make_fields, abbrev, name, packet, tables, heurist
     local off = 0
     while off < tvb:len() do
       local rest = tvb:range(off):tvb()
-      local used, err = pb_dissect(D, packet, F, X, rest, nil, false)
+      local used, err = pb_dissect(D, packet, F, X, rest, nil, false, version())
       if not used and err and err.kind == "incomplete" and pinfo.can_desegment > 0 then
         pinfo.desegment_offset = off
         pinfo.desegment_len = DESEGMENT_ONE_MORE_SEGMENT
@@ -575,7 +600,7 @@ local function pb_register(D, make_fields, abbrev, name, packet, tables, heurist
   for _, t in ipairs(tables) do DissectorTable.get(t[1]):add(t[2], proto) end
   if heuristic then
     local function probe(tvb, pinfo, tree)
-      if not pb_dissect(D, packet, F, X, tvb, nil, true) then return false end
+      if not pb_dissect(D, packet, F, X, tvb, nil, true, version()) then return false end
       proto.dissector(tvb, pinfo, tree)
       return true
     end

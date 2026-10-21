@@ -11,10 +11,18 @@ pub fn emit_streaming(out: &mut Out, module: &Module, p: &Packet) {
         return;
     }
     out.line("@classmethod");
-    out.open(format!("def try_decode(cls, data) -> \"Tuple[Optional[{}], int]\":", p.name));
+    let versioned = p.versions.is_some();
+    let arg = if versioned { ", version=None" } else { "" };
+    out.open(format!("def try_decode(cls, data{}) -> \"Tuple[Optional[{}], int]\":", arg, p.name));
     out.line("\"\"\"Decode from a buffer that may end mid-packet (a stream): (packet, bytes");
     out.line("taken), or (None, n) when at least n more bytes are needed.\"\"\"");
     out.line("pb_r = PbReader(data)");
+    if versioned {
+        let (min, latest) = p.version_bounds();
+        out.open("if version is not None:");
+        out.line(format!("pb_r.set_version(version, {}, {})", min, latest));
+        out.pop();
+    }
     out.open("try:");
     out.line("p = cls.decode_from(pb_r)");
     out.pop();
