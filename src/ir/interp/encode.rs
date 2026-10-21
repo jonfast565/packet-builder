@@ -112,7 +112,13 @@ impl Encoder<'_> {
             match step {
                 Step::OpenGate { cond, .. } => {
                     if !eval(cond, &self.env(&values)).bool() {
-                        i = gate_end(p, i);
+                        // Skipped fields take no bytes.
+                        let (end, at) = (gate_end(p, i), w.position_bits());
+                        for k in i..end {
+                            marks.insert(Mark::Before(k), at);
+                            marks.insert(Mark::After(k), at);
+                        }
+                        i = end;
                     }
                 }
                 Step::CloseGate { .. } => {}
@@ -139,9 +145,14 @@ impl Encoder<'_> {
         }
         marks.insert(Mark::PacketEnd, w.position_bits());
         // Fields derived from the encoded bytes: compute, check, patch.
+        // A member declared again for other versions: the declaration in
+        // the version being encoded.
+        let current = |mi: usize, values: &[Value]| {
+            p.field_steps(mi).into_iter().find(|&si| p.gate_of(si).is_none_or(|c| eval(c, &self.env(values)).bool()))
+        };
         for &mi in &p.patches {
             let m = &p.members[mi];
-            let (Some(si), Some(e)) = (p.field_step(mi), m.derived_expr()) else { continue };
+            let (Some(si), Some(e)) = (current(mi, &values), m.derived_expr()) else { continue };
             let Step::Field { codec, ty, .. } = &p.steps[si] else { continue };
             w.at(intern(&m.name));
             let v = {

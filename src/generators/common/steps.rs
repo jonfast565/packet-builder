@@ -49,6 +49,16 @@ pub trait StepEmitter {
     /// (`common::mark_var`).
     fn mark(&self, out: &mut Out, mark: Mark);
 
+    /// Before a gate: declare the variable of a `mark` inside it (so that it
+    /// outlives the gate), holding the current position: a field the gate
+    /// skips takes no bytes. `set_mark` updates it inside the gate.
+    fn declare_mark(&self, out: &mut Out, mark: Mark) {
+        self.mark(out, mark);
+    }
+
+    /// Set the variable `declare_mark` declared to the current position.
+    fn set_mark(&self, out: &mut Out, mark: Mark);
+
     /// Decoders: fail with a `mismatch` error unless derived member `m`
     /// holds `value`.
     fn verify(&self, _out: &mut Out, _m: &Member, _value: &TExpr) {}
@@ -218,9 +228,13 @@ pub trait StepEmitter {
     fn emit_steps(&self, out: &mut Out) {
         let p = self.packet();
         let marks = p.marks(self.encoding());
+        let gated = p.gated_steps();
+        let record = |out: &mut Out, m: Mark, i: usize| {
+            if gated.contains(&i) { self.set_mark(out, m) } else { self.mark(out, m) }
+        };
         for (i, step) in p.steps.iter().enumerate() {
             if marks.contains(&Mark::Before(i)) {
-                self.mark(out, Mark::Before(i));
+                record(out, Mark::Before(i), i);
             }
             match step {
                 Step::OpenWindow { size, .. } => {
@@ -241,12 +255,21 @@ pub trait StepEmitter {
                     };
                     self.close_window(out, *open, sized, *exact);
                 }
-                Step::OpenGate { cond, .. } => self.open_gate(out, cond),
+                Step::OpenGate { cond, .. } => {
+                    for k in i + 1..p.gate_end(i) {
+                        for m in [Mark::Before(k), Mark::After(k)] {
+                            if marks.contains(&m) {
+                                self.declare_mark(out, m);
+                            }
+                        }
+                    }
+                    self.open_gate(out, cond)
+                }
                 Step::CloseGate { .. } => self.close_gate(out),
                 _ => self.emit_step(out, step),
             }
             if marks.contains(&Mark::After(i)) {
-                self.mark(out, Mark::After(i));
+                record(out, Mark::After(i), i);
             }
         }
         if marks.contains(&Mark::PacketEnd) {
@@ -255,14 +278,26 @@ pub trait StepEmitter {
         if self.encoding() {
             for &mi in &p.patches {
                 let m = &p.members[mi];
-                let (Some(si), Some(e)) = (p.field_step(mi), m.derived_expr()) else { continue };
-                let Step::Field { codec, .. } = &p.steps[si] else { continue };
-                self.locate(out, &m.name);
-                self.define_local(out, m, e);
-                for c in m.enforced_checks() {
-                    self.check(out, &c.cond, &c.message);
+                let Some(e) = m.derived_expr() else { continue };
+                // Each declaration of a member declared again for other
+                // versions is patched in its own versions.
+                for si in p.field_steps(mi) {
+                    let Step::Field { codec, ty, .. } = &p.steps[si] else { continue };
+                    let gate = p.gate_of(si);
+                    if let Some(cond) = gate {
+                        self.open_gate(out, cond);
+                    }
+                    self.locate(out, &m.name);
+                    self.define_local(out, m, e);
+                    for c in m.enforced_checks() {
+                        self.check(out, &c.cond, &c.message);
+                    }
+                    let narrow = Member { ty: ty.clone(), ..m.clone() };
+                    self.write_derived(out, if &m.ty != ty { &narrow } else { m }, codec, Some(Mark::Before(si)));
+                    if gate.is_some() {
+                        self.close_gate(out);
+                    }
                 }
-                self.write_derived(out, m, codec, Some(Mark::Before(si)));
             }
         } else {
             for &mi in &p.derived {

@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use super::cursor::Cursor;
 use super::packet::PacketBuilder;
 use super::types::value_type;
-use super::versions::{VRange, version_test};
+use super::versions::{VRange, value_at, version_test};
 use crate::ast::{ArrayLength, Span, SwitchExpr, TypeNode, WindowExpr};
 use crate::errors::Diagnostic;
 use crate::ir::expr::{CmpOp, LogicOp, TExpr, Ty, UnaryOp, coerce};
@@ -72,7 +72,8 @@ impl PacketBuilder<'_> {
         self.ctx.require_available(&selector, &self.available, &self.scheduled, span, "selector", &sw.id);
 
         let mut arms = Vec::new();
-        let mut seen: HashMap<i64, String> = HashMap::new();
+        // For each arm: its values in each range of versions it exists in.
+        let mut runs: Vec<Vec<(VRange, Vec<i64>)>> = Vec::new();
         let mut names = HashSet::new();
         let mut min_bits = u64::MAX;
         let mut open = false;
@@ -82,30 +83,11 @@ impl PacketBuilder<'_> {
                     .diags
                     .push(Diagnostic::new(format!("union `{}` has two arms named `{}`", sw.id, a.name), a.span));
             }
-            let mut values = Vec::new();
-            if let Some(vs) = &a.values {
-                for v in vs {
-                    let Some(t) = self.ctx.check_expr(v, a.span) else { continue };
-                    let Some(v) = t.const_int() else {
-                        self.ctx.diags.push(Diagnostic::new(
-                            format!("the values of arm `{}` must be constant integers", a.name),
-                            a.span,
-                        ));
-                        continue;
-                    };
-                    if let Some(other) = seen.insert(v, a.name.clone()) {
-                        // Arms of different versions may share a value.
-                        let other_range = sw.arms.iter().find(|x| x.name == other).and_then(|x| x.versions);
-                        if !disjoint(a.versions, other_range) {
-                            self.ctx.diags.push(Diagnostic::new(
-                                format!("value {} selects both `{}` and `{}`", v, other, a.name),
-                                a.span,
-                            ));
-                        }
-                    }
-                    values.push(v);
-                }
-            }
+            let arm_runs = self.arm_values(a);
+            // The values in the latest version the arm has (the only one
+            // without versions).
+            let values = arm_runs.last().map(|(_, v)| v.clone()).unwrap_or_default();
+            runs.push(arm_runs);
             let default = a.values.is_none();
             if default && arms.iter().any(|x: &Arm| x.default) {
                 self.ctx.diags.push(Diagnostic::new(format!("union `{}` has two `_` arms", sw.id), a.span));
@@ -187,79 +169,150 @@ impl PacketBuilder<'_> {
         self.aligned_before = self.cursor.align.is_aligned();
         self.cursor.advance(if min_bits == u64::MAX { 0 } else { min_bits }, None, 1);
         self.cursor.advance_unknown(8);
-        let selector = self.gate_arms(sw, &mut arms, selector);
+        self.check_arm_values(sw, &runs);
+        let selector = self.gate_arms(sw, &mut arms, &runs, selector);
         self.steps.push(Step::Switch { member, selector, arms });
         self.available.insert(member);
     }
 
-    /// Arms for some versions only (`@2.. Kind.x => x X`): in the other
-    /// versions their values select nothing, so they fall to the default arm
-    /// (or fail when there is none); the selector maps them to a value no
-    /// arm lists. Arms of different versions that share a value get a value
-    /// of their own instead, which the selector maps to in their versions.
-    fn gate_arms(&mut self, sw: &SwitchExpr, arms: &mut [Arm], selector: TExpr) -> TExpr {
+    /// The values of arm `a` in each range of versions it exists in (one
+    /// range without versions). Versioned constants give a value per
+    /// version, as do re-declarations that change them.
+    fn arm_values(&mut self, a: &crate::ast::ArmExpr) -> Vec<(VRange, Vec<i64>)> {
+        let Some(exprs) = &a.values else { return Vec::new() };
+        let latest = self.ctx.consts.latest;
+        let all = VRange { from: 1, to: latest.unwrap_or(1) };
+        let own = a.versions.map(|r| VRange { from: r.from.unwrap_or(1), to: r.to.unwrap_or(all.to) }).unwrap_or(all);
+        let decls: Vec<(VRange, &Vec<crate::ast::ExprNode>)> = if a.by_version.is_empty() {
+            vec![(own, exprs)]
+        } else {
+            a.by_version.iter().map(|(f, t, e)| (VRange { from: *f, to: *t }, e)).collect()
+        };
+        let mut out: Vec<(VRange, Vec<i64>)> = Vec::new();
+        for (r, exprs) in decls {
+            let typed: Vec<TExpr> = exprs.iter().filter_map(|e| self.ctx.check_expr(e, a.span)).collect();
+            for v in r.from..=r.to {
+                let mut vals = Vec::new();
+                for t in &typed {
+                    match t.const_int().or_else(|| latest.and_then(|_| value_at(t, v))) {
+                        Some(x) => vals.push(x),
+                        None => {
+                            self.ctx.diags.push(Diagnostic::new(
+                                format!("the values of arm `{}` must be constant integers", a.name),
+                                a.span,
+                            ));
+                            return out;
+                        }
+                    }
+                }
+                match out.last_mut() {
+                    Some((rr, last)) if *last == vals && rr.to + 1 == v => rr.to = v,
+                    _ => out.push((VRange { from: v, to: v }, vals)),
+                }
+            }
+        }
+        out
+    }
+
+    /// No value may select two arms in the same version.
+    fn check_arm_values(&mut self, sw: &SwitchExpr, runs: &[Vec<(VRange, Vec<i64>)>]) {
+        let mut seen: HashMap<(u32, i64), usize> = HashMap::new();
+        let mut reported = HashSet::new();
+        for (i, arm_runs) in runs.iter().enumerate() {
+            for (r, vals) in arm_runs {
+                for v in r.from..=r.to {
+                    for &x in vals {
+                        if let Some(&other) = seen.get(&(v, x))
+                            && other != i
+                            && reported.insert((x, other, i))
+                        {
+                            let (a, b) = (&sw.arms[other].name, &sw.arms[i].name);
+                            self.ctx.diags.push(Diagnostic::new(
+                                format!("value {} selects both `{}` and `{}`", x, a, b),
+                                sw.arms[i].span,
+                            ));
+                        }
+                        seen.insert((v, x), i);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Arms whose values are not the same in every version (an arm for some
+    /// versions only, values that change, a value two arms of different
+    /// versions share): the selector maps them to what the arm tests see.
+    /// An arm missing from a version maps its values to one no arm lists, so
+    /// they fall to the default arm (or fail when there is none); an arm
+    /// whose values change, or that shares one, gets a value of its own,
+    /// which the selector maps to in each of its versions.
+    fn gate_arms(
+        &mut self,
+        sw: &SwitchExpr,
+        arms: &mut [Arm],
+        runs: &[Vec<(VRange, Vec<i64>)>],
+        selector: TExpr,
+    ) -> TExpr {
         let Some(latest) = self.ctx.consts.latest else { return selector };
-        let mut used: HashSet<i64> = arms.iter().flat_map(|a| a.values.iter().copied()).collect();
+        let mut used: HashSet<i64> = runs.iter().flatten().flat_map(|(_, v)| v.iter().copied()).collect();
         let mut fresh = || {
             let v = (1..).map(|n: i64| -n).find(|v| !used.contains(v)).unwrap_or(-1);
             used.insert(v);
             v
         };
         let nothing = fresh();
-        let shared: Vec<i64> = {
-            let mut count = HashMap::<i64, usize>::new();
-            for v in arms.iter().flat_map(|a| a.values.iter()) {
-                *count.entry(*v).or_default() += 1;
+        let mut owners = HashMap::<i64, HashSet<usize>>::new();
+        for (i, arm_runs) in runs.iter().enumerate() {
+            for v in arm_runs.iter().flat_map(|(_, vals)| vals) {
+                owners.entry(*v).or_default().insert(i);
             }
-            count.into_iter().filter(|(_, n)| *n > 1).map(|(v, _)| v).collect()
+        }
+        let sel_in = |vals: &[i64]| {
+            vals.iter()
+                .map(|v| TExpr::Cmp { op: CmpOp::Eq, a: Box::new(selector.clone()), b: Box::new(TExpr::IntLit(*v)) })
+                .reduce(|x, y| TExpr::Logic { op: LogicOp::Or, a: Box::new(x), b: Box::new(y) })
         };
         let mut out = selector.clone();
-        for (a, arm) in sw.arms.iter().zip(arms.iter_mut()) {
-            let Some(r) = a.versions else { continue };
-            let r = VRange { from: r.from.unwrap_or(1), to: r.to.unwrap_or(latest) };
+        for (i, (a, arm)) in sw.arms.iter().zip(arms.iter_mut()).enumerate() {
             if arm.default {
-                if !(r.from <= 1 && r.to >= latest) {
+                if a.versions.is_some_and(|r| r.from.unwrap_or(1) > 1 || r.to.unwrap_or(latest) < latest) {
                     self.ctx.diags.push(Diagnostic::new("the `_` arm cannot have a version range", a.span));
                 }
                 continue;
             }
-            if r.from <= 1 && r.to >= latest {
+            let arm_runs = &runs[i];
+            let every = arm_runs.len() == 1 && arm_runs[0].0.from <= 1 && arm_runs[0].0.to >= latest;
+            if every || arm_runs.is_empty() {
                 continue;
             }
-            let picks = arm
-                .values
-                .iter()
-                .map(|v| TExpr::Cmp { op: CmpOp::Eq, a: Box::new(selector.clone()), b: Box::new(TExpr::IntLit(*v)) })
-                .reduce(|x, y| TExpr::Logic { op: LogicOp::Or, a: Box::new(x), b: Box::new(y) });
-            let Some(picks) = picks else { continue };
-            let present = version_test(r, latest);
-            let (cond, value) = if arm.values.iter().any(|v| shared.contains(v)) {
+            let shared = arm_runs.iter().flat_map(|(_, v)| v).any(|v| owners[v].len() > 1);
+            if arm_runs.len() > 1 || shared {
                 let own = fresh();
                 arm.values = vec![own];
-                (TExpr::Logic { op: LogicOp::And, a: Box::new(present), b: Box::new(picks) }, own)
+                for (r, vals) in arm_runs {
+                    let Some(picks) = sel_in(vals) else { continue };
+                    let cond =
+                        TExpr::Logic { op: LogicOp::And, a: Box::new(version_test(*r, latest)), b: Box::new(picks) };
+                    out = TExpr::Guard {
+                        cond: Box::new(cond),
+                        then: Box::new(TExpr::IntLit(own)),
+                        other: Box::new(out),
+                        ty: Ty::Int,
+                    };
+                }
             } else {
-                let absent = TExpr::Unary { op: UnaryOp::Not, e: Box::new(present), ty: Ty::Bool };
-                (TExpr::Logic { op: LogicOp::And, a: Box::new(absent), b: Box::new(picks) }, nothing)
-            };
-            out = TExpr::Guard {
-                cond: Box::new(cond),
-                then: Box::new(TExpr::IntLit(value)),
-                other: Box::new(out),
-                ty: Ty::Int,
-            };
+                let (r, vals) = &arm_runs[0];
+                let Some(picks) = sel_in(vals) else { continue };
+                let absent = TExpr::Unary { op: UnaryOp::Not, e: Box::new(version_test(*r, latest)), ty: Ty::Bool };
+                let cond = TExpr::Logic { op: LogicOp::And, a: Box::new(absent), b: Box::new(picks) };
+                out = TExpr::Guard {
+                    cond: Box::new(cond),
+                    then: Box::new(TExpr::IntLit(nothing)),
+                    other: Box::new(out),
+                    ty: Ty::Int,
+                };
+            }
         }
         out
-    }
-}
-
-/// Whether two `@range`s (None: every version) have no version in common.
-fn disjoint(a: Option<crate::ast::VersionRange>, b: Option<crate::ast::VersionRange>) -> bool {
-    match (a, b) {
-        (Some(a), Some(b)) => {
-            let (af, at) = (a.from.unwrap_or(1), a.to.unwrap_or(u32::MAX));
-            let (bf, bt) = (b.from.unwrap_or(1), b.to.unwrap_or(u32::MAX));
-            at < bf || bt < af
-        }
-        _ => false,
     }
 }

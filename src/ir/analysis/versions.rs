@@ -491,15 +491,23 @@ fn merge_unions(
             }
             match merged.iter_mut().find(|(a, _)| a.name == arm.name) {
                 Some((a, ar)) => {
-                    if a.ty != arm.ty || a.values != arm.values || a.args != arm.args {
+                    if a.ty != arm.ty || a.args != arm.args || a.values.is_none() != arm.values.is_none() {
                         diags.push(Diagnostic::new(
                             format!(
-                                "arm `{}` of `{}` changes between versions; give the new one another name",
+                                "arm `{}` of `{}` changes its type between versions; give the new one another name",
                                 arm.name, name
                             ),
                             arm.span,
                         ));
                     } else if r.from == ar.to + 1 || ar.from == r.to + 1 {
+                        // Values that change: each range keeps its own.
+                        if a.values != arm.values || !a.by_version.is_empty() {
+                            if a.by_version.is_empty() {
+                                a.by_version.push((ar.from, ar.to, a.values.clone().unwrap_or_default()));
+                            }
+                            a.by_version.push((r.from, r.to, arm.values.clone().unwrap_or_default()));
+                            a.by_version.sort_by_key(|(f, _, _)| *f);
+                        }
                         *ar = VRange { from: ar.from.min(r.from), to: ar.to.max(r.to) };
                     } else {
                         diags.push(Diagnostic::new(

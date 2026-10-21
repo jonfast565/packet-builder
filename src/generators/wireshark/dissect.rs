@@ -161,6 +161,10 @@ impl StepEmitter for Dissector<'_> {
         out.line(format!("local {} = r.pos", mark_var(mark)));
     }
 
+    fn set_mark(&self, out: &mut Out, mark: Mark) {
+        out.line(format!("{} = r.pos", mark_var(mark)));
+    }
+
     fn verify(&self, out: &mut Out, m: &Member, value: &TExpr) {
         out.line(format!(
             "pb_verify(c, t, {}, {}, {})",

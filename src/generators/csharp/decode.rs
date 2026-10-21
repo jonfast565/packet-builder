@@ -135,6 +135,10 @@ impl StepEmitter for Decoder<'_> {
         out.line(format!("long {} = pbR.PositionBits;", mark_var(mark)));
     }
 
+    fn set_mark(&self, out: &mut Out, mark: Mark) {
+        out.line(format!("{} = pbR.PositionBits;", mark_var(mark)));
+    }
+
     fn verify(&self, out: &mut Out, m: &Member, value: &TExpr) {
         out.line(format!(
             "if (unchecked((long){}) != {}) throw pbR.Error(PbErrorKind.Mismatch, {});",

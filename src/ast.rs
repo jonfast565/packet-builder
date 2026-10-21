@@ -294,6 +294,9 @@ pub struct SwitchExpr {
 pub struct ArmExpr {
     /// `@range`: the versions in which the arm exists.
     pub versions: Option<VersionRange>,
+    /// When its values change between versions (a re-declared union): the
+    /// values of each range of versions (from, to, values). Empty otherwise.
+    pub by_version: Vec<(u32, u32, Vec<ExprNode>)>,
     /// The selector values that pick this arm; None for the default (`_`).
     pub values: Option<Vec<ExprNode>>,
     pub name: String,

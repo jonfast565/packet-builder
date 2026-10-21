@@ -259,6 +259,7 @@ impl TreeBuilder {
                     let aspan = span_of(&part);
                     let mut arm = ArmExpr {
                         versions: None,
+                        by_version: Vec::new(),
                         values: None,
                         name: String::new(),
                         ty: None,

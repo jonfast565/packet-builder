@@ -621,9 +621,28 @@ fn version_is_the_protocol_version_in_versioned_files() {
 }
 
 #[test]
-fn versioned_fields_cannot_be_measured() {
-    assert_error("version 2\npacket P { n uint8 = sizeof(a), @2 a uint16 }", "exists in some versions only");
-    assert!(compile("version 2\npacket P { n uint8 = sizeof(b), b B }\npacket B { @2 a uint16 }").is_ok());
+fn versioned_fields_can_be_measured() {
+    assert!(compile("version 2\npacket P { n uint8 = sizeof(a), @2 a uint16, t uint8 }").is_ok());
+    assert!(compile("version 2\npacket P { n uint8 = sizeof(a..t), a uint8, @2 a uint16, t uint8 }").is_ok());
+    assert!(compile("version 2\npacket P { n uint8 = offsetof(t), a uint8, @2 a uint16, t uint8 }").is_ok());
+    // A range must reach both of its ends in every version.
+    assert_error(
+        "version 2\npacket P { n uint8 = sizeof(a..b), a uint8, @2 a uint16, @2 b uint8 }",
+        "does not exist in version 1",
+    );
+}
+
+#[test]
+fn versioned_headers_keep_a_frame_length() {
+    let m = compile(
+        "version 2\npacket F be { ver uint8 = version, @..1 len uint8 = sizeof(d), @2 len uint16 = sizeof(d), d bytes[len] }",
+    )
+    .unwrap();
+    let f = m.frame_length(&m.packets[0]).expect("a frame length");
+    assert!(f.version_header.is_some(), "the header's size depends on the version");
+    // Without a version field, a header that differs has none.
+    let m = compile("version 2\npacket F be { @..1 len uint8, @2 len uint16, d bytes[len] }").unwrap();
+    assert!(m.frame_length(&m.packets[0]).is_none());
 }
 
 #[test]
@@ -634,7 +653,7 @@ fn union_arms_and_re_declared_unions() {
     );
     assert_error(
         "version 2\npacket P { k uint8, b switch k { 1 => a uint8 }, @2 b switch k { 1 => a uint16 } }",
-        "changes between versions",
+        "changes its type between versions",
     );
     assert!(compile("version 2\npacket P { k uint8, b switch k { 1 => a uint8, @2 1 => c uint16 } }").is_err());
     assert!(compile("version 2\npacket P { k uint8, b switch k { @..1 1 => a uint8, @2 1 => c uint16 } }").is_ok());
@@ -655,4 +674,10 @@ fn a_subset_of_the_versions_leaves_the_others_out() {
     let value = interp::decode(&m, "Frame", &v3).unwrap();
     assert_eq!(interp::encode(&m, "Frame", &value).unwrap(), v3);
     assert!(m.clone().restrict_versions(0, 3).is_err());
+    // Measurements of fields only other versions have still work.
+    let mut v3 = m.clone();
+    v3.restrict_versions(3, 3).unwrap();
+    let sized = [0x03, 0, 0, 0, 0x0a, 0, 0, 0, 5, 0x12, 0x34, 0x02, 0x04, 0x0e, 0x09];
+    let value = interp::decode(&v3, "Sized", &sized).unwrap();
+    assert_eq!(interp::encode(&v3, "Sized", &value).unwrap(), sized);
 }

@@ -338,9 +338,37 @@ impl Packet {
         out
     }
 
-    /// The step that reads or writes stored member `member`.
+    /// The step that reads or writes stored member `member` (the first, for
+    /// a member declared again for other versions).
     pub fn field_step(&self, member: usize) -> Option<usize> {
-        self.steps.iter().position(|s| matches!(s, Step::Field { member: Some(m), .. } if *m == member))
+        self.field_steps(member).first().copied()
+    }
+
+    /// Every step that reads or writes stored member `member`: one per
+    /// declaration (several for one declared again for other versions).
+    pub fn field_steps(&self, member: usize) -> Vec<usize> {
+        let at = |s: &Step| matches!(s, Step::Field { member: Some(m), .. } if *m == member);
+        self.steps.iter().enumerate().filter(|(_, s)| at(s)).map(|(i, _)| i).collect()
+    }
+
+    /// The test of the gate step `step` is in, if any.
+    pub fn gate_of(&self, step: usize) -> Option<&TExpr> {
+        let mut open = None;
+        for (i, s) in self.steps.iter().enumerate().take(step + 1) {
+            match s {
+                Step::OpenGate { cond, .. } => open = Some(cond),
+                Step::CloseGate { .. } if i < step => open = None,
+                _ => {}
+            }
+        }
+        open
+    }
+
+    /// The `CloseGate` step of the gate opened at step `open`.
+    pub fn gate_end(&self, open: usize) -> usize {
+        (open..self.steps.len())
+            .find(|&i| matches!(self.steps[i], Step::CloseGate { open: o } if o == open))
+            .unwrap_or(self.steps.len())
     }
 
     /// The positions decoding (`encoding == false`) or encoding records: the
@@ -357,8 +385,9 @@ impl Packet {
             if let Some(e) = member.derived_expr() {
                 e.marks(&mut out);
             }
-            if encoding && let Some(step) = self.field_step(m) {
-                out.push(Mark::Before(step));
+            if encoding {
+                // Every declaration's position (one per version range).
+                out.extend(self.field_steps(m).into_iter().map(Mark::Before));
             }
         }
         out.sort();

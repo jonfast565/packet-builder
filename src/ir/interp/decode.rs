@@ -74,7 +74,13 @@ impl Decoder<'_, '_, '_> {
             match step {
                 Step::OpenGate { cond, .. } => {
                     if !eval(cond, &self.env(&values)).bool() {
-                        i = gate_end(p, i);
+                        // Skipped fields take no bytes.
+                        let (end, at) = (gate_end(p, i), self.r.position_bits());
+                        for k in i..end {
+                            marks.insert(Mark::Before(k), at);
+                            marks.insert(Mark::After(k), at);
+                        }
+                        i = end;
                     }
                 }
                 Step::CloseGate { .. } => {}

@@ -643,25 +643,6 @@ impl<'a> PacketBuilder<'a> {
             version_member: self.version_member,
             versions: None,
         };
-        // Recorded positions are locals of the generated code, so none may
-        // be inside a gate.
-        let gated = packet.gated_steps();
-        let marked = packet.marks(true).into_iter().chain(packet.marks(false)).find(|m| match m {
-            crate::ir::expr::Mark::Before(i) | crate::ir::expr::Mark::After(i) => gated.contains(i),
-            _ => false,
-        });
-        if marked.is_some() {
-            return Err(vec![
-                Diagnostic::new(
-                    format!(
-                        "packet `{}` measures (`sizeof`, `offsetof`, a checksum) or patches a field that exists in some versions only",
-                        p.name
-                    ),
-                    p.span,
-                )
-                .with_note("measure a range of fields around it, or put the measured fields in a nested packet"),
-            ]);
-        }
         Ok(packet)
     }
 }

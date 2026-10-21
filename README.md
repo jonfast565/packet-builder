@@ -503,10 +503,18 @@ and `layout --version N` work on one version, `doc` draws each version of a
 packet that changes, and the Wireshark dissector has a `version` preference
 (0: the version in the data, or the latest).
 
-Limits: `sizeof`, `offsetof` and checksums cannot measure a field that
-exists in some versions only (measure a range around it, or put such fields
-in a nested packet); a frame length needs header fields present in every
-version; arm values must be the same in every version.
+Fields that exist in some versions only can be measured (`sizeof`,
+`offsetof`, checksums): one a version skips takes no bytes, and one declared
+again elsewhere is measured where its version has it; a length field may be
+widened even when it is patched from `sizeof`. Frame lengths (streams, TCP
+reassembly) follow the version field when the header changes between
+versions. An arm's selector values may change between versions, and come from
+versioned constants.
+
+Two rules stay: a name keeps one kind of value (an integer cannot become a
+string; use a new name, so that the generated struct keeps one plain type per
+field), and a header that changes between versions needs an in-band version
+field for a frame length.
 
 ### Absolute offsets
 

@@ -188,6 +188,10 @@ impl StepEmitter for Decoder<'_> {
         out.line(format!("size_t {} = pb_reader_position(pb_r);", mark_var(mark)));
     }
 
+    fn set_mark(&self, out: &mut Out, mark: Mark) {
+        out.line(format!("{} = pb_reader_position(pb_r);", mark_var(mark)));
+    }
+
     fn verify(&self, out: &mut Out, m: &Member, value: &TExpr) {
         out.line(format!(
             "PB_TRY(((int64_t)p->{} == {}) ? PB_OK : PB_ERR_MISMATCH);",

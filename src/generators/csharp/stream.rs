@@ -48,9 +48,13 @@ pub fn emit_streaming(out: &mut Out, module: &Module, p: &Packet) {
         out.line(format!("if (data.Length < {}) return null;", f.header_bytes));
     }
     out.line(format!("var p = new {}();", name));
-    for h in &f.fields {
+    for (fi, h) in f.fields.iter().enumerate() {
         let m = &p.members[h.member];
-        out.open("{");
+        // A field elsewhere in other protocol versions is read in its own.
+        match &h.when {
+            Some(c) => out.open(format!("if ({}) {{", scope.expr(c))),
+            None => out.open("{"),
+        }
         out.line("var pbR = new PbReader(data);");
         out.line(format!("pbR.SkipBits({});", h.offset_bits));
         let raw = match &h.container {
@@ -67,6 +71,10 @@ pub fn emit_streaming(out: &mut Out, module: &Module, p: &Packet) {
         };
         out.line(format!("{} = {};", scope.field(m), v));
         out.close("}");
+        // The rest of the header, once the version field says how long it is.
+        if let (0, Some(need)) = (fi, &f.version_header) {
+            out.line(format!("if (data.Length < {}) return null;", scope.expr(need)));
+        }
     }
     for &c in &f.calcs {
         let m = &p.members[c];

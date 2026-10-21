@@ -86,9 +86,13 @@ pub fn emit_streaming(out: &mut Out, module: &Module, p: &Packet) {
     out.line("memset(p, 0, sizeof *p);");
     out.line("(void)p;");
     out.line("(void)pb_c;");
-    for h in &f.fields {
+    for (fi, h) in f.fields.iter().enumerate() {
         let m = &p.members[h.member];
-        out.open("{");
+        // A field elsewhere in other protocol versions is read in its own.
+        match &h.when {
+            Some(c) => out.open(format!("if ({}) {{", scope.expr(c))),
+            None => out.open("{"),
+        }
         out.line("pb_reader pb_r;");
         out.line("pb_reader_init(&pb_r, data, len);");
         out.line(format!("PB_PASS(pb_skip_bits(&pb_r, {}));", h.offset_bits));
@@ -102,6 +106,10 @@ pub fn emit_streaming(out: &mut Out, module: &Module, p: &Packet) {
         let v = if h.signed { format!("pb_sext({}, {})", bits, h.bits) } else { bits };
         out.line(format!("p->{} = ({}){};", ident(&m.name), scalar_type(&m.ty), v));
         out.close("}");
+        // The rest of the header, once the version field says how long it is.
+        if let (0, Some(need)) = (fi, &f.version_header) {
+            out.line(format!("if ((int64_t)len < {}) return PB_ERR_INCOMPLETE;", scope.expr(need)));
+        }
     }
     for &c in &f.calcs {
         let m = &p.members[c];

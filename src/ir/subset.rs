@@ -59,9 +59,10 @@ fn restrict(p: &mut Packet, min: u32, latest: u32) {
             }
         }
     }
-    // Recorded positions are never inside gates (analysis rejects that), so
-    // every step they name is kept.
+    // A position in a dropped gate is only read for versions left out:
+    // the packet start stands in for it.
     let remap = |m: &mut Mark| match m {
+        Mark::Before(i) | Mark::After(i) if map[*i] == usize::MAX => *m = Mark::PacketStart,
         Mark::Before(i) | Mark::After(i) => *i = map[*i],
         Mark::PacketStart | Mark::PacketEnd => {}
     };

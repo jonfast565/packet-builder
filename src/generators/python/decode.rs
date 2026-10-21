@@ -118,6 +118,10 @@ impl StepEmitter for Decoder<'_> {
         out.line(format!("{} = pb_r.position_bits()", mark_var(mark)));
     }
 
+    fn set_mark(&self, out: &mut Out, mark: Mark) {
+        out.line(format!("{} = pb_r.position_bits()", mark_var(mark)));
+    }
+
     fn verify(&self, out: &mut Out, m: &Member, value: &TExpr) {
         out.open(format!("if _pb_wrap(p.{}) != {}:", ident(&m.name), self.scope.expr(value)));
         out.line(format!(

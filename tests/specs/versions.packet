@@ -64,3 +64,49 @@ packet Msg be {
     _ => other bytes[]
   } size 4,
 }
+
+// An arm value from a constant that changes in v3.
+const Op uint8 {
+  hello = 1,
+  @3 hello = 7,
+}
+
+packet Cmd be {
+  ver uint8 = version,
+  op uint8,
+  body switch op {
+    Op.hello => hello uint8,
+    _ => other bytes[]
+  }
+}
+
+// A re-declared union whose arm `a` moves from value 1 to 4 in v3.
+packet Note be {
+  ver uint8 = version,
+  k uint8,
+  body switch k { 1 => a uint8, _ => r bytes[] } size 1,
+  @3 body switch k { 4 => a uint8, _ => r bytes[] } size 1,
+}
+
+// Measuring fields that exist in some versions only, or move between them.
+packet Sized be {
+  ver uint8 = version,
+  len uint16 = sizeof(count..tail),
+  @3 len uint32 = sizeof(count..tail),   // widened, still patched after the body
+  count uint16,
+  @3 count uint32,
+  @2.. extra uint16,
+  n uint8 = sizeof(extra),               // 0 in v1
+  w uint8 = sizeof(count),               // 2, or 4 in v3
+  off uint8 = offsetof(tail),
+  tail uint8,
+}
+
+// A frame whose length field widens in v3: the frame length reads the
+// version first, then the length where that version has it.
+packet Framed be {
+  ver uint8 = version,
+  @..2 len uint8 = sizeof(data),
+  @3 len uint16 = sizeof(data),
+  data bytes[len],
+}

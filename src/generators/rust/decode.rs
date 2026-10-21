@@ -130,6 +130,14 @@ impl StepEmitter for Decoder<'_> {
         out.line(format!("let {} = pb_r.position_bits();", mark_var(mark)));
     }
 
+    fn set_mark(&self, out: &mut Out, mark: Mark) {
+        out.line(format!("{} = pb_r.position_bits();", mark_var(mark)));
+    }
+
+    fn declare_mark(&self, out: &mut Out, mark: Mark) {
+        out.line(format!("let mut {} = pb_r.position_bits();", mark_var(mark)));
+    }
+
     fn verify(&self, out: &mut Out, m: &Member, value: &TExpr) {
         out.line(format!(
             "if (p.{} as i64) != {} {{ return Err(pb_r.error(PbErrorKind::Mismatch, {}.into())); }}",

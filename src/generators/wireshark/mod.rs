@@ -127,11 +127,19 @@ fn emit_packet(out: &mut Out, p: &Packet) {
 fn emit_frame_length(out: &mut Out, p: &Packet, f: &FrameLength) {
     let scope = Scope::<Lua>::new(p, Mode::Decode);
     out.open(format!("local function L_{}(tvb, pinfo, offset)", p.name));
-    out.line(format!("local r = pb_reader(tvb:raw(offset, {}))", f.header_bytes));
+    match f.version_header {
+        // The header's size depends on the version: read what is there.
+        Some(_) => out.line("local r = pb_reader(tvb:raw(offset, tvb:len() - offset))"),
+        None => out.line(format!("local r = pb_reader(tvb:raw(offset, {}))", f.header_bytes)),
+    }
     out.line("local p = {}");
     out.line("local pb_c");
-    for h in &f.fields {
+    for (fi, h) in f.fields.iter().enumerate() {
         let m = &p.members[h.member];
+        // A field elsewhere in other protocol versions is read in its own.
+        if let Some(c) = &h.when {
+            out.open(format!("if {} then", scope.expr(c)));
+        }
         out.line(format!("r.pos = {}", h.offset_bits));
         let raw = match &h.container {
             Codec::Bytes { nbytes, endian } => {
@@ -143,6 +151,14 @@ fn emit_frame_length(out: &mut Out, p: &Packet, f: &FrameLength) {
         let bits = format!("((pb_c >> {}) & 0x{:x})", h.shift, mask(h.bits));
         let v = if h.signed { format!("pb_sext({}, {})", bits, h.bits) } else { bits };
         out.line(format!("{} = {}", scope.field(m), v));
+        if h.when.is_some() {
+            out.close("end");
+        }
+        // The rest of the header, once the version field says how long it is.
+        if let (0, Some(need)) = (fi, &f.version_header) {
+            out.line(format!("local pb_need = {}", scope.expr(need)));
+            out.line("if tvb:len() - offset < pb_need then return -(pb_need - (tvb:len() - offset)) end");
+        }
     }
     for &c in &f.calcs {
         let m = &p.members[c];

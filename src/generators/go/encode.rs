@@ -161,6 +161,10 @@ impl StepEmitter for Encoder<'_> {
         out.line(format!("{} := pbW.PositionBits()", mark_var(mark)));
     }
 
+    fn set_mark(&self, out: &mut Out, mark: Mark) {
+        out.line(format!("{} = pbW.PositionBits()", mark_var(mark)));
+    }
+
     fn define_local(&self, out: &mut Out, m: &Member, value: &TExpr) {
         if m.is_derived() {
             out.line(format!("var pbc_{} int64 = {}", m.name, self.scope.expr(value)));

@@ -235,6 +235,14 @@ impl<'a> Ctx<'a> {
                 name, name
             ));
         }
+        // A field declared again for other versions is somewhere else in
+        // each: one expression per version.
+        if let (Some(latest), FieldRange::Fields(a, b)) = (self.consts.latest, range) {
+            let (a_items, b_items) = (self.wire_items(a), b.as_ref().map(|b| self.wire_items(b)).unwrap_or_default());
+            if a_items.len() > 1 || b_items.len() > 1 {
+                return self.range_call_per_version(name, algo, a, b.as_deref(), &a_items, &b_items, latest);
+            }
+        }
         let (from, to) = match range {
             FieldRange::Whole => (Mark::PacketStart, Mark::PacketEnd),
             FieldRange::Fields(a, b) => {
@@ -262,6 +270,91 @@ impl<'a> Ctx<'a> {
             (_, Some(algo)) => TExpr::Checksum { algo, from, to, hole: None },
             _ => unreachable!("checked above"),
         })
+    }
+
+    /// `sizeof`, `offsetof` or a checksum over a field declared again for
+    /// other versions: for each version, the declarations it has.
+    #[allow(clippy::too_many_arguments)]
+    fn range_call_per_version(
+        &self,
+        name: &str,
+        algo: Option<Checksum>,
+        a: &str,
+        b: Option<&str>,
+        a_items: &[(usize, (u32, u32))],
+        b_items: &[(usize, (u32, u32))],
+        latest: u32,
+    ) -> Result<TExpr, String> {
+        let at = |items: &[(usize, (u32, u32))], v: u32| {
+            items.iter().find(|(_, (f, t))| *f <= v && v <= *t).map(|(i, _)| *i)
+        };
+        let mut segs: Vec<(super::versions::VRange, TExpr)> = Vec::new();
+        for v in 1..=latest {
+            let first = at(a_items, v);
+            let last = match b {
+                Some(_) => at(b_items, v),
+                None => first,
+            };
+            let e = match (first, last) {
+                (Some(f), Some(l)) => {
+                    if l < f {
+                        return Err(format!(
+                            "`{}` comes after `{}`; write the range in wire order",
+                            a,
+                            b.unwrap_or("")
+                        ));
+                    }
+                    let (from, to) = (Mark::Before(f), Mark::After(l));
+                    match (name, algo) {
+                        ("offsetof", _) if b.is_none() => TExpr::Size { from: Mark::PacketStart, to: from },
+                        ("offsetof", _) => return Err("offsetof takes one field: `offsetof(payload)`".into()),
+                        ("sizeof", _) => TExpr::Size { from, to },
+                        (_, Some(algo)) => TExpr::Checksum { algo, from, to, hole: None },
+                        _ => unreachable!("checked by range_call"),
+                    }
+                }
+                // A single field version `v` lacks takes no bytes.
+                (None, None) if b.is_none() && name == "sizeof" => TExpr::IntLit(0),
+                _ => {
+                    let missing = if first.is_none() { a } else { b.unwrap_or(a) };
+                    return Err(format!(
+                        "`{}` does not exist in version {}, so `{}` cannot reach it",
+                        missing, v, name
+                    ));
+                }
+            };
+            match segs.last_mut() {
+                Some((r, last)) if *last == e => r.to = v,
+                _ => segs.push((super::versions::VRange { from: v, to: v }, e)),
+            }
+        }
+        let (last, rest) = segs.split_last().expect("at least one version");
+        Ok(rest.iter().rev().fold(last.1.clone(), |other, (r, e)| TExpr::Guard {
+            cond: Box::new(super::versions::version_test(*r, latest)),
+            then: Box::new(e.clone()),
+            other: Box::new(other),
+            ty: Ty::Int,
+        }))
+    }
+
+    /// Every declaration of a field on the wire, with the versions it is in.
+    fn wire_items(&self, name: &str) -> Vec<(usize, (u32, u32))> {
+        let latest = self.consts.latest.unwrap_or(1);
+        self.packet
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(_, it)| match it {
+                PacketItem::Field(f) => f.id == name && name != "_",
+                PacketItem::Bitfield(b) => b.id == name,
+                PacketItem::Switch(sw) => sw.id == name,
+                _ => false,
+            })
+            .map(|(i, _)| {
+                let r = self.packet.versions.get(i).copied().flatten();
+                (i, r.map(|r| (r.from.unwrap_or(1), r.to.unwrap_or(latest))).unwrap_or((1, latest)))
+            })
+            .collect()
     }
 
     /// The source item of a field that is on the wire (marks refer to items

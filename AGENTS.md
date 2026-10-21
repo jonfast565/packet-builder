@@ -40,7 +40,9 @@ code between backends.
 - **Template Method** — `common::StepEmitter` walks a packet's `Step`s and
   dispatches each to a hook (`align`, `calc`, `string`, `padding`, `scalar`,
   `array`, `bitfield`, `switch`, `open_window`/`close_window`,
-  `open_gate`/`close_gate` (protocol versions), `at`, `check`).
+  `open_gate`/`close_gate` (protocol versions), `at`, `check`). A position a
+  gate contains is declared before it (`declare_mark`) and set inside it
+  (`set_mark`), so a skipped field measures 0 bytes.
   Each backend's `Decoder` and `Encoder` only fill in the hooks; the
   dispatch lives in one place. Encoders keep the default `calc`. Before
   every field it calls `locate`, which records the field name for error
