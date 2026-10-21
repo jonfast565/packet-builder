@@ -26,10 +26,10 @@
             "release_month": 5,
             "release_day": 15,
             "customer_class": 0,
-            "timestamp": 531936574,
+            "timestamp": 1052095519,
             "dos_major": 192,
             "dos_minor": 0,
-            "session_flags": 5329,
+            "session_flags": 53524,
             "video_type": 3,
             "cpu_type": 32,
             "media_type": 0,
@@ -37,17 +37,25 @@
             "windows_minor": 10,
             "unknown1": 0,
             "windows_mem_type": 1,
-            "horizontal_res": 19207,
-            "vertical_res": 1284,
+            "horizontal_res": 1867,
+            "vertical_res": 1029,
             "num_colors": 65535,
-            "filler1": 0,
-            "region": 0,
-            "language_1": 0,
-            "language_2": 65534,
-            "language_3": 51447,
-            "language_4": 6144,
-            "unknown2": 1,
-            "speed": 45575
+            "tail_length": 15,
+            "tail": {
+              "kind": "aol40",
+              "value": {
+                "filler": 0,
+                "region": 0,
+                "languages": [
+                  0,
+                  65279,
+                  63432,
+                  24
+                ],
+                "unknown2": 256,
+                "speed": 1970
+              }
+            }
           }
         },
         "stop": 13
@@ -68,10 +76,10 @@
         "release_month": 5,
         "release_day": 15,
         "customer_class": 0,
-        "timestamp": 531936574,
+        "timestamp": 1052095519,
         "dos_major": 192,
         "dos_minor": 0,
-        "session_flags": 5329,
+        "session_flags": 53524,
         "video_type": 3,
         "cpu_type": 32,
         "media_type": 0,
@@ -79,17 +87,25 @@
         "windows_minor": 10,
         "unknown1": 0,
         "windows_mem_type": 1,
-        "horizontal_res": 19207,
-        "vertical_res": 1284,
+        "horizontal_res": 1867,
+        "vertical_res": 1029,
         "num_colors": 65535,
-        "filler1": 0,
-        "region": 0,
-        "language_1": 0,
-        "language_2": 65534,
-        "language_3": 51447,
-        "language_4": 6144,
-        "unknown2": 1,
-        "speed": 45575
+        "tail_length": 15,
+        "tail": {
+          "kind": "aol40",
+          "value": {
+            "filler": 0,
+            "region": 0,
+            "languages": [
+              0,
+              65279,
+              63432,
+              24
+            ],
+            "unknown2": 256,
+            "speed": 1970
+          }
+        }
       }
     },
     {
@@ -420,10 +436,10 @@
             "release_month": 5,
             "release_day": 15,
             "customer_class": 0,
-            "timestamp": 531936574,
+            "timestamp": 1052095519,
             "dos_major": 192,
             "dos_minor": 0,
-            "session_flags": 5329,
+            "session_flags": 53524,
             "video_type": 3,
             "cpu_type": 32,
             "media_type": 0,
@@ -431,17 +447,25 @@
             "windows_minor": 0,
             "unknown1": 0,
             "windows_mem_type": 1,
-            "horizontal_res": 32772,
-            "vertical_res": 24579,
-            "num_colors": 5120,
-            "filler1": 0,
-            "region": 0,
-            "language_1": 0,
-            "language_2": 65534,
-            "language_3": 41974,
-            "language_4": 26112,
-            "unknown2": 1,
-            "speed": 45575
+            "horizontal_res": 1152,
+            "vertical_res": 864,
+            "num_colors": 20,
+            "tail_length": 15,
+            "tail": {
+              "kind": "aol40",
+              "value": {
+                "filler": 0,
+                "region": 0,
+                "languages": [
+                  0,
+                  65279,
+                  63139,
+                  102
+                ],
+                "unknown2": 256,
+                "speed": 1970
+              }
+            }
           }
         },
         "stop": 13
@@ -596,6 +620,178 @@
       "hex": "5a6a0d00031011a40d",
       "error_kind": "mismatch",
       "error_path": "P3Packet.crc"
+    },
+    {
+      "name": "INIT from an AOL 3.0 client: 49 bytes (penggy's values)",
+      "packet": "P3Packet",
+      "hex": "5aaa5100347f7fa3038b6d0010000000050f0000256eb24dc00014c0080500000000040a00000100040003ffff00000000010000fffe0000170d",
+      "expect": {
+        "sync": 90,
+        "crc": 43601,
+        "length": 52,
+        "tx_seq": 127,
+        "rx_seq": 127,
+        "from_client": 1,
+        "type": 35,
+        "body": {
+          "kind": "init",
+          "value": {
+            "platform": 3,
+            "client_major": 139,
+            "client_minor": 109,
+            "build_num": 0,
+            "machine_memory": 16,
+            "app_memory": 0,
+            "pc_type": 0,
+            "release_month": 5,
+            "release_day": 15,
+            "customer_class": 0,
+            "timestamp": 1303539237,
+            "dos_major": 192,
+            "dos_minor": 0,
+            "session_flags": 49172,
+            "video_type": 8,
+            "cpu_type": 5,
+            "media_type": 0,
+            "windows_major": 4,
+            "windows_minor": 10,
+            "unknown1": 0,
+            "windows_mem_type": 1,
+            "horizontal_res": 1024,
+            "vertical_res": 768,
+            "num_colors": 65535,
+            "tail_length": 12,
+            "tail": {
+              "kind": "aol30",
+              "value": {
+                "filler": 0,
+                "region": 0,
+                "languages": [
+                  256,
+                  0,
+                  65279,
+                  0
+                ],
+                "speed": 23
+              }
+            }
+          }
+        },
+        "stop": 13
+      }
+    },
+    {
+      "name": "INIT from an AOL 1.5 client: 48 bytes, no filler",
+      "packet": "P3Packet",
+      "hex": "5a46cb00337f7fa3038b6d0010000000050f0000256eb24dc00014c0080500000000040a00000100040003ffff000000010000fffe0000170d",
+      "expect": {
+        "sync": 90,
+        "crc": 18123,
+        "length": 51,
+        "tx_seq": 127,
+        "rx_seq": 127,
+        "from_client": 1,
+        "type": 35,
+        "body": {
+          "kind": "init",
+          "value": {
+            "platform": 3,
+            "client_major": 139,
+            "client_minor": 109,
+            "build_num": 0,
+            "machine_memory": 16,
+            "app_memory": 0,
+            "pc_type": 0,
+            "release_month": 5,
+            "release_day": 15,
+            "customer_class": 0,
+            "timestamp": 1303539237,
+            "dos_major": 192,
+            "dos_minor": 0,
+            "session_flags": 49172,
+            "video_type": 8,
+            "cpu_type": 5,
+            "media_type": 0,
+            "windows_major": 4,
+            "windows_minor": 10,
+            "unknown1": 0,
+            "windows_mem_type": 1,
+            "horizontal_res": 1024,
+            "vertical_res": 768,
+            "num_colors": 65535,
+            "tail_length": 11,
+            "tail": {
+              "kind": "aol15",
+              "value": {
+                "region": 0,
+                "languages": [
+                  256,
+                  0,
+                  65279,
+                  0
+                ],
+                "speed": 23
+              }
+            }
+          }
+        },
+        "stop": 13
+      }
+    },
+    {
+      "name": "AOL 3.0 INIT data on its own",
+      "packet": "P3Init",
+      "hex": "038b6d0010000000050f0000256eb24dc00014c0080500000000040a00000100040003ffff00000000010000fffe000017",
+      "expect": {
+        "platform": 3,
+        "client_major": 139,
+        "client_minor": 109,
+        "build_num": 0,
+        "machine_memory": 16,
+        "app_memory": 0,
+        "pc_type": 0,
+        "release_month": 5,
+        "release_day": 15,
+        "customer_class": 0,
+        "timestamp": 1303539237,
+        "dos_major": 192,
+        "dos_minor": 0,
+        "session_flags": 49172,
+        "video_type": 8,
+        "cpu_type": 5,
+        "media_type": 0,
+        "windows_major": 4,
+        "windows_minor": 10,
+        "unknown1": 0,
+        "windows_mem_type": 1,
+        "horizontal_res": 1024,
+        "vertical_res": 768,
+        "num_colors": 65535,
+        "tail_length": 12,
+        "tail": {
+          "kind": "aol30",
+          "value": {
+            "filler": 0,
+            "region": 0,
+            "languages": [
+              256,
+              0,
+              65279,
+              0
+            ],
+            "speed": 23
+          }
+        }
+      }
+    },
+    {
+      "name": "AOL 3.0 INIT data, its layout set to 4.0's: does not fit",
+      "packet": "P3Init",
+      "hex": "038b6d0010000000050f0000256eb24dc00014c0080500000000040a00000100040003ffff00000000010000fffe000017",
+      "set": {
+        "tail_length": 15
+      },
+      "encode_error": true
     }
   ]
 }

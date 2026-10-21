@@ -75,7 +75,7 @@ fn python_p3_demo() {
         "p3_demo.py",
     )
     .unwrap();
-    assert!(out.contains("INIT from a Windows client, version 157.17, session flags 0x14d1"), "{}", out);
+    assert!(out.contains("INIT from a Windows client, version 157.17, session flags 0xd114"), "{}", out);
     assert!(out.contains("login: screen name 'someguy', password *********"), "{}", out);
     assert!(out.contains("ACK reply: 5a5a0c00031010240d"), "{}", out);
 }

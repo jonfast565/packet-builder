@@ -85,17 +85,29 @@ const Platform uint8 {
   macintosh = 0x0c,
 }
 
-const P3_INIT_LENGTH uint16 = 55 "P3Packet.length of an INIT packet with the 52-byte INIT data"
+const P3_INIT_LENGTH uint16 = 55 "P3Packet.length of an AOL 4.0 (or later) INIT packet: 52 bytes of INIT data"
 
-// The 52-byte form seen in a captured AOL client session. Field names
-// follow notaol. Only platform, client version, session_flags, num_colors
-// and speed are confirmed by notaol's tests; the rest are its best guesses
-// (in the capture, horizontal_res/vertical_res do not hold a resolution).
-packet P3Init be {
+// How many bytes follow P3Init.num_colors: the INIT layout of each client
+// generation (Windows clients; Wireshark's AOL dissector and penggy's
+// p3_init30_t / p3_init40_t; notaol and Dialtone agree on 49 and 52 bytes).
+const P3InitLayout uint8 {
+  aol15 = 11  "AOL 1.5: 48 bytes of INIT data",
+  aol30 = 12  "AOL 2.5 to 3.0: 49 bytes (adds `filler`)",
+  aol40 = 15  "AOL 4.0 and later: 52 bytes (adds `unknown`, `speed` is 16-bit)",
+}
+
+// The INIT data. Field names follow notaol and penggy. Multi-byte fields
+// are little-endian (Wireshark, penggy; a captured AOL 4.0 INIT holds its
+// 1152x864 screen there); the DOS and Windows versions are major, minor
+// bytes. client_major names the client (penggy's table): 109-110 AOL 3.0
+// 16-bit, 130-139 3.0 32-bit, 134-135 and 148-153 4.0 32-bit, 156-185 5.0,
+// 190 and up 6.0. Mac clients (platform 0x0c) send another, undocumented
+// layout (Dialtone).
+packet P3Init le {
   platform uint8 : Platform,
-  client_major uint8,       // client internal version
+  client_major uint8,       // client internal version (see above)
   client_minor uint8,
-  build_num uint8,
+  build_num uint8,          // used from AOL 5.0
   machine_memory uint8,
   app_memory uint8,
   pc_type uint16,
@@ -116,12 +128,32 @@ packet P3Init be {
   horizontal_res uint16,
   vertical_res uint16,
   num_colors uint16,
-  filler1 uint8,
+  // The rest depends on the client: its length says which.
+  calc tail_length uint8 = remaining,
+  tail switch tail_length {
+    P3InitLayout.aol15 => aol15 P3InitTail15,
+    P3InitLayout.aol30 => aol30 P3InitTail30,
+    _ => aol40 P3InitTail40   // 4.0 and later
+  }
+}
+
+packet P3InitTail15 le {
   region uint16,
-  language_1 uint16,
-  language_2 uint16,
-  language_3 uint16,
-  language_4 uint16,
+  languages uint16[4],
+  speed uint8
+}
+
+packet P3InitTail30 le {
+  filler uint8,
+  region uint16,
+  languages uint16[4],
+  speed uint8               // connection speed
+}
+
+packet P3InitTail40 le {
+  filler uint8,
+  region uint16,
+  languages uint16[4],
   unknown2 uint16,
   speed uint16
 }
