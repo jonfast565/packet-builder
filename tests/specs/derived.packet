@@ -88,6 +88,19 @@ packet CkInternet be { data bytes[9], sum uint16 = internet(data) }
 packet CkFletcher16 be { data bytes[9], sum uint16 = fletcher16(data) }
 packet CkSum8 be { data bytes[9], sum uint8 = sum8(data) }
 packet CkXor8 be { data bytes[9], sum uint8 = xor8(data) }
+packet CkSum16 be { data bytes[9], sum uint16 = sum16(data) }
+packet CkSum32Fold16 be { data bytes[9], sum uint16 = sum32_fold16(data) }
+
+// A frame header whose checksum sits inside the range it covers and counts
+// as zero.
+packet CkFoldFrame be {
+  sync uint16,
+  seq uint8,
+  kind uint8,
+  sum uint16 = sum32_fold16(self),
+  length uint16 = len(payload),
+  payload bytes[length]
+}
 
 // A derived value with a stand-in (`placeholder`): 0 means "not filled in".
 packet Stamped be {

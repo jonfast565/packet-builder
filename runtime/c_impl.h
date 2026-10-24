@@ -778,7 +778,7 @@ PB_FN void pb_patch_bits(pb_writer *w, size_t at, uint64_t value, unsigned width
 /* Checksum `algo` of buf[from..to), with buf[hole_from..hole_to) as zeros.
  * 0-7: CRCs (crc8, crc16_arc, crc16_ccitt_false, crc16_xmodem, crc16_kermit,
  * crc16_modbus, crc32, crc32c), 8: Internet checksum (RFC 1071),
- * 9: Fletcher-16, 10: sum8, 11: xor8. */
+ * 9: Fletcher-16, 10: sum8, 11: xor8, 12: sum16, 13: sum32_fold16. */
 PB_FN uint64_t pb_checksum(unsigned algo, const uint8_t *buf, size_t from, size_t to, size_t hole_from, size_t hole_to) {
     size_t i;
     uint64_t a = 0, b = 0;
@@ -789,6 +789,8 @@ PB_FN uint64_t pb_checksum(unsigned algo, const uint8_t *buf, size_t from, size_
         case 9: a = (a + x) % 255; b = (b + a) % 255; break;
         case 10: a = (a + x) & 0xff; break;
         case 11: a ^= x; break;
+        case 12: a = (a + x) & 0xffff; break;
+        case 13: a = (a + (x << (8 * (3 - (i - from) % 4)))) & 0xffffffffu; break;
         default: break;
         }
     }
@@ -797,6 +799,7 @@ PB_FN uint64_t pb_checksum(unsigned algo, const uint8_t *buf, size_t from, size_
         return ~a & 0xffff;
     }
     if (algo == 9) return (b << 8) | a;
+    if (algo == 13) return ((a >> 16) + (a & 0xffff)) & 0xffff;
     if (algo >= 10) return a;
     {
         unsigned width = 16;

@@ -742,7 +742,8 @@ const pb_crc = [8]PbCrc{
 };
 
 /// Checksum `algo` of buf[from..to] with buf[hole_from..hole_to] as zeros.
-/// 8: Internet checksum (RFC 1071), 9: Fletcher-16, 10: sum8, 11: xor8.
+/// 8: Internet checksum (RFC 1071), 9: Fletcher-16, 10: sum8, 11: xor8,
+/// 12: sum16, 13: sum32_fold16.
 fn pbChecksum(algo: u32, buf: []const u8, from: usize, to: usize, hole_from: usize, hole_to: usize) u64 {
     if (algo < 8) {
         const p = pb_crc[algo];
@@ -776,6 +777,8 @@ fn pbChecksum(algo: u32, buf: []const u8, from: usize, to: usize, hole_from: usi
                 b = (b + a) % 255;
             },
             10 => a = (a + x) & 0xff,
+            12 => a = (a + x) & 0xffff,
+            13 => a = (a + (x << @intCast(8 * (3 - (i - from) % 4)))) & 0xffffffff,
             else => a ^= x,
         }
     }
@@ -784,6 +787,7 @@ fn pbChecksum(algo: u32, buf: []const u8, from: usize, to: usize, hole_from: usi
         return ~a & 0xffff;
     }
     if (algo == 9) return (b << 8) | a;
+    if (algo == 13) return ((a >> 16) + (a & 0xffff)) & 0xffff;
     return a;
 }
 

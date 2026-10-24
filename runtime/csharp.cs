@@ -666,7 +666,8 @@
         };
 
         /// <summary>Checksum algo of buf[from..to) with buf[holeFrom..holeTo) as
-        /// zeros. 8: Internet checksum (RFC 1071), 9: Fletcher-16, 10: sum8, 11: xor8.</summary>
+        /// zeros. 8: Internet checksum (RFC 1071), 9: Fletcher-16, 10: sum8, 11: xor8,
+        /// 12: sum16, 13: sum32_fold16.</summary>
         public static ulong Checksum(int algo, byte[] buf, long from, long to, long holeFrom, long holeTo)
         {
             ulong At(long i) => i >= holeFrom && i < holeTo ? 0UL : buf[i];
@@ -699,6 +700,8 @@
                     case 8: a += (i - from) % 2 == 0 ? x << 8 : x; break;
                     case 9: a = (a + x) % 255; b = (b + a) % 255; break;
                     case 10: a = (a + x) & 0xFF; break;
+                    case 12: a = (a + x) & 0xFFFF; break;
+                    case 13: a = (a + (x << (int)(8 * (3 - (i - from) % 4)))) & 0xFFFFFFFF; break;
                     default: a ^= x; break;
                 }
             }
@@ -707,6 +710,7 @@
                 while ((a >> 16) != 0) a = (a & 0xFFFF) + (a >> 16);
                 return ~a & 0xFFFF;
             }
+            if (algo == 13) return ((a >> 16) + (a & 0xFFFF)) & 0xFFFF;
             return algo == 9 ? (b << 8) | a : a;
         }
 

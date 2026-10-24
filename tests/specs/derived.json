@@ -379,6 +379,54 @@
       "error_path": "CkXor8.sum"
     },
     {
+      "name": "sum16 check value",
+      "packet": "CkSum16",
+      "hex": "313233343536373839 01dd",
+      "expect": {
+        "sum": 477
+      }
+    },
+    {
+      "name": "sum16 mismatch",
+      "packet": "CkSum16",
+      "hex": "313233343536373839 00dd",
+      "error_kind": "mismatch",
+      "error_path": "CkSum16.sum"
+    },
+    {
+      "name": "sum32_fold16 check value (last word padded)",
+      "packet": "CkSum32Fold16",
+      "hex": "313233343536373839 09d4",
+      "expect": {
+        "sum": 2516
+      }
+    },
+    {
+      "name": "sum32_fold16 mismatch",
+      "packet": "CkSum32Fold16",
+      "hex": "313233343536373839 9f68",
+      "error_kind": "mismatch",
+      "error_path": "CkSum32Fold16.sum"
+    },
+    {
+      "name": "sum32_fold16 over a frame holding it",
+      "packet": "CkFoldFrame",
+      "hex": "eaea 45 30 5824 0002 2808",
+      "expect": {
+        "seq": 69,
+        "kind": 48,
+        "sum": 22564,
+        "payload": "2808"
+      }
+    },
+    {
+      "name": "sum32_fold16 frame recomputed when encoding",
+      "packet": "CkFoldFrame",
+      "hex": "eaea 45 30 5824 0002 2808",
+      "set": { "sum": 0 },
+      "encoded": "eaea45305824 00022808"
+    },
+    {
       "name": "placeholder: the computed value is accepted",
       "packet": "Stamped",
       "hex": "03aabbcc",

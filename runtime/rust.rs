@@ -827,7 +827,8 @@ const PB_CRC: [(u32, u64, u64, bool, u64); 8] = [
 ];
 
 /// Checksum `algo` of `buf[from..to]`, with `buf[hole_from..hole_to]` as
-/// zeros. 8: Internet checksum (RFC 1071), 9: Fletcher-16, 10: sum8, 11: xor8.
+/// zeros. 8: Internet checksum (RFC 1071), 9: Fletcher-16, 10: sum8, 11: xor8,
+/// 12: sum16, 13: sum32_fold16.
 fn pb_checksum(algo: u32, buf: &[u8], from: usize, to: usize, hole_from: usize, hole_to: usize) -> u64 {
     let bytes = (from..to).map(|i| if i >= hole_from && i < hole_to { 0u64 } else { buf[i] as u64 });
     match algo {
@@ -869,6 +870,14 @@ fn pb_checksum(algo: u32, buf: &[u8], from: usize, to: usize, hole_from: usize, 
             (b << 8) | a
         }
         10 => bytes.fold(0, |acc, b| (acc + b) & 0xff),
+        12 => bytes.fold(0, |acc, b| (acc + b) & 0xffff),
+        13 => {
+            let mut sum = 0u64;
+            for (i, b) in bytes.enumerate() {
+                sum = (sum + (b << (8 * (3 - i % 4)))) & 0xffff_ffff;
+            }
+            ((sum >> 16) + (sum & 0xffff)) & 0xffff
+        }
         _ => bytes.fold(0, |acc, b| acc ^ b),
     }
 }

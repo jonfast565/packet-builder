@@ -335,6 +335,14 @@ function Reader:checksum(algo, from, to, hole_from, hole_to)
     local total = 0
     for i = s, e - 1 do total = total + byte(i) end
     return total & 0xFF
+  elseif algo == 12 then
+    local total = 0
+    for i = s, e - 1 do total = total + byte(i) end
+    return total & 0xFFFF
+  elseif algo == 13 then
+    local total = 0
+    for i = s, e - 1 do total = (total + (byte(i) << (8 * (3 - (i - s) % 4)))) & 0xFFFFFFFF end
+    return ((total >> 16) + (total & 0xFFFF)) & 0xFFFF
   end
   local x = 0
   for i = s, e - 1 do x = x ~ byte(i) end

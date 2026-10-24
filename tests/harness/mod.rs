@@ -165,7 +165,7 @@ fn derived_cases(cases: &[Case]) -> Vec<Case> {
     for c in cases.iter().filter(|c| c.set.is_empty()) {
         let bytes: Vec<u8> =
             (0..c.hex.len() / 2).map(|i| u8::from_str_radix(&c.hex[2 * i..2 * i + 2], 16).unwrap()).collect();
-        let mut variants: Vec<Vec<u8>> = (0..bytes.len()).map(|n| bytes[..n].to_vec()).collect();
+        let mut variants: Vec<Vec<u8>> = truncation_points(bytes.len()).map(|n| bytes[..n].to_vec()).collect();
         for _ in 0..4 {
             if bytes.is_empty() {
                 break;
@@ -198,6 +198,25 @@ fn derived_cases(cases: &[Case]) -> Vec<Case> {
         }
     }
     out
+}
+
+/// Vectors up to this size are truncated at every length.
+const EVERY_PREFIX_UP_TO: usize = 4096;
+/// A larger vector keeps every prefix of its head and tail and samples the
+/// middle: every prefix of an n-byte vector puts O(n^2) bytes of literals in
+/// each harness (2 GB for a 32 KB vector, which go build never finishes).
+const DENSE_HEAD: usize = 512;
+const DENSE_TAIL: usize = 64;
+const SAMPLE_STRIDE: usize = 257; // prime, so samples land at varied offsets within repeated records
+
+/// The prefix lengths a vector of `len` bytes is truncated to.
+fn truncation_points(len: usize) -> Box<dyn Iterator<Item = usize>> {
+    if len <= EVERY_PREFIX_UP_TO {
+        return Box::new(0..len);
+    }
+    let tail_from = len - DENSE_TAIL;
+    let middle = (DENSE_HEAD..tail_from).step_by(SAMPLE_STRIDE);
+    Box::new((0..DENSE_HEAD).chain(middle).chain(tail_from..len))
 }
 
 /// A target language as seen by the test driver.

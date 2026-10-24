@@ -929,7 +929,7 @@ var pbCRC = [8]struct {
 
 // pbChecksum computes algorithm algo over buf[from:to] with
 // buf[holeFrom:holeTo] as zeros. 8: Internet checksum (RFC 1071),
-// 9: Fletcher-16, 10: sum8, 11: xor8.
+// 9: Fletcher-16, 10: sum8, 11: xor8, 12: sum16, 13: sum32_fold16.
 func pbChecksum(algo int, buf []byte, from, to, holeFrom, holeTo int) uint64 {
 	at := func(i int) uint64 {
 		if i >= holeFrom && i < holeTo {
@@ -990,6 +990,18 @@ func pbChecksum(algo int, buf []byte, from, to, holeFrom, holeTo int) uint64 {
 			a = (a + at(i)) & 0xff
 		}
 		return a
+	case algo == 12:
+		var a uint64
+		for i := from; i < to; i++ {
+			a = (a + at(i)) & 0xffff
+		}
+		return a
+	case algo == 13:
+		var a uint64
+		for i := from; i < to; i++ {
+			a = (a + at(i)<<uint(8*(3-(i-from)%4))) & 0xffffffff
+		}
+		return (a>>16 + a&0xffff) & 0xffff
 	default:
 		var a uint64
 		for i := from; i < to; i++ {

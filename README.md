@@ -631,6 +631,8 @@ packet Ipv4Header be {
 | `crc8`, `crc16_arc`, `crc16_ccitt_false`, `crc16_xmodem`, `crc16_kermit`, `crc16_modbus`, `crc32`, `crc32c` | CRCs from the catalogue of parametrised CRC algorithms (`crc8` is CRC-8/SMBUS, `crc16_ccitt_false` is CRC-16/IBM-3740, `crc32` is the zlib/Ethernet CRC, `crc32c` is Castagnoli) |
 | `internet` | the RFC 1071 ones' complement checksum (IPv4, TCP, UDP, ICMP) |
 | `fletcher16`, `sum8`, `xor8` | Fletcher-16, byte sum and byte XOR |
+| `sum16` | byte sum modulo 65536 |
+| `sum32_fold16` | sum of big-endian 32-bit words (the last one zero-padded) modulo 2^32, then its two 16-bit halves added modulo 65536 |
 
 Checksums take a field, a range `a..b` or `self`. When the range includes
 the checksum field itself, its bytes count as zero, which is what IPv4 and

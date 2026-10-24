@@ -507,7 +507,8 @@ _PB_CRC = (
 
 def _pb_checksum(algo, buf, start, end, hole_start, hole_end):
     """Checksum `algo` of buf[start:end] with buf[hole_start:hole_end] as
-    zeros. 8: Internet checksum (RFC 1071), 9: Fletcher-16, 10: sum8, 11: xor8."""
+    zeros. 8: Internet checksum (RFC 1071), 9: Fletcher-16, 10: sum8, 11: xor8,
+    12: sum16, 13: sum32_fold16."""
     data = bytearray(buf[start:end])
     for i in range(max(hole_start, start), min(hole_end, end)):
         data[i - start] = 0
@@ -537,6 +538,11 @@ def _pb_checksum(algo, buf, start, end, hole_start, hole_end):
         return (b << 8) | a
     if algo == 10:
         return sum(data) & 0xFF
+    if algo == 12:
+        return sum(data) & 0xFFFF
+    if algo == 13:
+        total = sum(b << (8 * (3 - i % 4)) for i, b in enumerate(data)) & 0xFFFFFFFF
+        return ((total >> 16) + (total & 0xFFFF)) & 0xFFFF
     x = 0
     for b in data:
         x ^= b

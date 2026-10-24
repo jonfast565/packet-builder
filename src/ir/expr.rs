@@ -154,10 +154,16 @@ pub enum Checksum {
     Sum8,
     /// XOR of the bytes.
     Xor8,
+    /// Sum of the bytes, modulo 65536.
+    Sum16,
+    /// Sum of the data as big-endian 32-bit words (the last one padded with
+    /// zero bytes), modulo 2^32, then its two 16-bit halves added modulo
+    /// 65536.
+    Sum32Fold16,
 }
 
 impl Checksum {
-    pub const ALL: [Checksum; 12] = [
+    pub const ALL: [Checksum; 14] = [
         Checksum::Crc8,
         Checksum::Crc16Arc,
         Checksum::Crc16CcittFalse,
@@ -170,6 +176,8 @@ impl Checksum {
         Checksum::Fletcher16,
         Checksum::Sum8,
         Checksum::Xor8,
+        Checksum::Sum16,
+        Checksum::Sum32Fold16,
     ];
 
     /// The name used in packet descriptions.
@@ -187,6 +195,8 @@ impl Checksum {
             Checksum::Fletcher16 => "fletcher16",
             Checksum::Sum8 => "sum8",
             Checksum::Xor8 => "xor8",
+            Checksum::Sum16 => "sum16",
+            Checksum::Sum32Fold16 => "sum32_fold16",
         }
     }
 
