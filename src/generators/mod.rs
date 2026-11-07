@@ -5,6 +5,7 @@ pub mod c;
 pub mod common;
 pub mod csharp;
 pub mod go;
+pub mod pascal;
 pub mod python;
 pub mod rust;
 pub mod wireshark;
@@ -29,5 +30,6 @@ pub fn backend(lang: Language) -> &'static dyn Backend {
         Language::CSharp => &csharp::CSharpGenerator,
         Language::Python => &python::PythonGenerator,
         Language::Go => &go::GoGenerator,
+        Language::Pascal => &pascal::PascalGenerator,
     }
 }

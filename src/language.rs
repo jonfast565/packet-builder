@@ -9,11 +9,19 @@ pub enum Language {
     CSharp,
     Python,
     Go,
+    Pascal,
 }
 
 impl Language {
-    pub const ALL: [Language; 6] =
-        [Language::C, Language::Rust, Language::Zig, Language::CSharp, Language::Python, Language::Go];
+    pub const ALL: [Language; 7] = [
+        Language::C,
+        Language::Rust,
+        Language::Zig,
+        Language::CSharp,
+        Language::Python,
+        Language::Go,
+        Language::Pascal,
+    ];
 
     pub fn from_name(name: &str) -> Option<Language> {
         Some(match name.to_ascii_lowercase().as_str() {
@@ -23,6 +31,7 @@ impl Language {
             "net" | "csharp" | "cs" | "c#" => Language::CSharp,
             "python" | "py" => Language::Python,
             "go" | "golang" => Language::Go,
+            "pascal" | "pas" | "delphi" | "fpc" => Language::Pascal,
             _ => return None,
         })
     }
@@ -35,6 +44,7 @@ impl Language {
             Language::CSharp => "csharp",
             Language::Python => "python",
             Language::Go => "go",
+            Language::Pascal => "pascal",
         }
     }
 
@@ -47,6 +57,7 @@ impl Language {
             Language::CSharp => "cs",
             Language::Python => "py",
             Language::Go => "go",
+            Language::Pascal => "pas",
         }
     }
 }

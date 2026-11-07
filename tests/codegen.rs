@@ -31,6 +31,11 @@ fn csharp_parsers_work() {
 }
 
 #[test]
+fn pascal_parsers_work() {
+    harness::run_target(&harness::pascal::PascalTarget);
+}
+
+#[test]
 fn zig_parsers_work() {
     harness::run_target(&harness::zig::ZigTarget);
 }
