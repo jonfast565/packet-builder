@@ -13,6 +13,7 @@ already uses, and packet-builder generates a decoder and encoder for
 | C#       | one file (`<package>.cs`), base class library only | `dotnet` / `csc` |
 | Zig      | one file (`<package>.zig`, Zig 0.13) | `zig build-exe` with a leak-checking allocator |
 | Object Pascal | one unit (`<package>.pas`) for Free Pascal 3.2 (`{$MODE DELPHIUNICODE}`) and Delphi, SysUtils and Math only | `fpc` with heaptrc leak checks |
+| Java     | one class (`<Package>.java`, Java 17) with nested static classes, `java.base` only | `javac --release 17 -Xlint:all -Werror`, `java` |
 
 ```
 packet Flap be {
@@ -62,7 +63,7 @@ checksums as expert info. See [`docs/wireshark.md`](docs/wireshark.md).
 ```sh
 cargo run -- generate examples/oscar.packet -o out            # every language, files named oscar.*
 cargo run -- gen examples/oscar.packet -l rust,go -o out       # a subset (`gen` is short for `generate`)
-cargo run -- gen examples/oscar.packet -p aim -o out           # file stem / Go package / C# namespace
+cargo run -- gen examples/oscar.packet -p aim -o out           # file stem / Go package / C# namespace / Java class
 cargo run -- gen examples/oscar.packet -l python --stdout      # print instead of writing files
 cargo run -- check examples/*.packet                   # validate only
 cargo run -- layout tests/specs/types.packet -k CStruct
@@ -406,6 +407,7 @@ Each union becomes a type named after the packet and field (`MessageBody`):
 | C# | abstract class with a sealed subclass per arm holding `Value` | `if (m.Body is MessageBody.Pair p) ... p.Value.A` |
 | Zig | `union(enum)` | `switch (m.body) { .pair => |p| ..., else => {} }` |
 | Pascal | abstract class `TMessageBody` with a subclass per arm holding `Value` (`TMessageBody_Pair`) | `if m.Body is TMessageBody_Pair then ... TMessageBody_Pair(m.Body).Value.A` |
+| Java | abstract static class with a final subclass per arm holding `value` | `if (m.body instanceof MessageBody.Pair pr) ... pr.value.a` |
 
 ### Parameters
 
@@ -494,6 +496,7 @@ packet Frame be {
 | C# | `P.Decode(data, version: v)`, `p.Encode(version: v)`, `P.TryDecode(data, version: v)` |
 | Zig | `P.decodeV(allocator, data, v)`, `p.encodeV(allocator, v)`, `P.tryDecodeV(allocator, data, v)` |
 | Pascal | `TP.Decode(data, v)`, `p.Encode(v)`, `TP.TryDecode(data, p, n, v)` |
+| Java | `P.decode(data, v)`, `p.encode(v)`, `P.tryDecode(data, v)` |
 
 The version lives on each reader and writer, never in global state, so one
 parser decodes connections of different versions side by side, and a stream
@@ -744,7 +747,7 @@ packet Flap be {
 
 * `== value` declares a magic value. Members with one start out holding
   it (struct defaults in Rust, Python, C#, Zig; `P_init()` in C; `NewP()` in
-  Go; the constructor in Pascal), so building a packet only takes the fields that vary.
+  Go; the constructor in Pascal; field initializers in Java), so building a packet only takes the fields that vary.
 * `in lo..hi` and `== value` take constant expressions that must fit the
   field. Checks apply to single integer fields and bitfield members.
 * `: Category strict` accepts only the values listed in the category.
@@ -795,10 +798,11 @@ with parameters takes them as extra arguments to each of these.
 | C# | `P.Decode(data)`, `P.DecodeFrom(new PbReader(data))` | `p.Encode()`, `p.EncodeTo(w)` | throws `PbException` |
 | Zig | `P.decode(allocator, data)`, `P.decodeFrom(allocator, &reader)`; release with `p.deinit(allocator)` | `p.encode(allocator)`, `p.encodeTo(&writer)` | `PbError!T` |
 | Pascal | `TP.Decode(data)`, `TP.DecodeFrom(reader)`; release with `p.Free` (frees nested packets and unions) | `p.Encode`, `p.EncodeTo(writer)` | raises `EPbError` |
+| Java | `P.decode(data)`, `P.decodeFrom(new PbReader(data))` | `p.encode()`, `p.encodeTo(w)` | throws `PbException` (unchecked) |
 
 Every packet and union also gets a **JSON dump** (`to_json()` in Rust and
 Python, `ToJSON()` in Go, `ToJson()` in C#, `P_to_json(&p)` in C (a
-malloc'ed string), `p.toJson(writer)` in Zig, `p.ToJson` in Pascal): integers are numbers, byte
+malloc'ed string), `p.toJson(writer)` in Zig, `p.ToJson` in Pascal, `p.toJson()` in Java): integers are numbers, byte
 buffers hex strings, unions `{"kind": arm, "value": ...}`.
 
 ### Streams
@@ -815,6 +819,7 @@ parameters can be decoded from a buffer that may end mid-packet:
 | C# | `P.TryDecode(data)`: `IsDone`, `Value`, `Consumed`, `Needed` | `P.FrameLen(data)`: size or `null` |
 | Zig | `P.tryDecode(allocator, data)`: `.done` (value, consumed) or `.incomplete` (needed) | `P.frameLen(data)`: size or `null` |
 | Pascal | `TP.TryDecode(data, p, n)`: True (n = bytes taken) or False (n = bytes needed) | `TP.FrameLen(data, size)`: False until the header is there |
+| Java | `P.tryDecode(data)`: a `PbStatus` with `isDone()`, `value()`, `consumed()`, `needed()` | `P.frameLen(data)`: an `OptionalInt` |
 
 A packet has a frame length when its size follows from fixed-offset header
 fields (FLAP: 6 bytes plus `length`; UDP: `length`): read that many bytes,
@@ -835,6 +840,7 @@ instead of copying it; the input must then outlive the value:
 | C# | `ReadOnlyMemory<byte>` over the input | copied |
 | Zig | slices of the input; `deinit` leaves them | copied |
 | Pascal | copied (`TBytes`; the option changes nothing) | copied |
+| Java | read-only `java.nio.ByteBuffer` views of the input (otherwise copied `byte[]`) | copied |
 
 Byte lists read with `until` are built element by element, so they stay
 copies, except in C and Zig, where they point into the input too.
@@ -876,6 +882,7 @@ Every error has a **kind**, the **path** of the field it happened in
 | Python | `e.kind` (`PbError.INCOMPLETE`, ...) | `e.path`, `e.bit_offset`, `e.needed_bits` |
 | C# | `e.Kind` (`PbErrorKind.Incomplete`, ...) | `e.Path`, `e.BitOffset`, `e.NeededBits` |
 | Pascal | `E.Kind` (`pekIncomplete`, ...) | `E.Path`, `E.BitOffset`, `E.NeededBits` |
+| Java | `e.kind()` (`PbErrorKind.INCOMPLETE`, ...) | `e.path()`, `e.bitOffset()`, `e.neededBits()` |
 | Zig | the error (`error.Incomplete`, `error.Invalid`, `error.Range`, `error.InvalidText`, `error.Mismatch`, `error.Constraint`, `error.OutOfMemory`) | `reader.trace.diag` (`bit_offset`, `needed_bits`), `reader.trace.writePath(writer)` |
 
 Named constants are exported with their declared type:
@@ -889,6 +896,7 @@ Named constants are exported with their declared type:
 | C# | `Constants.FlapStart` | `Channel.Snac` |
 | Zig | `FLAP_START: u8` | `Channel.snac` |
 | Pascal | `FlapStart` | `TChannel.Snac` |
+| Java | `Constants.FLAP_START` (`int`) | `Channel.SNAC` |
 
 For C, define `PACKETS_IMPLEMENTATION` (the upper-cased `-p` name followed by
 `_IMPLEMENTATION`) in exactly one `.c` file before including the header. Go,
@@ -897,7 +905,10 @@ Pascal types are prefixed with `T` (`TFlap`). Names that are
 keywords in a target language are escaped (`type` becomes `r#type` in Rust,
 `type_` in C, `@"type"` in Zig, and `Type_` in Pascal, which also escapes
 names that would hide the RTL routines the generated code calls, such as
-`Length_`). In Zig, bit-sized fields use exact-width
+`Length_`). Java member names are camelCase (`totalLength`, keywords become
+`type_`), and every class is nested in one outer class named after the
+package (`Packets.Flap`); unsigned 8- and 16-bit fields are `int`, 32- and
+64-bit ones `long` (a `uint64` holds the bit pattern). In Zig, bit-sized fields use exact-width
 types (`u3`, `i12`), so out-of-range values are compile errors. The other
 languages check ranges when encoding.
 
@@ -925,7 +936,7 @@ cargo test
 Languages whose toolchain is missing are skipped with a message. Set
 `PB_REQUIRE_ALL=1` to turn a missing toolchain into a failure (CI does). Zig is
 looked up as `zig` on `PATH` or through `$ZIG`; C# needs a .NET SDK (`dotnet`); Pascal needs Free Pascal
-(`fpc`).
+(`fpc`); Java needs a JDK 17 or later (`javac` and `java` from `$JAVA_HOME/bin`, else `PATH`).
 
 A spec file looks like this:
 

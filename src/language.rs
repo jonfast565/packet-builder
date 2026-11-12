@@ -10,10 +10,11 @@ pub enum Language {
     Python,
     Go,
     Pascal,
+    Java,
 }
 
 impl Language {
-    pub const ALL: [Language; 7] = [
+    pub const ALL: [Language; 8] = [
         Language::C,
         Language::Rust,
         Language::Zig,
@@ -21,6 +22,7 @@ impl Language {
         Language::Python,
         Language::Go,
         Language::Pascal,
+        Language::Java,
     ];
 
     pub fn from_name(name: &str) -> Option<Language> {
@@ -32,6 +34,7 @@ impl Language {
             "python" | "py" => Language::Python,
             "go" | "golang" => Language::Go,
             "pascal" | "pas" | "delphi" | "fpc" => Language::Pascal,
+            "java" | "jvm" => Language::Java,
             _ => return None,
         })
     }
@@ -45,6 +48,7 @@ impl Language {
             Language::Python => "python",
             Language::Go => "go",
             Language::Pascal => "pascal",
+            Language::Java => "java",
         }
     }
 
@@ -58,6 +62,16 @@ impl Language {
             Language::Python => "py",
             Language::Go => "go",
             Language::Pascal => "pas",
+            Language::Java => "java",
+        }
+    }
+
+    /// Name of the generated file for package `package`: Java files are
+    /// named after their class (`Packets.java`).
+    pub fn file_name(&self, package: &str) -> String {
+        match self {
+            Language::Java => format!("{}.java", crate::generators::common::pascal_case(package)),
+            _ => format!("{}.{}", package, self.extension()),
         }
     }
 }
