@@ -51,6 +51,11 @@ fn lua_parsers_work() {
 }
 
 #[test]
+fn java_parsers_work() {
+    harness::run_target(&harness::java::JavaTarget);
+}
+
+#[test]
 fn interpreter_works() {
     harness::run_target(&harness::interp::InterpTarget);
 }

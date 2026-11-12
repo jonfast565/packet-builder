@@ -39,6 +39,7 @@ pub mod c;
 pub mod csharp;
 pub mod go;
 pub mod interp;
+pub mod java;
 pub mod lua;
 pub mod pascal;
 pub mod python;

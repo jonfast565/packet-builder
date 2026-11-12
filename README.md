@@ -15,6 +15,7 @@ already uses, and packet-builder generates a decoder and encoder for
 | Object Pascal | one unit (`<package>.pas`) for Free Pascal 3.2 (`{$MODE DELPHIUNICODE}`) and Delphi, SysUtils and Math only | `fpc` with heaptrc leak checks |
 | TypeScript | one ES module (`<package>.ts`), no dependencies; erasable syntax, so Node 22.18+ runs it as is | `node`, plus `deno check` (strict) when Deno is installed |
 | Lua | one module (`<package>.lua`) for Lua 5.3 to 5.5, no C modules | `lua` (or `$LUA`) |
+| Java     | one class (`<Package>.java`, Java 17) with nested static classes, `java.base` only | `javac --release 17 -Xlint:all -Werror`, `java` |
 
 ```
 packet Flap be {
@@ -64,7 +65,7 @@ checksums as expert info. See [`docs/wireshark.md`](docs/wireshark.md).
 ```sh
 cargo run -- generate examples/oscar.packet -o out            # every language, files named oscar.*
 cargo run -- gen examples/oscar.packet -l rust,go -o out       # a subset (`gen` is short for `generate`)
-cargo run -- gen examples/oscar.packet -p aim -o out           # file stem / Go package / C# namespace
+cargo run -- gen examples/oscar.packet -p aim -o out           # file stem / Go package / C# namespace / Java class
 cargo run -- gen examples/oscar.packet -l python --stdout      # print instead of writing files
 cargo run -- check examples/*.packet                   # validate only
 cargo run -- layout tests/specs/types.packet -k CStruct
@@ -411,6 +412,7 @@ Each union becomes a type named after the packet and field (`MessageBody`):
 | Pascal | abstract class `TMessageBody` with a subclass per arm holding `Value` (`TMessageBody_Pair`) | `if m.Body is TMessageBody_Pair then ... TMessageBody_Pair(m.Body).Value.A` |
 | TypeScript | discriminated union `{ kind: "pair"; value: Pair } \| ...`, plus an object `MessageBody` with `pbDefault()` and `toJson(u)` | `if (m.body.kind === "pair") m.body.value.a`; build with `{ kind: "pair", value: p }` |
 | Lua | table with `kind` (the arm's name) and `value` | `m.body.kind == "pair"`, `m.body.value.a`; build with `packets.MessageBody.new("pair", packets.Pair.new({ a = 1, b = 2 }))` |
+| Java | abstract static class with a final subclass per arm holding `value` | `if (m.body instanceof MessageBody.Pair pr) ... pr.value.a` |
 
 ### Parameters
 
@@ -501,6 +503,7 @@ packet Frame be {
 | Pascal | `TP.Decode(data, v)`, `p.Encode(v)`, `TP.TryDecode(data, p, n, v)` |
 | TypeScript | `P.decode(data, v)`, `p.encode(v)`, `P.tryDecode(data, v)` |
 | Lua | `P.decode(data, v)`, `P.encode(p, v)`, `P.try_decode(data, v)` (after any packet parameters) |
+| Java | `P.decode(data, v)`, `p.encode(v)`, `P.tryDecode(data, v)` |
 
 The version lives on each reader and writer, never in global state, so one
 parser decodes connections of different versions side by side, and a stream
@@ -751,7 +754,7 @@ packet Flap be {
 
 * `== value` declares a magic value. Members with one start out holding
   it (struct defaults in Rust, Python, C#, Zig; `P_init()` in C; `NewP()` in
-  Go; the constructor in Pascal; field initializers in TypeScript; `P.new()` in Lua), so building a packet only takes the fields that vary.
+  Go; the constructor in Pascal; field initializers in TypeScript; `P.new()` in Lua; field initializers in Java), so building a packet only takes the fields that vary.
 * `in lo..hi` and `== value` take constant expressions that must fit the
   field. Checks apply to single integer fields and bitfield members.
 * `: Category strict` accepts only the values listed in the category.
@@ -804,10 +807,11 @@ with parameters takes them as extra arguments to each of these.
 | Pascal | `TP.Decode(data)`, `TP.DecodeFrom(reader)`; release with `p.Free` (frees nested packets and unions) | `p.Encode`, `p.EncodeTo(writer)` | raises `EPbError` |
 | TypeScript | `P.decode(data)`, `P.decodeFrom(new PbReader(data))` | `p.encode()`, `p.encodeTo(w)` | throws `PbError` |
 | Lua | `P.decode(data)`, `P.decode_from(reader)`; `P.decode_safe(data)` returns `nil, err` instead of raising | `P.encode(p)` (or `p:encode()`), `P.encode_to(p, writer)`; `P.encode_safe(p)` | raises a `PbError` table with `error`; catch it with `pcall` |
+| Java | `P.decode(data)`, `P.decodeFrom(new PbReader(data))` | `p.encode()`, `p.encodeTo(w)` | throws `PbException` (unchecked) |
 
 Every packet and union also gets a **JSON dump** (`to_json()` in Rust and
 Python, `ToJSON()` in Go, `ToJson()` in C#, `P_to_json(&p)` in C (a
-malloc'ed string), `p.toJson(writer)` in Zig, `p.ToJson` in Pascal, `p.toJson()` in TypeScript, `P.to_json(p)` in Lua): integers are numbers, byte
+malloc'ed string), `p.toJson(writer)` in Zig, `p.ToJson` in Pascal, `p.toJson()` in TypeScript, `P.to_json(p)` in Lua, `p.toJson()` in Java): integers are numbers, byte
 buffers hex strings, unions `{"kind": arm, "value": ...}`.
 
 ### Streams
@@ -826,6 +830,7 @@ parameters can be decoded from a buffer that may end mid-packet:
 | Pascal | `TP.TryDecode(data, p, n)`: True (n = bytes taken) or False (n = bytes needed) | `TP.FrameLen(data, size)`: False until the header is there |
 | TypeScript | `P.tryDecode(data)`: `[p, used]` or `[null, needed]` | `P.frameLen(data)`: size or `null` |
 | Lua | `P.try_decode(data)`: `p, used` or `nil, needed` | `P.frame_len(data)`: size or `nil` |
+| Java | `P.tryDecode(data)`: a `PbStatus` with `isDone()`, `value()`, `consumed()`, `needed()` | `P.frameLen(data)`: an `OptionalInt` |
 
 A packet has a frame length when its size follows from fixed-offset header
 fields (FLAP: 6 bytes plus `length`; UDP: `length`): read that many bytes,
@@ -848,6 +853,7 @@ instead of copying it; the input must then outlive the value:
 | Pascal | copied (`TBytes`; the option changes nothing) | copied |
 | TypeScript | `Uint8Array` views (`subarray`) of the input | copied |
 | Lua | strings, which are immutable and shared (the option changes nothing) | strings |
+| Java | read-only `java.nio.ByteBuffer` views of the input (otherwise copied `byte[]`) | copied |
 
 Byte lists read with `until` are built element by element, so they stay
 copies, except in C and Zig, where they point into the input too.
@@ -891,6 +897,7 @@ Every error has a **kind**, the **path** of the field it happened in
 | Pascal | `E.Kind` (`pekIncomplete`, ...) | `E.Path`, `E.BitOffset`, `E.NeededBits` |
 | TypeScript | `e.kind` (`PbError.INCOMPLETE`, ...) | `e.path`, `e.bitOffset`, `e.neededBits` |
 | Lua | `e.kind` (`"incomplete"`, ...) | `e.path`, `e.bit`, `e.needed`; `tostring(e)` shows the path and message |
+| Java | `e.kind()` (`PbErrorKind.INCOMPLETE`, ...) | `e.path()`, `e.bitOffset()`, `e.neededBits()` |
 | Zig | the error (`error.Incomplete`, `error.Invalid`, `error.Range`, `error.InvalidText`, `error.Mismatch`, `error.Constraint`, `error.OutOfMemory`) | `reader.trace.diag` (`bit_offset`, `needed_bits`), `reader.trace.writePath(writer)` |
 
 Named constants are exported with their declared type:
@@ -906,6 +913,7 @@ Named constants are exported with their declared type:
 | Pascal | `FlapStart` | `TChannel.Snac` |
 | TypeScript | `FLAP_START` | `Channel.SNAC` |
 | Lua | `packets.FLAP_START` | `packets.Channel.SNAC` |
+| Java | `Constants.FLAP_START` (`int`) | `Channel.SNAC` |
 
 For C, define `PACKETS_IMPLEMENTATION` (the upper-cased `-p` name followed by
 `_IMPLEMENTATION`) in exactly one `.c` file before including the header. Go,
@@ -914,7 +922,10 @@ Pascal types are prefixed with `T` (`TFlap`). Names that are
 keywords in a target language are escaped (`type` becomes `r#type` in Rust,
 `type_` in C, `@"type"` in Zig, and `Type_` in Pascal, which also escapes
 names that would hide the RTL routines the generated code calls, such as
-`Length_`); Lua keeps every name and indexes keywords as strings (`p["end"]`). In Zig, bit-sized fields use exact-width
+`Length_`); Lua keeps every name and indexes keywords as strings (`p["end"]`). Java member names are camelCase (`totalLength`, keywords become
+`type_`), and every class is nested in one outer class named after the
+package (`Packets.Flap`); unsigned 8- and 16-bit fields are `int`, 32- and
+64-bit ones `long` (a `uint64` holds the bit pattern). In Zig, bit-sized fields use exact-width
 types (`u3`, `i12`), so out-of-range values are compile errors. The other
 languages check ranges when encoding. In TypeScript, integers of up to 32 bits
 are `number`s and wider ones `bigint`s, which also hold every intermediate value
@@ -947,7 +958,7 @@ cargo test
 Languages whose toolchain is missing are skipped with a message. Set
 `PB_REQUIRE_ALL=1` to turn a missing toolchain into a failure (CI does). Zig is
 looked up as `zig` on `PATH` or through `$ZIG`; C# needs a .NET SDK (`dotnet`); Pascal needs Free Pascal
-(`fpc`); TypeScript needs Node (`node`) and is type-checked when `deno` is on `PATH`; Lua needs Lua 5.3 or later (`lua` on `PATH`, or `$LUA`).
+(`fpc`); TypeScript needs Node (`node`) and is type-checked when `deno` is on `PATH`; Lua needs Lua 5.3 or later (`lua` on `PATH`, or `$LUA`); Java needs a JDK 17 or later (`javac` and `java` from `$JAVA_HOME/bin`, else `PATH`).
 
 A spec file looks like this:
 

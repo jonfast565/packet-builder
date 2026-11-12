@@ -311,7 +311,7 @@ fn generate(args: GenerateArgs) -> Result<(), String> {
     let out = args.out.expect("clap requires --out unless --stdout");
     fs::create_dir_all(&out).map_err(|e| format!("cannot create {}: {}", out.display(), e))?;
     for lang in langs {
-        let path = out.join(format!("{}.{}", opts.package, lang.extension()));
+        let path = out.join(lang.file_name(&opts.package));
         fs::write(&path, generate_module(&module, lang, &opts))
             .map_err(|e| format!("cannot write {}: {}", path.display(), e))?;
         println!("wrote {}", path.display());

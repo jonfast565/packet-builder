@@ -12,10 +12,11 @@ pub enum Language {
     Pascal,
     TypeScript,
     Lua,
+    Java,
 }
 
 impl Language {
-    pub const ALL: [Language; 9] = [
+    pub const ALL: [Language; 10] = [
         Language::C,
         Language::Rust,
         Language::Zig,
@@ -25,6 +26,7 @@ impl Language {
         Language::Pascal,
         Language::TypeScript,
         Language::Lua,
+        Language::Java,
     ];
 
     pub fn from_name(name: &str) -> Option<Language> {
@@ -38,6 +40,7 @@ impl Language {
             "pascal" | "pas" | "delphi" | "fpc" => Language::Pascal,
             "typescript" | "ts" => Language::TypeScript,
             "lua" => Language::Lua,
+            "java" | "jvm" => Language::Java,
             _ => return None,
         })
     }
@@ -53,6 +56,7 @@ impl Language {
             Language::Pascal => "pascal",
             Language::TypeScript => "typescript",
             Language::Lua => "lua",
+            Language::Java => "java",
         }
     }
 
@@ -68,6 +72,16 @@ impl Language {
             Language::Pascal => "pas",
             Language::TypeScript => "ts",
             Language::Lua => "lua",
+            Language::Java => "java",
+        }
+    }
+
+    /// Name of the generated file for package `package`: Java files are
+    /// named after their class (`Packets.java`).
+    pub fn file_name(&self, package: &str) -> String {
+        match self {
+            Language::Java => format!("{}.java", crate::generators::common::pascal_case(package)),
+            _ => format!("{}.{}", package, self.extension()),
         }
     }
 }
