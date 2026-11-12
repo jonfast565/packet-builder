@@ -17,6 +17,7 @@ already uses, and packet-builder generates a decoder and encoder for
 | Lua | one module (`<package>.lua`) for Lua 5.3 to 5.5, no C modules | `lua` (or `$LUA`) |
 | Java     | one class (`<Package>.java`, Java 17) with nested static classes, `java.base` only | `javac --release 17 -Xlint:all -Werror`, `java` |
 | Swift    | one file (`<package>.swift`, Swift 5.9+), Foundation only | `swiftc -swift-version 5` |
+| Fortran  | one module (`<package>.f90`, Fortran 2008), intrinsic modules only | `gfortran -std=f2008 -fcheck=all` |
 
 ```
 packet Flap be {
@@ -415,6 +416,7 @@ Each union becomes a type named after the packet and field (`MessageBody`):
 | Lua | table with `kind` (the arm's name) and `value` | `m.body.kind == "pair"`, `m.body.value.a`; build with `packets.MessageBody.new("pair", packets.Pair.new({ a = 1, b = 2 }))` |
 | Java | abstract static class with a final subclass per arm holding `value` | `if (m.body instanceof MessageBody.Pair pr) ... pr.value.a` |
 | Swift | `enum MessageBody { case text([UInt8]), number(UInt32), pair(Pair), ping, other([UInt8]) }` | `if case .pair(let p) = m.body { ... p.a }` |
+| Fortran | derived type `MessageBody` with `pb_arm` (one of `MessageBody_text`, ...) and a component per arm (packets `allocatable`) | `if (m%body%pb_arm == MessageBody_pair) ... m%body%pair%a` |
 
 ### Parameters
 
@@ -507,6 +509,7 @@ packet Frame be {
 | Lua | `P.decode(data, v)`, `P.encode(p, v)`, `P.try_decode(data, v)` (after any packet parameters) |
 | Java | `P.decode(data, v)`, `p.encode(v)`, `P.tryDecode(data, v)` |
 | Swift | `P.decode(data, version: v)`, `p.encode(version: v)`, `P.tryDecode(data, version: v)`; or `reader.setVersion(v, min, latest)` |
+| Fortran | `call P_decode(p, data, err, pb_version=v)`, `call P_encode(p, out, err, pb_version=v)`, `call P_try_decode(data, p, n, err, pb_version=v)` |
 
 The version lives on each reader and writer, never in global state, so one
 parser decodes connections of different versions side by side, and a stream
@@ -757,7 +760,7 @@ packet Flap be {
 
 * `== value` declares a magic value. Members with one start out holding
   it (struct defaults in Rust, Python, C#, Zig, Swift; `P_init()` in C; `NewP()` in
-  Go; the constructor in Pascal; field initializers in TypeScript; `P.new()` in Lua; field initializers in Java), so building a packet only takes the fields that vary.
+  Go; the constructor in Pascal; field initializers in TypeScript; `P.new()` in Lua; field initializers in Java; component defaults in Fortran), so building a packet only takes the fields that vary.
 * `in lo..hi` and `== value` take constant expressions that must fit the
   field. Checks apply to single integer fields and bitfield members.
 * `: Category strict` accepts only the values listed in the category.
@@ -812,10 +815,11 @@ with parameters takes them as extra arguments to each of these.
 | Lua | `P.decode(data)`, `P.decode_from(reader)`; `P.decode_safe(data)` returns `nil, err` instead of raising | `P.encode(p)` (or `p:encode()`), `P.encode_to(p, writer)`; `P.encode_safe(p)` | raises a `PbError` table with `error`; catch it with `pcall` |
 | Java | `P.decode(data)`, `P.decodeFrom(new PbReader(data))` | `p.encode()`, `p.encodeTo(w)` | throws `PbException` (unchecked) |
 | Swift | `try P.decode(data)`, `try P.decodeFrom(PbReader(data))` | `try p.encode()`, `try p.encodeTo(writer)` | throws `PbError` |
+| Fortran | `call P_decode(p, data, err)`, `call P_decode_from(p, reader)` (allocatables free themselves) | `call P_encode(p, out, err)`, `call P_encode_to(p, writer)` | `err%kind` (`type(pb_error)`); the reader's or writer's `%e` |
 
 Every packet and union also gets a **JSON dump** (`to_json()` in Rust and
 Python, `ToJSON()` in Go, `ToJson()` in C#, `P_to_json(&p)` in C (a
-malloc'ed string), `p.toJson(writer)` in Zig, `p.ToJson` in Pascal, `p.toJson()` in TypeScript, `P.to_json(p)` in Lua, `p.toJson()` in Java, `p.toJson()` in Swift): integers are numbers, byte
+malloc'ed string), `p.toJson(writer)` in Zig, `p.ToJson` in Pascal, `p.toJson()` in TypeScript, `P.to_json(p)` in Lua, `p.toJson()` in Java, `p.toJson()` in Swift, `P_to_json(p)` in Fortran): integers are numbers, byte
 buffers hex strings, unions `{"kind": arm, "value": ...}`.
 
 ### Streams
@@ -836,6 +840,7 @@ parameters can be decoded from a buffer that may end mid-packet:
 | Lua | `P.try_decode(data)`: `p, used` or `nil, needed` | `P.frame_len(data)`: size or `nil` |
 | Java | `P.tryDecode(data)`: a `PbStatus` with `isDone()`, `value()`, `consumed()`, `needed()` | `P.frameLen(data)`: an `OptionalInt` |
 | Swift | `try P.tryDecode(data)`: `.done(p, used)` or `.incomplete(needed)` | `try P.frameLen(data)`: size or `nil` |
+| Fortran | `call P_try_decode(data, p, n, err)`: `err%kind` `PB_OK` (n = bytes taken) or `PB_INCOMPLETE` (n = bytes needed) | `call P_frame_len(data, n, err)`: `PB_INCOMPLETE` until the header is there |
 
 A packet has a frame length when its size follows from fixed-offset header
 fields (FLAP: 6 bytes plus `length`; UDP: `length`): read that many bytes,
@@ -860,6 +865,7 @@ instead of copying it; the input must then outlive the value:
 | Lua | strings, which are immutable and shared (the option changes nothing) | strings |
 | Java | read-only `java.nio.ByteBuffer` views of the input (otherwise copied `byte[]`) | copied |
 | Swift | `ArraySlice<UInt8>`s sharing the input's storage | copied |
+| Fortran | copied (allocatable `integer(int8)` arrays; the option changes nothing) | copied |
 
 Byte lists read with `until` are built element by element, so they stay
 copies, except in C and Zig, where they point into the input too.
@@ -905,6 +911,7 @@ Every error has a **kind**, the **path** of the field it happened in
 | Lua | `e.kind` (`"incomplete"`, ...) | `e.path`, `e.bit`, `e.needed`; `tostring(e)` shows the path and message |
 | Java | `e.kind()` (`PbErrorKind.INCOMPLETE`, ...) | `e.path()`, `e.bitOffset()`, `e.neededBits()` |
 | Swift | `e.kind` (`.incomplete`, ...) | `e.path`, `e.bitOffset`, `e.neededBits`; `description` shows all three |
+| Fortran | `err%kind` (`PB_INCOMPLETE`, ...; `PB_OK` when none) | `err%path`, `err%bit_offset`, `err%needed_bits`; `err%message` (path, reason and bit offset) |
 | Zig | the error (`error.Incomplete`, `error.Invalid`, `error.Range`, `error.InvalidText`, `error.Mismatch`, `error.Constraint`, `error.OutOfMemory`) | `reader.trace.diag` (`bit_offset`, `needed_bits`), `reader.trace.writePath(writer)` |
 
 Named constants are exported with their declared type:
@@ -922,6 +929,7 @@ Named constants are exported with their declared type:
 | Lua | `packets.FLAP_START` | `packets.Channel.SNAC` |
 | Java | `Constants.FLAP_START` (`int`) | `Channel.SNAC` |
 | Swift | `FLAP_START: UInt8` | `Channel.SNAC` |
+| Fortran | `FLAP_START` (an `integer(int16), parameter`) | `Channel_snac` |
 
 For C, define `PACKETS_IMPLEMENTATION` (the upper-cased `-p` name followed by
 `_IMPLEMENTATION`) in exactly one `.c` file before including the header. Go,
@@ -944,6 +952,14 @@ above 2^63-1 is held as its bit pattern (a negative integer: compare with
 `math.ult`; `to_json` prints it unsigned), and integer and float fields stay
 distinct (`math.type`).
 
+Fortran has no unsigned integers: an unsigned field is stored in the next
+wider kind (`uint8` in `integer(int16)`, `uint32` in `integer(int64)`), except
+64-bit ones, which keep their bit pattern in an `int64` (JSON prints them
+unsigned). Arrays are `allocatable` and indexed from 1, strings are
+`character(len=:), allocatable`. A type or constant named like a keyword, an
+intrinsic or the runtime (anything starting with `pb`) gets a trailing `_`,
+as does a constant whose name, ignoring case, is taken.
+
 ## Tests
 
 ```sh
@@ -960,7 +976,7 @@ cargo test
   the results with the expectations. Every vector is also replayed truncated
   at every length and with random bit flips. Any outcome is accepted there as
   long as the decoder fails cleanly, which, with sanitizers in C and a
-  leak-checking allocator in Zig and heaptrc in Pascal, covers the error paths. The same vectors
+  leak-checking allocator in Zig, heaptrc in Pascal and `-fcheck=all` in Fortran, covers the error paths. The same vectors
   also run through the reference interpreter (`ir::interp`), which needs no
   toolchain.
 * `tests/examples.rs` runs the OSCAR and P3 demo programs.
@@ -968,7 +984,7 @@ cargo test
 Languages whose toolchain is missing are skipped with a message. Set
 `PB_REQUIRE_ALL=1` to turn a missing toolchain into a failure (CI does). Zig is
 looked up as `zig` on `PATH` or through `$ZIG`; C# needs a .NET SDK (`dotnet`); Pascal needs Free Pascal
-(`fpc`); TypeScript needs Node (`node`) and is type-checked when `deno` is on `PATH`; Lua needs Lua 5.3 or later (`lua` on `PATH`, or `$LUA`); Java needs a JDK 17 or later (`javac` and `java` from `$JAVA_HOME/bin`, else `PATH`); Swift needs `swiftc`.
+(`fpc`); TypeScript needs Node (`node`) and is type-checked when `deno` is on `PATH`; Lua needs Lua 5.3 or later (`lua` on `PATH`, or `$LUA`); Java needs a JDK 17 or later (`javac` and `java` from `$JAVA_HOME/bin`, else `PATH`); Swift needs `swiftc`; Fortran needs `gfortran` (or the compiler in `$FC`).
 
 A spec file looks like this:
 

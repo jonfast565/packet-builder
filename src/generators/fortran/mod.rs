@@ -1,0 +1,233 @@
+//! Fortran 2008 backend: one module (named after the package) holding the
+//! runtime, a derived type per packet and union, and their procedures.
+//! Kinds come from `iso_fortran_env`; errors are returned in a `pb_error`
+//! (Fortran has no exceptions), so every fallible statement is followed by
+//! a return.
+
+mod decode;
+mod encode;
+mod expr;
+mod json;
+mod locals;
+mod naming;
+mod packet;
+mod stream;
+
+pub use naming::{component, int_kind, kind_bits, module_name, real_kind, type_name};
+
+use std::cell::RefCell;
+use std::collections::HashSet;
+
+use crate::generators::Backend;
+use crate::generators::common::{ConstEmitter, GenOptions, Out, runtime_source};
+use crate::ir::{Category, Constant, Module, ValueType};
+use naming::{int_const, reserved};
+
+pub struct FortranGenerator;
+
+const RUNTIME: &str = include_str!("../../../runtime/fortran.f90");
+
+/// The longest line written; longer ones are continued with `&`.
+const LINE: usize = 110;
+
+/// Module-level names taken so far (Fortran names ignore case).
+#[derive(Default)]
+struct Names {
+    taken: HashSet<String>,
+}
+
+impl Names {
+    fn take(&mut self, name: &str) {
+        self.taken.insert(name.to_ascii_lowercase());
+    }
+
+    /// `base`, or `base_`, `base__`, ... when it is reserved or taken.
+    fn free(&mut self, base: &str) -> String {
+        let mut n = if reserved(base) { format!("{}_", base) } else { base.to_string() };
+        while self.taken.contains(&n.to_ascii_lowercase()) {
+            n.push('_');
+        }
+        self.take(&n);
+        n
+    }
+}
+
+/// Every name the module declares for its types and procedures.
+fn type_names(module: &Module) -> Names {
+    let mut names = Names::default();
+    for u in &module.unions {
+        let t = type_name(&u.name);
+        names.take(&t);
+        names.take(&format!("{}_json_to", t));
+    }
+    for p in &module.packets {
+        let t = type_name(&p.name);
+        names.take(&t);
+        for suffix in ["decode", "decode_from", "encode", "encode_to", "to_json", "json_to", "try_decode", "frame_len"]
+        {
+            names.take(&format!("{}_{}", t, suffix));
+        }
+    }
+    names
+}
+
+/// Continue lines longer than [`LINE`]: code with `&` (a split token or
+/// string goes on after the `&` that starts the next line), comments as
+/// more comment lines.
+fn wrap(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + text.len() / 32);
+    for line in text.lines() {
+        if line.len() <= LINE {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+        let indent = &line[..line.len() - line.trim_start().len()];
+        if line.trim_start().starts_with('!') {
+            let marker = line.trim_start().split(' ').next().unwrap_or("!");
+            let mut cur = String::new();
+            for word in line.trim_start()[marker.len()..].split(' ').filter(|w| !w.is_empty()) {
+                if !cur.is_empty() && indent.len() + marker.len() + cur.len() + word.len() + 2 > LINE {
+                    out.push_str(&format!("{}{}{}\n", indent, marker, cur));
+                    cur.clear();
+                }
+                cur.push(' ');
+                cur.push_str(word);
+            }
+            out.push_str(&format!("{}{}{}\n", indent, marker, cur));
+            continue;
+        }
+        let mut rest = line;
+        let mut first = true;
+        loop {
+            let prefix = if first { 0 } else { indent.len() + 3 };
+            if rest.len() + prefix <= LINE {
+                if !first {
+                    out.push_str(indent);
+                    out.push_str("  &");
+                }
+                out.push_str(rest);
+                out.push('\n');
+                break;
+            }
+            let mut cut = LINE - 1 - prefix;
+            while !rest.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            if !first {
+                out.push_str(indent);
+                out.push_str("  &");
+            }
+            out.push_str(&rest[..cut]);
+            out.push_str("&\n");
+            rest = &rest[cut..];
+            first = false;
+        }
+    }
+    out
+}
+
+impl Backend for FortranGenerator {
+    fn generate(&self, module: &Module, opts: &GenOptions) -> String {
+        let runtime = runtime_source(RUNTIME, module.versions.is_some());
+        let split = runtime.find("  ! @contains").expect("runtime has a @contains marker");
+        let (declarations, rest) = runtime.split_at(split);
+        let procedures = &rest[rest.find('\n').map(|i| i + 1).unwrap_or(rest.len())..];
+        let mut names = type_names(module);
+        // A module may not share its name with what it declares.
+        let mut name = module_name(opts);
+        if names.taken.contains(&name.to_ascii_lowercase()) {
+            name.push_str("_mod");
+        }
+        names.take(&name);
+
+        let mut out = Out::new("  ");
+        out.line("! Generated by packet-builder. Do not edit.");
+        out.line(format!("module {}", name));
+        out.push();
+        out.line("use, intrinsic :: iso_fortran_env, only: int8, int16, int32, int64, real32, real64");
+        out.line(
+            "use, intrinsic :: ieee_arithmetic, only: ieee_is_nan, ieee_value, ieee_quiet_nan, ieee_positive_inf, ieee_negative_inf",
+        );
+        out.line("implicit none");
+        out.line("");
+        out.buf.push_str(declarations);
+
+        let consts = Consts { names: RefCell::new(names) };
+        consts.emit_constants(&mut out, module);
+        let mut names = consts.names.into_inner();
+
+        for u in &module.unions {
+            out.line("");
+            let tags: Vec<String> = packet::default_tags(u).iter().map(|t| names.free(t)).collect();
+            packet::declare_union(&mut out, u, &tags);
+        }
+        let ordered = packet::type_order(module);
+        for p in &ordered {
+            out.line("");
+            packet::declare_packet(&mut out, p);
+        }
+        if !module.packets.is_empty() {
+            out.line("");
+            out.open("interface pb_size");
+            for p in &module.packets {
+                out.line(format!("module procedure pb_size_{}", type_name(&p.name)));
+            }
+            out.close("end interface pb_size");
+        }
+        out.pop();
+        out.line("");
+        out.line("contains");
+        out.line("");
+        out.buf.push_str(procedures);
+        out.push();
+        for u in &module.unions {
+            packet::union_procedures(&mut out, u);
+        }
+        for p in &module.packets {
+            packet::size_function(&mut out, p);
+            packet::packet_procedures(&mut out, module, p);
+        }
+        out.pop();
+        out.line("");
+        out.line(format!("end module {}", name));
+        wrap(&out.buf)
+    }
+}
+
+/// Named constants as `parameter`s; category members are `<Category>_<NAME>`.
+struct Consts {
+    names: RefCell<Names>,
+}
+
+impl Consts {
+    fn line(&self, out: &mut Out, name: &str, c: &Constant) {
+        if let Some(note) = &c.note {
+            out.line(format!("!> {}", note));
+        }
+        let ValueType::Int { width, signed } = c.ty else { return };
+        let kind = int_kind(width, signed);
+        let name = self.names.borrow_mut().free(name);
+        let v = if signed || width >= 64 { c.value } else { c.value & ((1i64 << width) - 1) };
+        let lit = c.literal();
+        let note = if lit.starts_with("0x") { format!(" ! {}", lit) } else { String::new() };
+        out.line(format!("integer({}), parameter :: {} = {}{}", kind, name, int_const(v, kind), note));
+    }
+}
+
+impl ConstEmitter for Consts {
+    fn open_constants(&self, out: &mut Out) {
+        out.line("! Standalone named constants.");
+    }
+
+    fn constant(&self, out: &mut Out, c: &Constant) {
+        self.line(out, &c.name, c);
+    }
+
+    fn category(&self, out: &mut Out, cat: &Category) {
+        out.line(format!("! Named {} values.", cat.name));
+        for c in &cat.members {
+            self.line(out, &format!("{}_{}", cat.name, c.name), c);
+        }
+    }
+}

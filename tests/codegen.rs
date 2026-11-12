@@ -36,6 +36,11 @@ fn pascal_parsers_work() {
 }
 
 #[test]
+fn fortran_parsers_work() {
+    harness::run_target(&harness::fortran::FortranTarget);
+}
+
+#[test]
 fn zig_parsers_work() {
     harness::run_target(&harness::zig::ZigTarget);
 }

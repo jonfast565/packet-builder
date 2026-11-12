@@ -4,6 +4,7 @@
 pub mod c;
 pub mod common;
 pub mod csharp;
+pub mod fortran;
 pub mod go;
 pub mod java;
 pub mod lua;
@@ -39,5 +40,6 @@ pub fn backend(lang: Language) -> &'static dyn Backend {
         Language::Lua => &lua::LuaGenerator,
         Language::Java => &java::JavaGenerator,
         Language::Swift => &swift::SwiftGenerator,
+        Language::Fortran => &fortran::FortranGenerator,
     }
 }
