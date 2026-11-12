@@ -25,6 +25,14 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "8.0.x"
+      # Node 22.18+ runs the generated TypeScript without a build step.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
       - uses: mlugg/setup-zig@v1
         with:
           version: 0.13.0
