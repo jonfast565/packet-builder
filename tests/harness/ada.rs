@@ -155,7 +155,28 @@ impl Target for AdaTarget {
         fs::write(dir.join("harness.adb"), harness).unwrap();
         run(Command::new("gnatchop").current_dir(dir).args(["-w", &source]), "gnatchop")?;
         let gnatmake = gnatmake().expect("checked by unavailable");
-        run(Command::new(gnatmake).current_dir(dir).args(["-q", "-gnat2012", "-gnata", "harness.adb"]), "gnatmake")?;
+        let mut cmd = Command::new(gnatmake);
+        cmd.current_dir(dir).args(["-q", "-gnat2012", "-gnata", "harness.adb"]);
+        mac_sdk(&mut cmd);
+        run(&mut cmd, "gnatmake")?;
         run(&mut Command::new(dir.join("harness")), "ada harness")
     }
+}
+
+/// On macOS GNAT's linker needs the SDK (libSystem): set `SDKROOT` and
+/// `LIBRARY_PATH` from `xcrun --show-sdk-path` unless `SDKROOT` is set.
+fn mac_sdk(cmd: &mut Command) {
+    if !cfg!(target_os = "macos") || std::env::var_os("SDKROOT").is_some() {
+        return;
+    }
+    let Ok(out) = Command::new("xcrun").arg("--show-sdk-path").output() else { return };
+    let sdk = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if !out.status.success() || sdk.is_empty() {
+        return;
+    }
+    let lib = match std::env::var("LIBRARY_PATH") {
+        Ok(old) if !old.is_empty() => format!("{}/usr/lib:{}", sdk, old),
+        _ => format!("{}/usr/lib", sdk),
+    };
+    cmd.env("SDKROOT", &sdk).env("LIBRARY_PATH", lib);
 }

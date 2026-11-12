@@ -90,7 +90,7 @@ impl StepEmitter for Encoder<'_> {
             out.open(format!("when {} =>", arm_literal(u, arm)));
             let mut wrote = false;
             if let Some(test) = arm_test(arm, arms, "Pb_Sel") {
-                out.line(format!("if not {} then", test));
+                out.line(format!("if not ({}) then", test));
                 out.line(format!("   Pb_Fail (W, Pb_Mismatch, {});", ada_string(&mismatch_message(&m.name, arm))));
                 out.line("end if;");
                 wrote = true;
