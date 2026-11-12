@@ -36,6 +36,7 @@
 //! length) for packets with a frame length (`has_frame`).
 
 pub mod c;
+pub mod cobol;
 pub mod csharp;
 pub mod go;
 pub mod interp;

@@ -48,9 +48,9 @@ fn stdout_prints_code() {
 
 #[test]
 fn unknown_language_is_rejected() {
-    let out = bin().args(["gen", "examples/network.packet", "-l", "cobol", "-o", "unused"]).output().unwrap();
+    let out = bin().args(["gen", "examples/network.packet", "-l", "intercal", "-o", "unused"]).output().unwrap();
     assert!(!out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("unknown language `cobol`"));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("unknown language `intercal`"));
 }
 
 #[test]

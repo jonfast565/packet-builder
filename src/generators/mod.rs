@@ -2,6 +2,7 @@
 //! [`Backend`]; [`backend`] picks one for a [`Language`].
 
 pub mod c;
+pub mod cobol;
 pub mod common;
 pub mod csharp;
 pub mod go;
@@ -31,5 +32,6 @@ pub fn backend(lang: Language) -> &'static dyn Backend {
         Language::Python => &python::PythonGenerator,
         Language::Go => &go::GoGenerator,
         Language::Pascal => &pascal::PascalGenerator,
+        Language::Cobol => &cobol::CobolGenerator,
     }
 }

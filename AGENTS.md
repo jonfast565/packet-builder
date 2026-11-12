@@ -1,7 +1,7 @@
 # Notes for coding agents
 
 packet-builder compiles `.packet` descriptions into decoders/encoders for C,
-Rust, Go, Python, C#, Zig and Object Pascal. See `README.md` for the language itself.
+Rust, Go, Python, C#, Zig, Object Pascal and COBOL. See `README.md` for the language itself.
 
 ## Pipeline and layout
 
@@ -21,7 +21,7 @@ source ──parser──▶ PacketExprList ──ir::analyze──▶ ir::Modul
 | `src/ir/interp/` | the reference interpreter: decodes/encodes a `Module` directly, using `runtime/rust.rs` (included as `interp::rt`). `show.rs` renders decoded values for the `decode` command. |
 | `src/pcap.rs` | pcap/pcapng reading and pcap writing (no dependencies). |
 | `src/generators/common/` | code shared by every backend (see below). |
-| `src/generators/<lang>/` | one backend per language, always split the same way: `mod.rs` (file preamble, `Backend` impl), `naming.rs` (identifiers, types, `Dialect` marker), `expr.rs` (`ExprLang` impl, `store_value`), `decode.rs` / `encode.rs` (`StepEmitter` impls), `packet.rs` (struct + method wrappers), `json.rs` (`to_json`), `stream.rs` (`try_decode`, `frame_len`). Decoders take a `zero_copy` flag (`GenOptions::zero_copy`; `common::buffers` finds what holds byte buffers). Pascal adds `locals.rs`: every routine declares its locals in a `var` block, so the emitters collect them while writing the body. Its classes are declared in the interface and implemented after the runtime, which `runtime/pascal.pas` splits at its `@implementation` line. |
+| `src/generators/<lang>/` | one backend per language, always split the same way: `mod.rs` (file preamble, `Backend` impl), `naming.rs` (identifiers, types, `Dialect` marker), `expr.rs` (`ExprLang` impl, `store_value`), `decode.rs` / `encode.rs` (`StepEmitter` impls), `packet.rs` (struct + method wrappers), `json.rs` (`to_json`), `stream.rs` (`try_decode`, `frame_len`). Decoders take a `zero_copy` flag (`GenOptions::zero_copy`; `common::buffers` finds what holds byte buffers). Pascal adds `locals.rs`: every routine declares its locals in a `var` block, so the emitters collect them while writing the body. Its classes are declared in the interface and implemented after the runtime, which `runtime/pascal.pas` splits at its `@implementation` line. COBOL (GnuCOBOL, free format) also has `locals.rs` (LOCAL-STORAGE, since packet programs are RECURSIVE). Each packet is a fixed-size record (`naming.rs`) with programs `P<k>-<NAME>-INIT/-DEC/-ENC/-JSON/-FREE/-FRAME/-RUN` (`packet.rs`, `json.rs`, `stream.rs`). Runtime programs take their arguments in the EXTERNAL `PB-STATE` record, which `runtime/cobol.cob` keeps between `*>@state{` and `*>@state}` and `mod.rs` pastes at every program's `*>@STATE` line; every CALL is followed by an `IF PB-RC NOT = 0 GOBACK` check, and a packet program re-points `P-REC` (`SET ADDRESS OF P-REC TO PL-SELF`) after calling another one, because recursive calls share LINKAGE addresses. The main program (`stream.rs`) reads the `.dat` file the harness writes. |
 | `src/generators/wireshark/` | the Wireshark Lua dissector generator (`dissector` command; not a `Language`): `naming.rs` (`Lua` dialect, field keys), `expr.rs`, `fields.rs` (ProtoFields, value strings), `dissect.rs` (a decode `StepEmitter` that also fills the tree; failed checks become expert warnings), `mod.rs` (file layout, frame-length functions, registration). Runtime in `runtime/wireshark.lua`. |
 | `src/ir/frame.rs` | `Module::frame_length`: a packet's size from fixed-offset header fields, for TCP reassembly and stream framing. |
 | `src/tools/` | `doc` (Markdown with bit diagrams), `fuzz` (cargo-fuzz / libFuzzer harnesses), `diff` (wire compatibility); CLI glue in `src/commands.rs`. |
@@ -81,7 +81,7 @@ calls. Running out of data is
 `incomplete` only at the end of the real input; inside a reader window
 (`push_limit`/`pop_limit`) it is `invalid`. Checks that can fail live on the
 reader/writer so they can report the path. When adding a runtime function,
-add it to all seven runtimes with the same semantics, and to the interpreter
+add it to all eight runtimes with the same semantics, and to the interpreter
 if it changes what values mean. Code only files with protocol versions need
 sits between `@versions{` and `@versions}` comment lines
 (`common::runtime_source` drops it from other files).
