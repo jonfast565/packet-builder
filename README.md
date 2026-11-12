@@ -13,6 +13,7 @@ already uses, and packet-builder generates a decoder and encoder for
 | C#       | one file (`<package>.cs`), base class library only | `dotnet` / `csc` |
 | Zig      | one file (`<package>.zig`, Zig 0.13) | `zig build-exe` with a leak-checking allocator |
 | Object Pascal | one unit (`<package>.pas`) for Free Pascal 3.2 (`{$MODE DELPHIUNICODE}`) and Delphi, SysUtils and Math only | `fpc` with heaptrc leak checks |
+| Ada      | one file (`<package>.ada`, Ada 2012) holding the package spec and body, standard library only; `gnatchop` splits it into `<package>.ads` and `<package>.adb` | `gnatchop`, then `gnatmake -gnat2012` (`$GNATMAKE` overrides) |
 
 ```
 packet Flap be {
@@ -406,6 +407,7 @@ Each union becomes a type named after the packet and field (`MessageBody`):
 | C# | abstract class with a sealed subclass per arm holding `Value` | `if (m.Body is MessageBody.Pair p) ... p.Value.A` |
 | Zig | `union(enum)` | `switch (m.body) { .pair => |p| ..., else => {} }` |
 | Pascal | abstract class `TMessageBody` with a subclass per arm holding `Value` (`TMessageBody_Pair`) | `if m.Body is TMessageBody_Pair then ... TMessageBody_Pair(m.Body).Value.A` |
+| Ada | variant record `MessageBody (Kind : MessageBody_Kind := MessageBody_Text)` with a component per arm | `if M.Body_F.Kind = MessageBody_Pair then ... M.Body_F.Pair.A`; build with `MessageBody'(Kind => MessageBody_Pair, Pair => X)` |
 
 ### Parameters
 
@@ -494,6 +496,7 @@ packet Frame be {
 | C# | `P.Decode(data, version: v)`, `p.Encode(version: v)`, `P.TryDecode(data, version: v)` |
 | Zig | `P.decodeV(allocator, data, v)`, `p.encodeV(allocator, v)`, `P.tryDecodeV(allocator, data, v)` |
 | Pascal | `TP.Decode(data, v)`, `p.Encode(v)`, `TP.TryDecode(data, p, n, v)` |
+| Ada | `Decode (Data, Version => V)`, `Encode (P, Version => V)`, `Try_Decode (Data, P, N, Version => V)` |
 
 The version lives on each reader and writer, never in global state, so one
 parser decodes connections of different versions side by side, and a stream
@@ -744,7 +747,7 @@ packet Flap be {
 
 * `== value` declares a magic value. Members with one start out holding
   it (struct defaults in Rust, Python, C#, Zig; `P_init()` in C; `NewP()` in
-  Go; the constructor in Pascal), so building a packet only takes the fields that vary.
+  Go; the constructor in Pascal; record defaults in Ada), so building a packet only takes the fields that vary.
 * `in lo..hi` and `== value` take constant expressions that must fit the
   field. Checks apply to single integer fields and bitfield members.
 * `: Category strict` accepts only the values listed in the category.
@@ -795,10 +798,11 @@ with parameters takes them as extra arguments to each of these.
 | C# | `P.Decode(data)`, `P.DecodeFrom(new PbReader(data))` | `p.Encode()`, `p.EncodeTo(w)` | throws `PbException` |
 | Zig | `P.decode(allocator, data)`, `P.decodeFrom(allocator, &reader)`; release with `p.deinit(allocator)` | `p.encode(allocator)`, `p.encodeTo(&writer)` | `PbError!T` |
 | Pascal | `TP.Decode(data)`, `TP.DecodeFrom(reader)`; release with `p.Free` (frees nested packets and unions) | `p.Encode`, `p.EncodeTo(writer)` | raises `EPbError` |
+| Ada | `P : T := Decode (Data)` (overloaded on the result type: `T'(Decode (Data))`), `Decode_From (R'Access)`; values are records whose packet arrays free themselves | `Encode (P)` (a `Pb_Byte_Array`), `Encode_To (P, W'Access)` | raises `Pb_Error` (and nothing else); details in `Last_Error` |
 
 Every packet and union also gets a **JSON dump** (`to_json()` in Rust and
 Python, `ToJSON()` in Go, `ToJson()` in C#, `P_to_json(&p)` in C (a
-malloc'ed string), `p.toJson(writer)` in Zig, `p.ToJson` in Pascal): integers are numbers, byte
+malloc'ed string), `p.toJson(writer)` in Zig, `p.ToJson` in Pascal, `To_Json (P)` in Ada): integers are numbers, byte
 buffers hex strings, unions `{"kind": arm, "value": ...}`.
 
 ### Streams
@@ -815,6 +819,7 @@ parameters can be decoded from a buffer that may end mid-packet:
 | C# | `P.TryDecode(data)`: `IsDone`, `Value`, `Consumed`, `Needed` | `P.FrameLen(data)`: size or `null` |
 | Zig | `P.tryDecode(allocator, data)`: `.done` (value, consumed) or `.incomplete` (needed) | `P.frameLen(data)`: size or `null` |
 | Pascal | `TP.TryDecode(data, p, n)`: True (n = bytes taken) or False (n = bytes needed) | `TP.FrameLen(data, size)`: False until the header is there |
+| Ada | `Try_Decode (Data, P, N)`: True (N = bytes taken) or False (N = bytes needed) | `T_Frame_Len (Data, Size)`: False until the header is there |
 
 A packet has a frame length when its size follows from fixed-offset header
 fields (FLAP: 6 bytes plus `length`; UDP: `length`): read that many bytes,
@@ -835,6 +840,7 @@ instead of copying it; the input must then outlive the value:
 | C# | `ReadOnlyMemory<byte>` over the input | copied |
 | Zig | slices of the input; `deinit` leaves them | copied |
 | Pascal | copied (`TBytes`; the option changes nothing) | copied |
+| Ada | copied (`Pb_Bytes` vectors; the option changes nothing) | copied (`Unbounded_String`) |
 
 Byte lists read with `until` are built element by element, so they stay
 copies, except in C and Zig, where they point into the input too.
@@ -876,6 +882,7 @@ Every error has a **kind**, the **path** of the field it happened in
 | Python | `e.kind` (`PbError.INCOMPLETE`, ...) | `e.path`, `e.bit_offset`, `e.needed_bits` |
 | C# | `e.Kind` (`PbErrorKind.Incomplete`, ...) | `e.Path`, `e.BitOffset`, `e.NeededBits` |
 | Pascal | `E.Kind` (`pekIncomplete`, ...) | `E.Path`, `E.BitOffset`, `E.NeededBits` |
+| Ada | after `Pb_Error`: `Last_Error.Kind` (`Pb_Incomplete`, ...) | `Last_Error.Path`, `.Bit_Offset`, `.Needed_Bits`, `.Message` (one record for the whole program: not task-safe) |
 | Zig | the error (`error.Incomplete`, `error.Invalid`, `error.Range`, `error.InvalidText`, `error.Mismatch`, `error.Constraint`, `error.OutOfMemory`) | `reader.trace.diag` (`bit_offset`, `needed_bits`), `reader.trace.writePath(writer)` |
 
 Named constants are exported with their declared type:
@@ -889,6 +896,7 @@ Named constants are exported with their declared type:
 | C# | `Constants.FlapStart` | `Channel.Snac` |
 | Zig | `FLAP_START: u8` | `Channel.snac` |
 | Pascal | `FlapStart` | `TChannel.Snac` |
+| Ada | `FlapStart` | `Channel.Snac` (a nested package) |
 
 For C, define `PACKETS_IMPLEMENTATION` (the upper-cased `-p` name followed by
 `_IMPLEMENTATION`) in exactly one `.c` file before including the header. Go,
@@ -897,7 +905,8 @@ Pascal types are prefixed with `T` (`TFlap`). Names that are
 keywords in a target language are escaped (`type` becomes `r#type` in Rust,
 `type_` in C, `@"type"` in Zig, and `Type_` in Pascal, which also escapes
 names that would hide the RTL routines the generated code calls, such as
-`Length_`). In Zig, bit-sized fields use exact-width
+`Length_`). Ada names are Mixed_Case (`total_length` becomes `Total_Length`, `Flap` stays `Flap`),
+and reserved or clashing names get `_F` (`Body_F`, `Length_F`). In Zig, bit-sized fields use exact-width
 types (`u3`, `i12`), so out-of-range values are compile errors. The other
 languages check ranges when encoding.
 
@@ -925,7 +934,8 @@ cargo test
 Languages whose toolchain is missing are skipped with a message. Set
 `PB_REQUIRE_ALL=1` to turn a missing toolchain into a failure (CI does). Zig is
 looked up as `zig` on `PATH` or through `$ZIG`; C# needs a .NET SDK (`dotnet`); Pascal needs Free Pascal
-(`fpc`).
+(`fpc`). Ada needs GNAT: `gnatchop` on `PATH` and `gnatmake` there or through `$GNATMAKE`; the
+harness runs `gnatchop -w packets.ada`, then `gnatmake -gnat2012 -gnata harness.adb`.
 
 A spec file looks like this:
 
