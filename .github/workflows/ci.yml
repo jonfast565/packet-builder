@@ -36,8 +36,8 @@ jobs:
       - uses: mlugg/setup-zig@v1
         with:
           version: 0.13.0
-      - name: Install Free Pascal and gfortran
-        run: sudo apt-get update && sudo apt-get install -y fpc gfortran
+      - name: Install Free Pascal, gfortran and GNAT
+        run: sudo apt-get update && sudo apt-get install -y fpc gfortran gnat
       - name: Install Lua
         run: |
           sudo apt-get install -y lua5.4
