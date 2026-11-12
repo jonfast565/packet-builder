@@ -41,6 +41,11 @@ fn fortran_parsers_work() {
 }
 
 #[test]
+fn ada_parsers_work() {
+    harness::run_target(&harness::ada::AdaTarget);
+}
+
+#[test]
 fn zig_parsers_work() {
     harness::run_target(&harness::zig::ZigTarget);
 }

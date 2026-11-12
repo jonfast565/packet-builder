@@ -15,10 +15,11 @@ pub enum Language {
     Java,
     Swift,
     Fortran,
+    Ada,
 }
 
 impl Language {
-    pub const ALL: [Language; 12] = [
+    pub const ALL: [Language; 13] = [
         Language::C,
         Language::Rust,
         Language::Zig,
@@ -31,6 +32,7 @@ impl Language {
         Language::Java,
         Language::Swift,
         Language::Fortran,
+        Language::Ada,
     ];
 
     pub fn from_name(name: &str) -> Option<Language> {
@@ -47,6 +49,7 @@ impl Language {
             "java" | "jvm" => Language::Java,
             "swift" => Language::Swift,
             "fortran" | "f90" => Language::Fortran,
+            "ada" | "gnat" => Language::Ada,
             _ => return None,
         })
     }
@@ -65,6 +68,7 @@ impl Language {
             Language::Java => "java",
             Language::Swift => "swift",
             Language::Fortran => "fortran",
+            Language::Ada => "ada",
         }
     }
 
@@ -83,6 +87,7 @@ impl Language {
             Language::Java => "java",
             Language::Swift => "swift",
             Language::Fortran => "f90",
+            Language::Ada => "ada",
         }
     }
 

@@ -35,6 +35,7 @@
 //! `"frame":size` (null while the header is incomplete, "error" for a bad
 //! length) for packets with a frame length (`has_frame`).
 
+pub mod ada;
 pub mod c;
 pub mod csharp;
 pub mod fortran;

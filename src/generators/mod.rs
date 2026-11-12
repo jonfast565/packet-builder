@@ -1,6 +1,7 @@
 //! Code generators. Each backend lives in its own module and implements
 //! [`Backend`]; [`backend`] picks one for a [`Language`].
 
+pub mod ada;
 pub mod c;
 pub mod common;
 pub mod csharp;
@@ -41,5 +42,6 @@ pub fn backend(lang: Language) -> &'static dyn Backend {
         Language::Java => &java::JavaGenerator,
         Language::Swift => &swift::SwiftGenerator,
         Language::Fortran => &fortran::FortranGenerator,
+        Language::Ada => &ada::AdaGenerator,
     }
 }

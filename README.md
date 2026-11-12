@@ -18,6 +18,7 @@ already uses, and packet-builder generates a decoder and encoder for
 | Java     | one class (`<Package>.java`, Java 17) with nested static classes, `java.base` only | `javac --release 17 -Xlint:all -Werror`, `java` |
 | Swift    | one file (`<package>.swift`, Swift 5.9+), Foundation only | `swiftc -swift-version 5` |
 | Fortran  | one module (`<package>.f90`, Fortran 2008), intrinsic modules only | `gfortran -std=f2008 -fcheck=all` |
+| Ada      | one file (`<package>.ada`, Ada 2012) holding the package spec and body, standard library only; `gnatchop` splits it into `<package>.ads` and `<package>.adb` | `gnatchop`, then `gnatmake -gnat2012` (`$GNATMAKE` overrides) |
 
 ```
 packet Flap be {
@@ -417,6 +418,7 @@ Each union becomes a type named after the packet and field (`MessageBody`):
 | Java | abstract static class with a final subclass per arm holding `value` | `if (m.body instanceof MessageBody.Pair pr) ... pr.value.a` |
 | Swift | `enum MessageBody { case text([UInt8]), number(UInt32), pair(Pair), ping, other([UInt8]) }` | `if case .pair(let p) = m.body { ... p.a }` |
 | Fortran | derived type `MessageBody` with `pb_arm` (one of `MessageBody_text`, ...) and a component per arm (packets `allocatable`) | `if (m%body%pb_arm == MessageBody_pair) ... m%body%pair%a` |
+| Ada | variant record `MessageBody (Kind : MessageBody_Kind := MessageBody_Text)` with a component per arm | `if M.Body_F.Kind = MessageBody_Pair then ... M.Body_F.Pair.A`; build with `MessageBody'(Kind => MessageBody_Pair, Pair => X)` |
 
 ### Parameters
 
@@ -510,6 +512,7 @@ packet Frame be {
 | Java | `P.decode(data, v)`, `p.encode(v)`, `P.tryDecode(data, v)` |
 | Swift | `P.decode(data, version: v)`, `p.encode(version: v)`, `P.tryDecode(data, version: v)`; or `reader.setVersion(v, min, latest)` |
 | Fortran | `call P_decode(p, data, err, pb_version=v)`, `call P_encode(p, out, err, pb_version=v)`, `call P_try_decode(data, p, n, err, pb_version=v)` |
+| Ada | `Decode (Data, Version => V)`, `Encode (P, Version => V)`, `Try_Decode (Data, P, N, Version => V)` |
 
 The version lives on each reader and writer, never in global state, so one
 parser decodes connections of different versions side by side, and a stream
@@ -760,7 +763,7 @@ packet Flap be {
 
 * `== value` declares a magic value. Members with one start out holding
   it (struct defaults in Rust, Python, C#, Zig, Swift; `P_init()` in C; `NewP()` in
-  Go; the constructor in Pascal; field initializers in TypeScript; `P.new()` in Lua; field initializers in Java; component defaults in Fortran), so building a packet only takes the fields that vary.
+  Go; the constructor in Pascal; field initializers in TypeScript; `P.new()` in Lua; field initializers in Java; component defaults in Fortran; record defaults in Ada), so building a packet only takes the fields that vary.
 * `in lo..hi` and `== value` take constant expressions that must fit the
   field. Checks apply to single integer fields and bitfield members.
 * `: Category strict` accepts only the values listed in the category.
@@ -816,10 +819,11 @@ with parameters takes them as extra arguments to each of these.
 | Java | `P.decode(data)`, `P.decodeFrom(new PbReader(data))` | `p.encode()`, `p.encodeTo(w)` | throws `PbException` (unchecked) |
 | Swift | `try P.decode(data)`, `try P.decodeFrom(PbReader(data))` | `try p.encode()`, `try p.encodeTo(writer)` | throws `PbError` |
 | Fortran | `call P_decode(p, data, err)`, `call P_decode_from(p, reader)` (allocatables free themselves) | `call P_encode(p, out, err)`, `call P_encode_to(p, writer)` | `err%kind` (`type(pb_error)`); the reader's or writer's `%e` |
+| Ada | `P : T := Decode (Data)` (overloaded on the result type: `T'(Decode (Data))`), `Decode_From (R'Access)`; values are records whose packet arrays free themselves | `Encode (P)` (a `Pb_Byte_Array`), `Encode_To (P, W'Access)` | raises `Pb_Error` (and nothing else); details in `Last_Error` |
 
 Every packet and union also gets a **JSON dump** (`to_json()` in Rust and
 Python, `ToJSON()` in Go, `ToJson()` in C#, `P_to_json(&p)` in C (a
-malloc'ed string), `p.toJson(writer)` in Zig, `p.ToJson` in Pascal, `p.toJson()` in TypeScript, `P.to_json(p)` in Lua, `p.toJson()` in Java, `p.toJson()` in Swift, `P_to_json(p)` in Fortran): integers are numbers, byte
+malloc'ed string), `p.toJson(writer)` in Zig, `p.ToJson` in Pascal, `p.toJson()` in TypeScript, `P.to_json(p)` in Lua, `p.toJson()` in Java, `p.toJson()` in Swift, `P_to_json(p)` in Fortran, `To_Json (P)` in Ada): integers are numbers, byte
 buffers hex strings, unions `{"kind": arm, "value": ...}`.
 
 ### Streams
@@ -841,6 +845,7 @@ parameters can be decoded from a buffer that may end mid-packet:
 | Java | `P.tryDecode(data)`: a `PbStatus` with `isDone()`, `value()`, `consumed()`, `needed()` | `P.frameLen(data)`: an `OptionalInt` |
 | Swift | `try P.tryDecode(data)`: `.done(p, used)` or `.incomplete(needed)` | `try P.frameLen(data)`: size or `nil` |
 | Fortran | `call P_try_decode(data, p, n, err)`: `err%kind` `PB_OK` (n = bytes taken) or `PB_INCOMPLETE` (n = bytes needed) | `call P_frame_len(data, n, err)`: `PB_INCOMPLETE` until the header is there |
+| Ada | `Try_Decode (Data, P, N)`: True (N = bytes taken) or False (N = bytes needed) | `T_Frame_Len (Data, Size)`: False until the header is there |
 
 A packet has a frame length when its size follows from fixed-offset header
 fields (FLAP: 6 bytes plus `length`; UDP: `length`): read that many bytes,
@@ -866,6 +871,7 @@ instead of copying it; the input must then outlive the value:
 | Java | read-only `java.nio.ByteBuffer` views of the input (otherwise copied `byte[]`) | copied |
 | Swift | `ArraySlice<UInt8>`s sharing the input's storage | copied |
 | Fortran | copied (allocatable `integer(int8)` arrays; the option changes nothing) | copied |
+| Ada | copied (`Pb_Bytes` vectors; the option changes nothing) | copied (`Unbounded_String`) |
 
 Byte lists read with `until` are built element by element, so they stay
 copies, except in C and Zig, where they point into the input too.
@@ -912,6 +918,7 @@ Every error has a **kind**, the **path** of the field it happened in
 | Java | `e.kind()` (`PbErrorKind.INCOMPLETE`, ...) | `e.path()`, `e.bitOffset()`, `e.neededBits()` |
 | Swift | `e.kind` (`.incomplete`, ...) | `e.path`, `e.bitOffset`, `e.neededBits`; `description` shows all three |
 | Fortran | `err%kind` (`PB_INCOMPLETE`, ...; `PB_OK` when none) | `err%path`, `err%bit_offset`, `err%needed_bits`; `err%message` (path, reason and bit offset) |
+| Ada | after `Pb_Error`: `Last_Error.Kind` (`Pb_Incomplete`, ...) | `Last_Error.Path`, `.Bit_Offset`, `.Needed_Bits`, `.Message` (one record for the whole program: not task-safe) |
 | Zig | the error (`error.Incomplete`, `error.Invalid`, `error.Range`, `error.InvalidText`, `error.Mismatch`, `error.Constraint`, `error.OutOfMemory`) | `reader.trace.diag` (`bit_offset`, `needed_bits`), `reader.trace.writePath(writer)` |
 
 Named constants are exported with their declared type:
@@ -930,6 +937,7 @@ Named constants are exported with their declared type:
 | Java | `Constants.FLAP_START` (`int`) | `Channel.SNAC` |
 | Swift | `FLAP_START: UInt8` | `Channel.SNAC` |
 | Fortran | `FLAP_START` (an `integer(int16), parameter`) | `Channel_snac` |
+| Ada | `FlapStart` | `Channel.Snac` (a nested package) |
 
 For C, define `PACKETS_IMPLEMENTATION` (the upper-cased `-p` name followed by
 `_IMPLEMENTATION`) in exactly one `.c` file before including the header. Go,
@@ -938,7 +946,8 @@ Pascal types are prefixed with `T` (`TFlap`). Names that are
 keywords in a target language are escaped (`type` becomes `r#type` in Rust,
 `type_` in C, `@"type"` in Zig, and `Type_` in Pascal, which also escapes
 names that would hide the RTL routines the generated code calls, such as
-`Length_`). Swift escapes keywords with backticks (`` `repeat` ``) and adds `_`
+`Length_`). Ada names are Mixed_Case (`total_length` becomes `Total_Length`, `Flap` stays `Flap`),
+and reserved or clashing names get `_F` (`Body_F`, `Length_F`). Swift escapes keywords with backticks (`` `repeat` ``) and adds `_`
 to names that would clash with `self`, `Type` or the generated methods
 (`encode_`); Lua keeps every name and indexes keywords as strings (`p["end"]`). Java member names are camelCase (`totalLength`, keywords become
 `type_`), and every class is nested in one outer class named after the
@@ -984,7 +993,8 @@ cargo test
 Languages whose toolchain is missing are skipped with a message. Set
 `PB_REQUIRE_ALL=1` to turn a missing toolchain into a failure (CI does). Zig is
 looked up as `zig` on `PATH` or through `$ZIG`; C# needs a .NET SDK (`dotnet`); Pascal needs Free Pascal
-(`fpc`); TypeScript needs Node (`node`) and is type-checked when `deno` is on `PATH`; Lua needs Lua 5.3 or later (`lua` on `PATH`, or `$LUA`); Java needs a JDK 17 or later (`javac` and `java` from `$JAVA_HOME/bin`, else `PATH`); Swift needs `swiftc`; Fortran needs `gfortran` (or the compiler in `$FC`).
+(`fpc`); TypeScript needs Node (`node`) and is type-checked when `deno` is on `PATH`; Lua needs Lua 5.3 or later (`lua` on `PATH`, or `$LUA`); Java needs a JDK 17 or later (`javac` and `java` from `$JAVA_HOME/bin`, else `PATH`); Swift needs `swiftc`; Fortran needs `gfortran` (or the compiler in `$FC`). Ada needs GNAT: `gnatchop` on `PATH` and `gnatmake` there or through `$GNATMAKE`; the
+harness runs `gnatchop -w packets.ada`, then `gnatmake -gnat2012 -gnata harness.adb`.
 
 A spec file looks like this:
 
