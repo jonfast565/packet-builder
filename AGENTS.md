@@ -1,7 +1,7 @@
 # Notes for coding agents
 
 packet-builder compiles `.packet` descriptions into decoders/encoders for C,
-Rust, Go, Python, C#, Zig, Object Pascal, TypeScript, Lua and Java. See `README.md` for the language itself.
+Rust, Go, Python, C#, Zig, Object Pascal, TypeScript, Lua, Java and Swift. See `README.md` for the language itself.
 
 ## Pipeline and layout
 
@@ -81,7 +81,7 @@ calls. Running out of data is
 `incomplete` only at the end of the real input; inside a reader window
 (`push_limit`/`pop_limit`) it is `invalid`. Checks that can fail live on the
 reader/writer so they can report the path. When adding a runtime function,
-add it to all ten runtimes with the same semantics, and to the interpreter
+add it to all eleven runtimes with the same semantics, and to the interpreter
 if it changes what values mean. Code only files with protocol versions need
 sits between `@versions{` and `@versions}` comment lines
 (`common::runtime_source` drops it from other files).

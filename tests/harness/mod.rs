@@ -44,6 +44,7 @@ pub mod lua;
 pub mod pascal;
 pub mod python;
 pub mod rust;
+pub mod swift;
 pub mod typescript;
 pub mod zig;
 

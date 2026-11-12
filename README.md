@@ -16,6 +16,7 @@ already uses, and packet-builder generates a decoder and encoder for
 | TypeScript | one ES module (`<package>.ts`), no dependencies; erasable syntax, so Node 22.18+ runs it as is | `node`, plus `deno check` (strict) when Deno is installed |
 | Lua | one module (`<package>.lua`) for Lua 5.3 to 5.5, no C modules | `lua` (or `$LUA`) |
 | Java     | one class (`<Package>.java`, Java 17) with nested static classes, `java.base` only | `javac --release 17 -Xlint:all -Werror`, `java` |
+| Swift    | one file (`<package>.swift`, Swift 5.9+), Foundation only | `swiftc -swift-version 5` |
 
 ```
 packet Flap be {
@@ -413,6 +414,7 @@ Each union becomes a type named after the packet and field (`MessageBody`):
 | TypeScript | discriminated union `{ kind: "pair"; value: Pair } \| ...`, plus an object `MessageBody` with `pbDefault()` and `toJson(u)` | `if (m.body.kind === "pair") m.body.value.a`; build with `{ kind: "pair", value: p }` |
 | Lua | table with `kind` (the arm's name) and `value` | `m.body.kind == "pair"`, `m.body.value.a`; build with `packets.MessageBody.new("pair", packets.Pair.new({ a = 1, b = 2 }))` |
 | Java | abstract static class with a final subclass per arm holding `value` | `if (m.body instanceof MessageBody.Pair pr) ... pr.value.a` |
+| Swift | `enum MessageBody { case text([UInt8]), number(UInt32), pair(Pair), ping, other([UInt8]) }` | `if case .pair(let p) = m.body { ... p.a }` |
 
 ### Parameters
 
@@ -504,6 +506,7 @@ packet Frame be {
 | TypeScript | `P.decode(data, v)`, `p.encode(v)`, `P.tryDecode(data, v)` |
 | Lua | `P.decode(data, v)`, `P.encode(p, v)`, `P.try_decode(data, v)` (after any packet parameters) |
 | Java | `P.decode(data, v)`, `p.encode(v)`, `P.tryDecode(data, v)` |
+| Swift | `P.decode(data, version: v)`, `p.encode(version: v)`, `P.tryDecode(data, version: v)`; or `reader.setVersion(v, min, latest)` |
 
 The version lives on each reader and writer, never in global state, so one
 parser decodes connections of different versions side by side, and a stream
@@ -753,7 +756,7 @@ packet Flap be {
 ```
 
 * `== value` declares a magic value. Members with one start out holding
-  it (struct defaults in Rust, Python, C#, Zig; `P_init()` in C; `NewP()` in
+  it (struct defaults in Rust, Python, C#, Zig, Swift; `P_init()` in C; `NewP()` in
   Go; the constructor in Pascal; field initializers in TypeScript; `P.new()` in Lua; field initializers in Java), so building a packet only takes the fields that vary.
 * `in lo..hi` and `== value` take constant expressions that must fit the
   field. Checks apply to single integer fields and bitfield members.
@@ -808,10 +811,11 @@ with parameters takes them as extra arguments to each of these.
 | TypeScript | `P.decode(data)`, `P.decodeFrom(new PbReader(data))` | `p.encode()`, `p.encodeTo(w)` | throws `PbError` |
 | Lua | `P.decode(data)`, `P.decode_from(reader)`; `P.decode_safe(data)` returns `nil, err` instead of raising | `P.encode(p)` (or `p:encode()`), `P.encode_to(p, writer)`; `P.encode_safe(p)` | raises a `PbError` table with `error`; catch it with `pcall` |
 | Java | `P.decode(data)`, `P.decodeFrom(new PbReader(data))` | `p.encode()`, `p.encodeTo(w)` | throws `PbException` (unchecked) |
+| Swift | `try P.decode(data)`, `try P.decodeFrom(PbReader(data))` | `try p.encode()`, `try p.encodeTo(writer)` | throws `PbError` |
 
 Every packet and union also gets a **JSON dump** (`to_json()` in Rust and
 Python, `ToJSON()` in Go, `ToJson()` in C#, `P_to_json(&p)` in C (a
-malloc'ed string), `p.toJson(writer)` in Zig, `p.ToJson` in Pascal, `p.toJson()` in TypeScript, `P.to_json(p)` in Lua, `p.toJson()` in Java): integers are numbers, byte
+malloc'ed string), `p.toJson(writer)` in Zig, `p.ToJson` in Pascal, `p.toJson()` in TypeScript, `P.to_json(p)` in Lua, `p.toJson()` in Java, `p.toJson()` in Swift): integers are numbers, byte
 buffers hex strings, unions `{"kind": arm, "value": ...}`.
 
 ### Streams
@@ -831,6 +835,7 @@ parameters can be decoded from a buffer that may end mid-packet:
 | TypeScript | `P.tryDecode(data)`: `[p, used]` or `[null, needed]` | `P.frameLen(data)`: size or `null` |
 | Lua | `P.try_decode(data)`: `p, used` or `nil, needed` | `P.frame_len(data)`: size or `nil` |
 | Java | `P.tryDecode(data)`: a `PbStatus` with `isDone()`, `value()`, `consumed()`, `needed()` | `P.frameLen(data)`: an `OptionalInt` |
+| Swift | `try P.tryDecode(data)`: `.done(p, used)` or `.incomplete(needed)` | `try P.frameLen(data)`: size or `nil` |
 
 A packet has a frame length when its size follows from fixed-offset header
 fields (FLAP: 6 bytes plus `length`; UDP: `length`): read that many bytes,
@@ -854,6 +859,7 @@ instead of copying it; the input must then outlive the value:
 | TypeScript | `Uint8Array` views (`subarray`) of the input | copied |
 | Lua | strings, which are immutable and shared (the option changes nothing) | strings |
 | Java | read-only `java.nio.ByteBuffer` views of the input (otherwise copied `byte[]`) | copied |
+| Swift | `ArraySlice<UInt8>`s sharing the input's storage | copied |
 
 Byte lists read with `until` are built element by element, so they stay
 copies, except in C and Zig, where they point into the input too.
@@ -898,6 +904,7 @@ Every error has a **kind**, the **path** of the field it happened in
 | TypeScript | `e.kind` (`PbError.INCOMPLETE`, ...) | `e.path`, `e.bitOffset`, `e.neededBits` |
 | Lua | `e.kind` (`"incomplete"`, ...) | `e.path`, `e.bit`, `e.needed`; `tostring(e)` shows the path and message |
 | Java | `e.kind()` (`PbErrorKind.INCOMPLETE`, ...) | `e.path()`, `e.bitOffset()`, `e.neededBits()` |
+| Swift | `e.kind` (`.incomplete`, ...) | `e.path`, `e.bitOffset`, `e.neededBits`; `description` shows all three |
 | Zig | the error (`error.Incomplete`, `error.Invalid`, `error.Range`, `error.InvalidText`, `error.Mismatch`, `error.Constraint`, `error.OutOfMemory`) | `reader.trace.diag` (`bit_offset`, `needed_bits`), `reader.trace.writePath(writer)` |
 
 Named constants are exported with their declared type:
@@ -914,6 +921,7 @@ Named constants are exported with their declared type:
 | TypeScript | `FLAP_START` | `Channel.SNAC` |
 | Lua | `packets.FLAP_START` | `packets.Channel.SNAC` |
 | Java | `Constants.FLAP_START` (`int`) | `Channel.SNAC` |
+| Swift | `FLAP_START: UInt8` | `Channel.SNAC` |
 
 For C, define `PACKETS_IMPLEMENTATION` (the upper-cased `-p` name followed by
 `_IMPLEMENTATION`) in exactly one `.c` file before including the header. Go,
@@ -922,7 +930,9 @@ Pascal types are prefixed with `T` (`TFlap`). Names that are
 keywords in a target language are escaped (`type` becomes `r#type` in Rust,
 `type_` in C, `@"type"` in Zig, and `Type_` in Pascal, which also escapes
 names that would hide the RTL routines the generated code calls, such as
-`Length_`); Lua keeps every name and indexes keywords as strings (`p["end"]`). Java member names are camelCase (`totalLength`, keywords become
+`Length_`). Swift escapes keywords with backticks (`` `repeat` ``) and adds `_`
+to names that would clash with `self`, `Type` or the generated methods
+(`encode_`); Lua keeps every name and indexes keywords as strings (`p["end"]`). Java member names are camelCase (`totalLength`, keywords become
 `type_`), and every class is nested in one outer class named after the
 package (`Packets.Flap`); unsigned 8- and 16-bit fields are `int`, 32- and
 64-bit ones `long` (a `uint64` holds the bit pattern). In Zig, bit-sized fields use exact-width
@@ -958,7 +968,7 @@ cargo test
 Languages whose toolchain is missing are skipped with a message. Set
 `PB_REQUIRE_ALL=1` to turn a missing toolchain into a failure (CI does). Zig is
 looked up as `zig` on `PATH` or through `$ZIG`; C# needs a .NET SDK (`dotnet`); Pascal needs Free Pascal
-(`fpc`); TypeScript needs Node (`node`) and is type-checked when `deno` is on `PATH`; Lua needs Lua 5.3 or later (`lua` on `PATH`, or `$LUA`); Java needs a JDK 17 or later (`javac` and `java` from `$JAVA_HOME/bin`, else `PATH`).
+(`fpc`); TypeScript needs Node (`node`) and is type-checked when `deno` is on `PATH`; Lua needs Lua 5.3 or later (`lua` on `PATH`, or `$LUA`); Java needs a JDK 17 or later (`javac` and `java` from `$JAVA_HOME/bin`, else `PATH`); Swift needs `swiftc`.
 
 A spec file looks like this:
 

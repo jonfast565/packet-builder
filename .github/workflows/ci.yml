@@ -34,6 +34,9 @@ jobs:
         run: |
           sudo apt-get install -y lua5.4
           echo "LUA=lua5.4" >> "$GITHUB_ENV"
+      # Swift comes with the runner image.
+      - name: Check Swift
+        run: swiftc --version
       # tshark 4.4 or later runs the generated Wireshark dissectors; Ubuntu's
       # own package is older, so it comes from the Wireshark PPA.
       - name: Install tshark

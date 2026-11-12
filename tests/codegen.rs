@@ -56,6 +56,11 @@ fn java_parsers_work() {
 }
 
 #[test]
+fn swift_parsers_work() {
+    harness::run_target(&harness::swift::SwiftTarget);
+}
+
+#[test]
 fn interpreter_works() {
     harness::run_target(&harness::interp::InterpTarget);
 }

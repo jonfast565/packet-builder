@@ -13,10 +13,11 @@ pub enum Language {
     TypeScript,
     Lua,
     Java,
+    Swift,
 }
 
 impl Language {
-    pub const ALL: [Language; 10] = [
+    pub const ALL: [Language; 11] = [
         Language::C,
         Language::Rust,
         Language::Zig,
@@ -27,6 +28,7 @@ impl Language {
         Language::TypeScript,
         Language::Lua,
         Language::Java,
+        Language::Swift,
     ];
 
     pub fn from_name(name: &str) -> Option<Language> {
@@ -41,6 +43,7 @@ impl Language {
             "typescript" | "ts" => Language::TypeScript,
             "lua" => Language::Lua,
             "java" | "jvm" => Language::Java,
+            "swift" => Language::Swift,
             _ => return None,
         })
     }
@@ -57,6 +60,7 @@ impl Language {
             Language::TypeScript => "typescript",
             Language::Lua => "lua",
             Language::Java => "java",
+            Language::Swift => "swift",
         }
     }
 
@@ -82,6 +86,7 @@ impl Language {
         match self {
             Language::Java => format!("{}.java", crate::generators::common::pascal_case(package)),
             _ => format!("{}.{}", package, self.extension()),
+            Language::Swift => "swift",
         }
     }
 }

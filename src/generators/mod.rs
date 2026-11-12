@@ -10,6 +10,7 @@ pub mod lua;
 pub mod pascal;
 pub mod python;
 pub mod rust;
+pub mod swift;
 pub mod typescript;
 pub mod wireshark;
 pub mod zig;
@@ -37,5 +38,6 @@ pub fn backend(lang: Language) -> &'static dyn Backend {
         Language::TypeScript => &typescript::TypeScriptGenerator,
         Language::Lua => &lua::LuaGenerator,
         Language::Java => &java::JavaGenerator,
+        Language::Swift => &swift::SwiftGenerator,
     }
 }
