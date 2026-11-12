@@ -5,6 +5,7 @@ pub mod c;
 pub mod common;
 pub mod csharp;
 pub mod go;
+pub mod lua;
 pub mod pascal;
 pub mod python;
 pub mod rust;
@@ -33,5 +34,6 @@ pub fn backend(lang: Language) -> &'static dyn Backend {
         Language::Go => &go::GoGenerator,
         Language::Pascal => &pascal::PascalGenerator,
         Language::TypeScript => &typescript::TypeScriptGenerator,
+        Language::Lua => &lua::LuaGenerator,
     }
 }

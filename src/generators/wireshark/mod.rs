@@ -2,13 +2,12 @@
 //! backend: one Lua file per description that registers a protocol for each
 //! `dissector` declaration.
 //!
-//! - `naming`: Lua identifiers and field keys, the `Lua` dialect;
-//! - `expr`: `ExprLang` for Lua;
+//! - `naming`: Lua identifiers and field keys, the `WsLua` dialect
+//!   (expressions are spelled by `common::lua`, shared with the Lua backend);
 //! - `fields`: ProtoField declarations and value strings;
 //! - `dissect`: the `StepEmitter` that decodes and fills the tree.
 
 mod dissect;
-mod expr;
 mod fields;
 mod naming;
 
@@ -16,7 +15,7 @@ use crate::generators::common::{Mode, Out, Scope, StepEmitter, mask, param_var, 
 use crate::ir::frame::FrameLength;
 use crate::ir::{Codec, Dissector, Module, Packet};
 use dissect::Dissector as Emitter;
-use naming::{Lua, dissect_fn};
+use naming::{WsLua, dissect_fn};
 
 const RUNTIME: &str = include_str!("../../../runtime/wireshark.lua");
 
@@ -35,7 +34,7 @@ pub fn generate(module: &Module, dissectors: &[Dissector], package: &str) -> Str
     out.line("--   wireshark -X lua_script:<this file>");
     out.line("-- or copy it into Wireshark's personal Lua plugins folder.");
     out.line("");
-    out.buf.push_str(&crate::generators::common::runtime_source(RUNTIME, module.versions.is_some()));
+    out.buf.push_str(&crate::generators::common::lua::runtime(RUNTIME, module.versions.is_some()));
     fields::emit_fields(&mut out, module);
     out.line("");
     out.line("local D = {}");
@@ -125,7 +124,7 @@ fn emit_packet(out: &mut Out, p: &Packet) {
 /// `L_Name(tvb, pinfo, offset)`: the size of the packet at `offset` from
 /// its header, for `dissect_tcp_pdus`.
 fn emit_frame_length(out: &mut Out, p: &Packet, f: &FrameLength) {
-    let scope = Scope::<Lua>::new(p, Mode::Decode);
+    let scope = Scope::<WsLua>::new(p, Mode::Decode);
     out.open(format!("local function L_{}(tvb, pinfo, offset)", p.name));
     match f.version_header {
         // The header's size depends on the version: read what is there.
@@ -143,7 +142,7 @@ fn emit_frame_length(out: &mut Out, p: &Packet, f: &FrameLength) {
         out.line(format!("r.pos = {}", h.offset_bits));
         let raw = match &h.container {
             Codec::Bytes { nbytes, endian } => {
-                format!("r:read_uint({}, {})", nbytes, <Lua as crate::generators::common::Dialect>::little(endian))
+                format!("r:read_uint({}, {})", nbytes, <WsLua as crate::generators::common::Dialect>::little(endian))
             }
             _ => format!("r:read_bits({})", h.container_bits),
         };
@@ -163,7 +162,11 @@ fn emit_frame_length(out: &mut Out, p: &Packet, f: &FrameLength) {
     for &c in &f.calcs {
         let m = &p.members[c];
         if let Some(e) = m.calc_expr() {
-            out.line(format!("{} = {}", scope.field(m), expr::store_value(scope.expr(e), &m.ty)));
+            out.line(format!(
+                "{} = {}",
+                scope.field(m),
+                crate::generators::common::lua::store_value(scope.expr(e), &m.ty)
+            ));
         }
     }
     out.line(format!("return {}", scope.expr(&f.total)));

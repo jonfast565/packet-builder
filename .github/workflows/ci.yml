@@ -30,6 +30,10 @@ jobs:
           version: 0.13.0
       - name: Install Free Pascal
         run: sudo apt-get update && sudo apt-get install -y fpc
+      - name: Install Lua
+        run: |
+          sudo apt-get install -y lua5.4
+          echo "LUA=lua5.4" >> "$GITHUB_ENV"
       # tshark 4.4 or later runs the generated Wireshark dissectors; Ubuntu's
       # own package is older, so it comes from the Wireshark PPA.
       - name: Install tshark

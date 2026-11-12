@@ -8,11 +8,13 @@
 //! - [`steps`] — the [`StepEmitter`] template for decoders and encoders.
 //! - [`naming`] — identifier case conversion.
 //! - [`union`] — arm tests and names for tagged unions.
+//! - [`lua`] — expressions, literals and the runtime core of both Lua generators.
 
 pub mod buffers;
 pub mod consts;
 pub mod dialect;
 pub mod expr;
+pub mod lua;
 pub mod naming;
 pub mod options;
 pub mod out;

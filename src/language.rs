@@ -11,10 +11,11 @@ pub enum Language {
     Go,
     Pascal,
     TypeScript,
+    Lua,
 }
 
 impl Language {
-    pub const ALL: [Language; 8] = [
+    pub const ALL: [Language; 9] = [
         Language::C,
         Language::Rust,
         Language::Zig,
@@ -23,6 +24,7 @@ impl Language {
         Language::Go,
         Language::Pascal,
         Language::TypeScript,
+        Language::Lua,
     ];
 
     pub fn from_name(name: &str) -> Option<Language> {
@@ -35,6 +37,7 @@ impl Language {
             "go" | "golang" => Language::Go,
             "pascal" | "pas" | "delphi" | "fpc" => Language::Pascal,
             "typescript" | "ts" => Language::TypeScript,
+            "lua" => Language::Lua,
             _ => return None,
         })
     }
@@ -49,6 +52,7 @@ impl Language {
             Language::Go => "go",
             Language::Pascal => "pascal",
             Language::TypeScript => "typescript",
+            Language::Lua => "lua",
         }
     }
 
@@ -63,6 +67,7 @@ impl Language {
             Language::Go => "go",
             Language::Pascal => "pas",
             Language::TypeScript => "ts",
+            Language::Lua => "lua",
         }
     }
 }
