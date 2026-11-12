@@ -8,6 +8,7 @@ pub mod go;
 pub mod pascal;
 pub mod python;
 pub mod rust;
+pub mod typescript;
 pub mod wireshark;
 pub mod zig;
 
@@ -31,5 +32,6 @@ pub fn backend(lang: Language) -> &'static dyn Backend {
         Language::Python => &python::PythonGenerator,
         Language::Go => &go::GoGenerator,
         Language::Pascal => &pascal::PascalGenerator,
+        Language::TypeScript => &typescript::TypeScriptGenerator,
     }
 }
