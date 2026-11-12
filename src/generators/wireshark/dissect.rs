@@ -2,30 +2,24 @@
 //! value to the protocol tree (`t`) as it is read. Checks, assertions and
 //! derived fields that do not hold become expert warnings, not errors.
 
-use super::expr::store_value;
-use super::naming::{Lua, dissect_fn, field_key};
+use super::naming::{WsLua, dissect_fn, field_key};
+use crate::generators::common::lua::{byte_string, store_value};
 use crate::generators::common::union::{PY_LOGIC, arm_test};
 use crate::generators::common::{Dialect, Mode, Out, PREFIX_LEN, Scope, StepEmitter, mark_var, mask, string_literal};
 use crate::ir::{Arm, BitPart, Codec, Count, Mark, Member, Packet, PacketRef, StrMode, TExpr, TextEncoding, ValueType};
 
-/// A Lua string literal holding these bytes (`"\x0d\x0a"`).
-pub fn byte_string(bytes: &[u8]) -> String {
-    let items: String = bytes.iter().map(|b| format!("\\x{:02x}", b)).collect();
-    format!("\"{}\"", items)
-}
-
 /// `, a, b`: the arguments for nested packet `r`.
-fn call_args(scope: &Scope<'_, Lua>, r: &PacketRef) -> String {
+fn call_args(scope: &Scope<'_, WsLua>, r: &PacketRef) -> String {
     scope.args(r, store_value).iter().map(|a| format!(", {}", a)).collect()
 }
 
 /// Expression reading one element; nested packets go under `tree` with
 /// `label` (a Lua expression).
-fn read_elem(scope: &Scope<'_, Lua>, codec: &Codec, ty: &ValueType, tree: &str, label: &str) -> String {
+fn read_elem(scope: &Scope<'_, WsLua>, codec: &Codec, ty: &ValueType, tree: &str, label: &str) -> String {
     let raw = match codec {
-        Codec::Bytes { nbytes, endian } => format!("r:read_uint({}, {})", nbytes, Lua::little(endian)),
+        Codec::Bytes { nbytes, endian } => format!("r:read_uint({}, {})", nbytes, WsLua::little(endian)),
         Codec::Bits { width } => format!("r:read_bits({})", width),
-        Codec::Float { width, endian } => return format!("r:read_float({}, {})", width, Lua::little(endian)),
+        Codec::Float { width, endian } => return format!("r:read_float({}, {})", width, WsLua::little(endian)),
         Codec::Mac => return "r:read_bytes(6)".into(),
         Codec::Varint(k) => return format!("r:read_varint({})", k.id()),
         Codec::Packet(r) => {
@@ -40,7 +34,7 @@ fn read_elem(scope: &Scope<'_, Lua>, codec: &Codec, ty: &ValueType, tree: &str, 
 }
 
 pub struct Dissector<'a> {
-    pub scope: Scope<'a, Lua>,
+    pub scope: Scope<'a, WsLua>,
 }
 
 impl<'a> Dissector<'a> {
@@ -302,7 +296,7 @@ impl StepEmitter for Dissector<'_> {
 
     fn bitfield(&self, out: &mut Out, container: &Codec, container_width: u32, parts: &[BitPart]) {
         let raw = match container {
-            Codec::Bytes { nbytes, endian } => format!("r:read_uint({}, {})", nbytes, Lua::little(endian)),
+            Codec::Bytes { nbytes, endian } => format!("r:read_uint({}, {})", nbytes, WsLua::little(endian)),
             _ => format!("r:read_bits({})", container_width),
         };
         out.line("pb_s = r.pos");

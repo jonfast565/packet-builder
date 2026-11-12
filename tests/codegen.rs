@@ -41,6 +41,11 @@ fn zig_parsers_work() {
 }
 
 #[test]
+fn lua_parsers_work() {
+    harness::run_target(&harness::lua::LuaTarget);
+}
+
+#[test]
 fn interpreter_works() {
     harness::run_target(&harness::interp::InterpTarget);
 }

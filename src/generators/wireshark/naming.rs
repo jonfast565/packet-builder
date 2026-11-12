@@ -1,20 +1,14 @@
 //! Lua identifiers, field keys and the `Dialect` marker.
 
 use crate::generators::common::Dialect;
+use crate::generators::common::lua::LuaDialect;
 use crate::ir::{Member, Packet};
 
-/// Marker for the Lua dialect of the shared expression scope.
-pub struct Lua;
+pub use crate::generators::common::lua::index;
 
-const KEYWORDS: &[&str] = &[
-    "and", "break", "do", "else", "elseif", "end", "false", "for", "function", "global", "goto", "if", "in", "local",
-    "nil", "not", "or", "repeat", "return", "then", "true", "until", "while",
-];
-
-/// `.name`, or `["name"]` for a Lua keyword: indexing a table by `name`.
-pub fn index(name: &str) -> String {
-    if KEYWORDS.contains(&name) { format!("[\"{}\"]", name) } else { format!(".{}", name) }
-}
+/// Marker for the dissector's Lua dialect of the shared expression scope
+/// (`common::lua` spells its expressions).
+pub struct WsLua;
 
 /// `D.Name`: the dissect function of packet `name`.
 pub fn dissect_fn(name: &str) -> String {
@@ -31,7 +25,7 @@ pub fn field_abbrev(owner: &str, member: &str) -> String {
     format!("{}.{}", owner.to_ascii_lowercase(), member.to_ascii_lowercase())
 }
 
-impl Dialect for Lua {
+impl Dialect for WsLua {
     const TRUE: &'static str = "true";
     const FALSE: &'static str = "false";
 
@@ -39,3 +33,5 @@ impl Dialect for Lua {
         format!("p{}", index(&member.name))
     }
 }
+
+impl LuaDialect for WsLua {}
