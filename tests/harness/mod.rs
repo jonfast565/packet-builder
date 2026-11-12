@@ -42,6 +42,7 @@ pub mod interp;
 pub mod pascal;
 pub mod python;
 pub mod rust;
+pub mod swift;
 pub mod zig;
 
 use std::fs;

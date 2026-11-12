@@ -30,6 +30,9 @@ jobs:
           version: 0.13.0
       - name: Install Free Pascal
         run: sudo apt-get update && sudo apt-get install -y fpc
+      # Swift comes with the runner image.
+      - name: Check Swift
+        run: swiftc --version
       # tshark 4.4 or later runs the generated Wireshark dissectors; Ubuntu's
       # own package is older, so it comes from the Wireshark PPA.
       - name: Install tshark
