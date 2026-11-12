@@ -290,7 +290,15 @@ impl StepEmitter for Decoder<'_> {
     }
 
     fn scalar(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec) {
-        out.line(format!("{} := {};", self.scope.field(m), self.store(m, read_elem(&self.scope, codec, ty))));
+        // A field re-declared per protocol version is stored in the widest
+        // of its types: narrow to that, sign-extending from this version's.
+        let value = match (&m.ty, ty, read_raw(codec)) {
+            (ValueType::Int { width, .. }, ValueType::Int { width: step, signed }, Some(raw)) if width != step => {
+                narrow(&ValueType::Int { width: *width, signed: *signed }, raw, *step)
+            }
+            _ => read_elem(&self.scope, codec, ty),
+        };
+        out.line(format!("{} := {};", self.scope.field(m), self.store(m, value)));
     }
 
     fn array(&self, out: &mut Out, m: &Member, ty: &ValueType, codec: &Codec, count: &Count) {
