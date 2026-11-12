@@ -19,6 +19,7 @@ already uses, and packet-builder generates a decoder and encoder for
 | Swift    | one file (`<package>.swift`, Swift 5.9+), Foundation only | `swiftc -swift-version 5` |
 | Fortran  | one module (`<package>.f90`, Fortran 2008), intrinsic modules only | `gfortran -std=f2008 -fcheck=all` |
 | Ada      | one file (`<package>.ada`, Ada 2012) holding the package spec and body, standard library only; `gnatchop` splits it into `<package>.ads` and `<package>.adb` | `gnatchop`, then `gnatmake -gnat2012` (`$GNATMAKE` overrides) |
+| COBOL    | one source file (`<package>.cob`, free format) for GnuCOBOL 3.x: a main program that reads a `.dat` file of packets, the runtime and the programs of every packet (see [COBOL](#cobol)) | `cobc -free -x` |
 
 ```
 packet Flap be {
@@ -419,6 +420,7 @@ Each union becomes a type named after the packet and field (`MessageBody`):
 | Swift | `enum MessageBody { case text([UInt8]), number(UInt32), pair(Pair), ping, other([UInt8]) }` | `if case .pair(let p) = m.body { ... p.a }` |
 | Fortran | derived type `MessageBody` with `pb_arm` (one of `MessageBody_text`, ...) and a component per arm (packets `allocatable`) | `if (m%body%pb_arm == MessageBody_pair) ... m%body%pair%a` |
 | Ada | variant record `MessageBody (Kind : MessageBody_Kind := MessageBody_Text)` with a component per arm | `if M.Body_F.Kind = MessageBody_Pair then ... M.Body_F.Pair.A`; build with `MessageBody'(Kind => MessageBody_Pair, Pair => X)` |
+| COBOL | group with `-K` (the arm's index) and one item per arm (`-A0`, `-A1`, ...) | `IF F3-BODY-K = 2 ... F3-BODY-A2`; bytes arms are `-A1-P` (pointer) and `-A1-N` (length) |
 
 ### Parameters
 
@@ -513,6 +515,7 @@ packet Frame be {
 | Swift | `P.decode(data, version: v)`, `p.encode(version: v)`, `P.tryDecode(data, version: v)`; or `reader.setVersion(v, min, latest)` |
 | Fortran | `call P_decode(p, data, err, pb_version=v)`, `call P_encode(p, out, err, pb_version=v)`, `call P_try_decode(data, p, n, err, pb_version=v)` |
 | Ada | `Decode (Data, Version => V)`, `Encode (P, Version => V)`, `Try_Decode (Data, P, N, Version => V)` |
+| COBOL | `MOVE v TO PB-A1`, the packet's first and latest versions to `PB-A2`, `PB-A3`, `CALL "PB-SETVER"` after `PB-RINIT` / `PB-WINIT`; `@v` on a `.dat` line |
 
 The version lives on each reader and writer, never in global state, so one
 parser decodes connections of different versions side by side, and a stream
@@ -820,10 +823,11 @@ with parameters takes them as extra arguments to each of these.
 | Swift | `try P.decode(data)`, `try P.decodeFrom(PbReader(data))` | `try p.encode()`, `try p.encodeTo(writer)` | throws `PbError` |
 | Fortran | `call P_decode(p, data, err)`, `call P_decode_from(p, reader)` (allocatables free themselves) | `call P_encode(p, out, err)`, `call P_encode_to(p, writer)` | `err%kind` (`type(pb_error)`); the reader's or writer's `%e` |
 | Ada | `P : T := Decode (Data)` (overloaded on the result type: `T'(Decode (Data))`), `Decode_From (R'Access)`; values are records whose packet arrays free themselves | `Encode (P)` (a `Pb_Byte_Array`), `Encode_To (P, W'Access)` | raises `Pb_Error` (and nothing else); details in `Last_Error` |
+| COBOL | bytes in `PB-IN`, count in `PB-LEN`, `CALL "PB-RINIT"`, then `CALL "P2-IPV4-DEC" USING rec`; release with `P2-IPV4-FREE` | `CALL "PB-WINIT"`, `CALL "P2-IPV4-ENC" USING rec`, `CALL "PB-WFINISH"`: `PB-WLEN` bytes in `PB-OUT` | `PB-RC` (0 or the kind), `PB-EMSG`, `PB-EPATH` |
 
 Every packet and union also gets a **JSON dump** (`to_json()` in Rust and
 Python, `ToJSON()` in Go, `ToJson()` in C#, `P_to_json(&p)` in C (a
-malloc'ed string), `p.toJson(writer)` in Zig, `p.ToJson` in Pascal, `p.toJson()` in TypeScript, `P.to_json(p)` in Lua, `p.toJson()` in Java, `p.toJson()` in Swift, `P_to_json(p)` in Fortran, `To_Json (P)` in Ada): integers are numbers, byte
+malloc'ed string), `p.toJson(writer)` in Zig, `p.ToJson` in Pascal, `p.toJson()` in TypeScript, `P.to_json(p)` in Lua, `p.toJson()` in Java, `p.toJson()` in Swift, `P_to_json(p)` in Fortran, `To_Json (P)` in Ada, `P2-IPV4-JSON` in COBOL (to standard output)): integers are numbers, byte
 buffers hex strings, unions `{"kind": arm, "value": ...}`.
 
 ### Streams
@@ -846,6 +850,7 @@ parameters can be decoded from a buffer that may end mid-packet:
 | Swift | `try P.tryDecode(data)`: `.done(p, used)` or `.incomplete(needed)` | `try P.frameLen(data)`: size or `nil` |
 | Fortran | `call P_try_decode(data, p, n, err)`: `err%kind` `PB_OK` (n = bytes taken) or `PB_INCOMPLETE` (n = bytes needed) | `call P_frame_len(data, n, err)`: `PB_INCOMPLETE` until the header is there |
 | Ada | `Try_Decode (Data, P, N)`: True (N = bytes taken) or False (N = bytes needed) | `T_Frame_Len (Data, Size)`: False until the header is there |
+| COBOL | `P2-IPV4-DEC`: `PB-RC` = 1 (incomplete) with `PB-ENEED` bits still needed, else `PB-POS` bits taken | `P2-IPV4-FRAME`: `PB-FRC` = 0 and `PB-FLEN`, 1 until the header is there |
 
 A packet has a frame length when its size follows from fixed-offset header
 fields (FLAP: 6 bytes plus `length`; UDP: `length`): read that many bytes,
@@ -872,9 +877,78 @@ instead of copying it; the input must then outlive the value:
 | Swift | `ArraySlice<UInt8>`s sharing the input's storage | copied |
 | Fortran | copied (allocatable `integer(int8)` arrays; the option changes nothing) | copied |
 | Ada | copied (`Pb_Bytes` vectors; the option changes nothing) | copied (`Unbounded_String`) |
+| COBOL | pointers into `PB-IN`; `-FREE` leaves them | copied |
 
 Byte lists read with `until` are built element by element, so they stay
 copies, except in C and Zig, where they point into the input too.
+
+### COBOL
+
+The COBOL backend writes one free-format source file for GnuCOBOL 3.x
+holding separate programs. The main program is named after the package
+(`NETWORK`). Then come the runtime (`PB-*`), and for every packet `P<k>-<NAME>`:
+
+* `-INIT`, `-DEC`, `-ENC`, `-JSON` and `-FREE`, which take the packet's record
+  (`USING rec`, then its parameters);
+* for packets without parameters, also `-FRAME` and `-RUN`.
+
+Decoders and encoders are `RECURSIVE` and keep their locals in
+`LOCAL-STORAGE`, so packets can contain themselves.
+
+Every packet has one fixed-size record layout. Its fields are named
+`F<i>-<NAME>`:
+
+* integers are `BINARY-DOUBLE`, with an unsigned view `-U`;
+* floats are `FLOAT-LONG` (`FLOAT-SHORT` for `f32`);
+* bytes, strings and arrays are a pointer `-P` with a length `-N`;
+* nested packets are their record inline.
+
+All the programs share the runtime's `EXTERNAL` state record `PB-STATE`, which
+holds the input (`PB-IN`), the output (`PB-OUT`) and the error. Every call is
+followed by a check of `PB-RC`. Running past a buffer is an error (kind 4,
+"other"), never a crash.
+
+The main program reads a `LINE SEQUENTIAL` file. Its path is the first
+command-line argument (default `PACKETS.DAT`). Each line holds one packet:
+
+```
+* comment
+<Packet> <hex bytes, or - for none> [@version] [path=integer | path=#hexbytes]...
+```
+
+* Blank lines, and lines starting with `*`, are skipped.
+* Spaces between hex digits are not allowed, since a space separates the
+  items.
+* `@version` decodes and encodes at that protocol version.
+* `path=value` overwrites an integer, float or string member before
+  re-encoding, and `#hex` sets a string. Dotted paths reach three levels
+  into nested packets; array elements cannot be set.
+
+For each line the program decodes the bytes and prints two JSON lines:
+
+* first `{"ok":true,"value":{...},"encoded":"<hex>"}` (or `"ok":false` with
+  `error`, `kind` and `path`, or `encode_error` when re-encoding fails);
+* then `{"try":"done","n":<bytes>,"frame":<frame length>}` (or
+  `"incomplete"` with the bytes needed).
+
+Unknown packets, packets that take parameters and malformed lines print an
+error of kind `other`. [`examples/network.dat`](examples/network.dat) is
+an input for `examples/network.packet`:
+
+```sh
+cargo run -- gen examples/network.packet -l cobol -o out
+cobc -free -x -o out/network out/network.cob
+out/network examples/network.dat
+```
+
+Limits:
+
+* inputs and encoded packets are at most 65536 bytes, and so is a record;
+* strings set from a `.dat` line are at most 4096 bytes;
+* named constants appear only as comments, because COBOL has no typed
+  constants to export;
+* a packet cannot hold itself by value through `at` (only through arrays),
+  because its record would have no fixed size.
 
 ## Tools
 
@@ -919,6 +993,7 @@ Every error has a **kind**, the **path** of the field it happened in
 | Swift | `e.kind` (`.incomplete`, ...) | `e.path`, `e.bitOffset`, `e.neededBits`; `description` shows all three |
 | Fortran | `err%kind` (`PB_INCOMPLETE`, ...; `PB_OK` when none) | `err%path`, `err%bit_offset`, `err%needed_bits`; `err%message` (path, reason and bit offset) |
 | Ada | after `Pb_Error`: `Last_Error.Kind` (`Pb_Incomplete`, ...) | `Last_Error.Path`, `.Bit_Offset`, `.Needed_Bits`, `.Message` (one record for the whole program: not task-safe) |
+| COBOL | `PB-RC`: 1 incomplete, 2 invalid, 3 range, 4 other, 5 text, 6 mismatch, 7 constraint | `PB-EPATH` (`PB-EPLEN` characters), `PB-EBIT`, `PB-ENEED`, `PB-EMSG` |
 | Zig | the error (`error.Incomplete`, `error.Invalid`, `error.Range`, `error.InvalidText`, `error.Mismatch`, `error.Constraint`, `error.OutOfMemory`) | `reader.trace.diag` (`bit_offset`, `needed_bits`), `reader.trace.writePath(writer)` |
 
 Named constants are exported with their declared type:
@@ -938,6 +1013,7 @@ Named constants are exported with their declared type:
 | Swift | `FLAP_START: UInt8` | `Channel.SNAC` |
 | Fortran | `FLAP_START` (an `integer(int16), parameter`) | `Channel_snac` |
 | Ada | `FlapStart` | `Channel.Snac` (a nested package) |
+| COBOL | a comment in the file header (`*>   FLAP_START = 0x2a`) | a comment (`*>   snac = 2`) |
 
 For C, define `PACKETS_IMPLEMENTATION` (the upper-cased `-p` name followed by
 `_IMPLEMENTATION`) in exactly one `.c` file before including the header. Go,
@@ -994,7 +1070,7 @@ Languages whose toolchain is missing are skipped with a message. Set
 `PB_REQUIRE_ALL=1` to turn a missing toolchain into a failure (CI does). Zig is
 looked up as `zig` on `PATH` or through `$ZIG`; C# needs a .NET SDK (`dotnet`); Pascal needs Free Pascal
 (`fpc`); TypeScript needs Node (`node`) and is type-checked when `deno` is on `PATH`; Lua needs Lua 5.3 or later (`lua` on `PATH`, or `$LUA`); Java needs a JDK 17 or later (`javac` and `java` from `$JAVA_HOME/bin`, else `PATH`); Swift needs `swiftc`; Fortran needs `gfortran` (or the compiler in `$FC`). Ada needs GNAT: `gnatchop` on `PATH` and `gnatmake` there or through `$GNATMAKE`; the
-harness runs `gnatchop -w packets.ada`, then `gnatmake -gnat2012 -gnata harness.adb`.
+harness runs `gnatchop -w packets.ada`, then `gnatmake -gnat2012 -gnata harness.adb`. COBOL needs GnuCOBOL (`cobc`, or `$COBC`).
 
 A spec file looks like this:
 

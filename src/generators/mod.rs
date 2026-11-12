@@ -3,6 +3,7 @@
 
 pub mod ada;
 pub mod c;
+pub mod cobol;
 pub mod common;
 pub mod csharp;
 pub mod fortran;
@@ -43,5 +44,6 @@ pub fn backend(lang: Language) -> &'static dyn Backend {
         Language::Swift => &swift::SwiftGenerator,
         Language::Fortran => &fortran::FortranGenerator,
         Language::Ada => &ada::AdaGenerator,
+        Language::Cobol => &cobol::CobolGenerator,
     }
 }

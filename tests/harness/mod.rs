@@ -37,6 +37,7 @@
 
 pub mod ada;
 pub mod c;
+pub mod cobol;
 pub mod csharp;
 pub mod fortran;
 pub mod go;

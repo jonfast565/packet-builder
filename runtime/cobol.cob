@@ -1,0 +1,2895 @@
+*> ---- packet-builder runtime ---------------------------------------------
+*>
+*> Every program shares the EXTERNAL record PB-STATE (pasted where a
+*> program says @STATE): the reader, the writer, the trace of frames
+*> (packet, field, array index) errors report, and the arguments of the
+*> runtime programs, which take no USING parameters. A program that fails
+*> calls PB-FAIL, which records the first error in PB-RC (its kind),
+*> PB-EMSG and PB-EPATH; every caller checks PB-RC after a CALL.
+*>
+*> Error kinds: 1 incomplete, 2 invalid, 3 range, 4 other, 5 text,
+*> 6 mismatch, 7 constraint.
+*>
+*> Integers are BINARY-DOUBLE (64-bit two's complement): arithmetic that
+*> may overflow goes through PB-IOP, which computes in 38 decimal digits
+*> and wraps. Floats are FLOAT-LONG.
+*>
+*>@state{
+       01 PB-STATE EXTERNAL.
+          05 PB-RC        BINARY-LONG SIGNED.
+          05 PB-EBIT      BINARY-DOUBLE SIGNED.
+          05 PB-ENEED     BINARY-DOUBLE SIGNED.
+          05 PB-EMLEN     BINARY-LONG SIGNED.
+          05 PB-EMSG      PIC X(1024).
+          05 PB-EPLEN     BINARY-LONG SIGNED.
+          05 PB-EPATH     PIC X(512).
+          05 PB-PATHSET   BINARY-LONG SIGNED.
+          05 PB-MSG       PIC X(256).
+          05 PB-WRITING   BINARY-LONG SIGNED.
+          05 PB-DEPTH     BINARY-LONG SIGNED.
+          05 PB-FRAME OCCURS 64.
+             10 PB-FR-PKT PIC X(48).
+             10 PB-FR-FLD PIC X(48).
+             10 PB-FR-IDX BINARY-DOUBLE SIGNED.
+          05 PB-VER       BINARY-DOUBLE SIGNED.
+          05 PB-CVER      BINARY-DOUBLE SIGNED.
+          05 PB-NAME      PIC X(48).
+          05 PB-A1        BINARY-DOUBLE SIGNED.
+          05 PB-A2        BINARY-DOUBLE SIGNED.
+          05 PB-A3        BINARY-DOUBLE SIGNED.
+          05 PB-A4        BINARY-DOUBLE SIGNED.
+          05 PB-A5        BINARY-DOUBLE SIGNED.
+          05 PB-A6        BINARY-DOUBLE SIGNED.
+          05 PB-OP        BINARY-LONG SIGNED.
+          05 PB-NB        BINARY-DOUBLE SIGNED.
+          05 PB-BV        BINARY-LONG SIGNED.
+          05 PB-X         BINARY-DOUBLE SIGNED.
+          05 PB-X-U REDEFINES PB-X BINARY-DOUBLE UNSIGNED.
+          05 PB-Y         BINARY-DOUBLE SIGNED.
+          05 PB-Z         BINARY-DOUBLE SIGNED.
+          05 PB-Z-U REDEFINES PB-Z BINARY-DOUBLE UNSIGNED.
+          05 PB-Z2        BINARY-DOUBLE SIGNED.
+          05 PB-Z3        BINARY-DOUBLE SIGNED.
+          05 PB-W         PIC S9(38) COMP-3.
+          05 PB-FX        FLOAT-LONG.
+          05 PB-FX-B REDEFINES PB-FX BINARY-DOUBLE SIGNED.
+          05 PB-FY        FLOAT-LONG.
+          05 PB-FY-B REDEFINES PB-FY BINARY-DOUBLE SIGNED.
+          05 PB-FZ        FLOAT-LONG.
+          05 PB-FZ-B REDEFINES PB-FZ BINARY-DOUBLE SIGNED.
+          05 PB-FS        FLOAT-SHORT.
+          05 PB-FS-B REDEFINES PB-FS BINARY-LONG UNSIGNED.
+          05 PB-RP        USAGE POINTER.
+          05 PB-RN        BINARY-DOUBLE SIGNED.
+          05 PB-WP        USAGE POINTER.
+          05 PB-GP        USAGE POINTER.
+          05 PB-GCAP      BINARY-DOUBLE SIGNED.
+          05 PB-SP        USAGE POINTER.
+          05 PB-SN        BINARY-DOUBLE SIGNED.
+          05 PB-TLEN      BINARY-LONG SIGNED.
+          05 PB-TERM      PIC X(16).
+          05 PB-POW2      PIC S9(38) COMP-3 OCCURS 128.
+          05 PB-LEN       BINARY-DOUBLE SIGNED.
+          05 PB-POS       BINARY-DOUBLE SIGNED.
+          05 PB-LIMIT     BINARY-DOUBLE SIGNED.
+          05 PB-WINS      BINARY-DOUBLE SIGNED.
+          05 PB-IN        PIC X(65537).
+          05 PB-INA REDEFINES PB-IN.
+             10 PB-INB    BINARY-CHAR UNSIGNED OCCURS 65537.
+          05 PB-WORG      BINARY-DOUBLE SIGNED.
+          05 PB-WLEN      BINARY-DOUBLE SIGNED.
+          05 PB-WPOS      BINARY-DOUBLE SIGNED.
+          05 PB-WBASE     BINARY-DOUBLE SIGNED.
+          05 PB-WPL0      BINARY-DOUBLE SIGNED.
+          05 PB-WSP       BINARY-LONG SIGNED.
+          05 PB-WSTK OCCURS 64.
+             10 PB-WS-ORG  BINARY-DOUBLE SIGNED.
+             10 PB-WS-LEN  BINARY-DOUBLE SIGNED.
+             10 PB-WS-POS  BINARY-DOUBLE SIGNED.
+             10 PB-WS-BASE BINARY-DOUBLE SIGNED.
+             10 PB-WS-PL0  BINARY-DOUBLE SIGNED.
+          05 PB-OUT       PIC X(65537).
+          05 PB-OUTA REDEFINES PB-OUT.
+             10 PB-OUTB   BINARY-CHAR UNSIGNED OCCURS 65537.
+          05 PB-PLN       BINARY-LONG SIGNED.
+          05 PB-PL OCCURS 256.
+             10 PB-PL-AT   BINARY-DOUBLE SIGNED.
+             10 PB-PL-OFF  BINARY-DOUBLE SIGNED.
+             10 PB-PL-LEN  BINARY-DOUBLE SIGNED.
+             10 PB-PL-PLEN BINARY-LONG SIGNED.
+             10 PB-PL-PATH PIC X(512).
+          05 PB-PDLEN     BINARY-DOUBLE SIGNED.
+          05 PB-PDATA     PIC X(65537).
+          05 PB-PDA REDEFINES PB-PDATA.
+             10 PB-PDB    BINARY-CHAR UNSIGNED OCCURS 65537.
+          05 PB-CBUF      PIC X(262144).
+          05 PB-CBA REDEFINES PB-CBUF.
+             10 PB-CBB    BINARY-CHAR UNSIGNED OCCURS 262144.
+          05 PB-SETN      BINARY-LONG SIGNED.
+          05 PB-SETS OCCURS 16.
+             10 PB-ST-PATH PIC X(128).
+             10 PB-ST-KIND BINARY-LONG SIGNED.
+             10 PB-ST-INT  BINARY-DOUBLE SIGNED.
+             10 PB-ST-SLEN BINARY-DOUBLE SIGNED.
+             10 PB-ST-STR  PIC X(4096).
+          05 PB-SPATH     PIC X(128).
+          05 PB-SKIND     BINARY-LONG SIGNED.
+          05 PB-SINT      BINARY-DOUBLE SIGNED.
+          05 PB-SSLEN     BINARY-DOUBLE SIGNED.
+          05 PB-SSTR      PIC X(4096).
+          05 PB-FRC       BINARY-LONG SIGNED.
+          05 PB-FLEN      BINARY-DOUBLE SIGNED.
+*>@state}
+
+*> ---- errors and the trace ----------------------------------------------
+
+*> Fill the table of powers of two (PB-POW2(k + 1) = 2 ** k).
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-INIT.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-I BINARY-LONG SIGNED.
+PROCEDURE DIVISION.
+    MOVE 1 TO PB-POW2(1)
+    PERFORM VARYING L-I FROM 2 BY 1 UNTIL L-I > 128
+        COMPUTE PB-POW2(L-I) = PB-POW2(L-I - 1) * 2
+            ON SIZE ERROR MOVE 0 TO PB-POW2(L-I)
+        END-COMPUTE
+    END-PERFORM
+    MOVE 0 TO PB-RC PB-DEPTH PB-VER PB-CVER PB-SETN
+    GOBACK.
+END PROGRAM PB-INIT.
+
+*> Render the trace as a path (`Packet.field[2].inner`) into PB-EPATH.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-PATH.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-I BINARY-LONG SIGNED.
+01 L-N BINARY-LONG SIGNED.
+01 L-P BINARY-LONG SIGNED.
+01 L-ED PIC -(19)9.
+PROCEDURE DIVISION.
+    MOVE SPACES TO PB-EPATH
+    MOVE 1 TO L-P
+    MOVE PB-DEPTH TO L-N
+    IF L-N > 64
+        MOVE 64 TO L-N
+    END-IF
+    IF L-N > 0
+        STRING FUNCTION TRIM(PB-FR-PKT(1)) DELIMITED BY SIZE
+            INTO PB-EPATH WITH POINTER L-P
+        END-STRING
+        PERFORM VARYING L-I FROM 1 BY 1 UNTIL L-I > L-N
+            IF PB-FR-FLD(L-I) = SPACES
+                EXIT PERFORM
+            END-IF
+            STRING "." FUNCTION TRIM(PB-FR-FLD(L-I)) DELIMITED BY SIZE
+                INTO PB-EPATH WITH POINTER L-P
+            END-STRING
+            IF PB-FR-IDX(L-I) >= 0
+                MOVE PB-FR-IDX(L-I) TO L-ED
+                STRING "[" FUNCTION TRIM(L-ED) "]" DELIMITED BY SIZE
+                    INTO PB-EPATH WITH POINTER L-P
+                END-STRING
+            END-IF
+        END-PERFORM
+    END-IF
+    COMPUTE PB-EPLEN = L-P - 1
+    GOBACK.
+END PROGRAM PB-PATH.
+
+*> Record an error: PB-A1 its kind, PB-A2 the bits still needed
+*> (incomplete), PB-MSG the reason. Only the first error counts.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-FAIL.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-K BINARY-LONG SIGNED.
+01 L-P BINARY-LONG SIGNED.
+01 L-ED PIC -(19)9.
+PROCEDURE DIVISION.
+    IF PB-RC NOT = 0
+        GOBACK
+    END-IF
+    MOVE PB-A1 TO PB-RC
+    MOVE PB-A2 TO PB-ENEED
+    IF PB-WRITING = 0
+        MOVE PB-POS TO PB-EBIT
+    ELSE
+        MOVE PB-WPOS TO PB-EBIT
+    END-IF
+    IF PB-PATHSET = 0
+        CALL "PB-PATH"
+    END-IF
+    MOVE 0 TO PB-PATHSET
+    MOVE 256 TO L-K
+    PERFORM UNTIL L-K = 0
+        IF PB-MSG(L-K:1) NOT = SPACE
+            EXIT PERFORM
+        END-IF
+        SUBTRACT 1 FROM L-K
+    END-PERFORM
+    IF L-K = 0
+        MOVE 1 TO L-K
+    END-IF
+    MOVE SPACES TO PB-EMSG
+    MOVE 1 TO L-P
+    IF PB-EPLEN > 0
+        STRING PB-EPATH(1:PB-EPLEN) ": " DELIMITED BY SIZE
+            INTO PB-EMSG WITH POINTER L-P
+        END-STRING
+    END-IF
+    MOVE PB-EBIT TO L-ED
+    STRING PB-MSG(1:L-K) " (at bit " FUNCTION TRIM(L-ED) ")"
+        DELIMITED BY SIZE INTO PB-EMSG WITH POINTER L-P
+    END-STRING
+    COMPUTE PB-EMLEN = L-P - 1
+    GOBACK.
+END PROGRAM PB-FAIL.
+
+*> Enter packet PB-NAME: a new frame of the trace.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-ENTER.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+PROCEDURE DIVISION.
+    IF PB-DEPTH >= 64
+        MOVE "packets nested more than 64 deep" TO PB-MSG
+        MOVE 2 TO PB-A1
+        MOVE 0 TO PB-A2
+        CALL "PB-FAIL"
+        GOBACK
+    END-IF
+    ADD 1 TO PB-DEPTH
+    MOVE PB-NAME TO PB-FR-PKT(PB-DEPTH)
+    MOVE SPACES TO PB-FR-FLD(PB-DEPTH)
+    MOVE -1 TO PB-FR-IDX(PB-DEPTH)
+    GOBACK.
+END PROGRAM PB-ENTER.
+
+*>@versions{
+*> Use version PB-A1 (PB-A2..PB-A3 are the packet's versions).
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-SETVER.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-ED PIC -(19)9.
+01 L-P BINARY-LONG SIGNED.
+PROCEDURE DIVISION.
+    IF PB-A1 < PB-A2 OR PB-A1 > PB-A3
+        MOVE SPACES TO PB-MSG
+        MOVE 1 TO L-P
+        MOVE PB-A1 TO L-ED
+        STRING "version " FUNCTION TRIM(L-ED) " is not one of the versions "
+            DELIMITED BY SIZE INTO PB-MSG WITH POINTER L-P
+        END-STRING
+        MOVE PB-A2 TO L-ED
+        STRING FUNCTION TRIM(L-ED) ".." DELIMITED BY SIZE INTO PB-MSG WITH POINTER L-P
+        END-STRING
+        MOVE PB-A3 TO L-ED
+        STRING FUNCTION TRIM(L-ED) DELIMITED BY SIZE INTO PB-MSG WITH POINTER L-P
+        END-STRING
+        MOVE 7 TO PB-A1
+        MOVE 0 TO PB-A2
+        CALL "PB-FAIL"
+        GOBACK
+    END-IF
+    MOVE PB-A1 TO PB-VER
+    GOBACK.
+END PROGRAM PB-SETVER.
+
+*> Adopt the version carried in-band unless one was given.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-ADOPTVER.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+PROCEDURE DIVISION.
+    IF PB-VER = 0
+        CALL "PB-SETVER"
+    END-IF
+    GOBACK.
+END PROGRAM PB-ADOPTVER.
+*>@versions}
+
+*> ---- integer and float helpers -------------------------------------------
+
+*> PB-W (any integer up to 38 digits) wrapped to 64 bits in PB-Z.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-WRAP.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-Q PIC S9(38) COMP-3.
+01 L-R PIC S9(38) COMP-3.
+01 K-2P64 PIC S9(38) COMP-3 VALUE 18446744073709551616.
+01 K-2P63 PIC S9(38) COMP-3 VALUE 9223372036854775808.
+PROCEDURE DIVISION.
+    DIVIDE PB-W BY K-2P64 GIVING L-Q REMAINDER L-R
+    IF L-R < 0
+        ADD K-2P64 TO L-R
+    END-IF
+    IF L-R >= K-2P63
+        SUBTRACT K-2P64 FROM L-R
+    END-IF
+    MOVE L-R TO PB-Z
+    GOBACK.
+END PROGRAM PB-WRAP.
+
+*> PB-Z := PB-X <PB-OP> PB-Y with 64-bit two's complement semantics:
+*> 1 + 2 - 3 * 4 / 5 mod 6 pow 7 shl 8 shr 9 and 10 or 11 xor 12 neg
+*> 13 not. Division by zero gives 0; shifts out of range give 0.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-IOP.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-A PIC S9(38) COMP-3.
+01 L-B PIC S9(38) COMP-3.
+01 L-Q PIC S9(38) COMP-3.
+01 L-R PIC S9(38) COMP-3.
+01 L-ACC BINARY-DOUBLE SIGNED.
+01 L-BASE BINARY-DOUBLE SIGNED.
+01 L-E BINARY-DOUBLE SIGNED.
+01 L-S BINARY-LONG SIGNED.
+01 L-T1 BINARY-DOUBLE SIGNED.
+01 L-T2 BINARY-DOUBLE SIGNED.
+PROCEDURE DIVISION.
+    MOVE PB-X TO L-A
+    MOVE PB-Y TO L-B
+    EVALUATE PB-OP
+        WHEN 1
+            COMPUTE PB-W = L-A + L-B
+            CALL "PB-WRAP"
+        WHEN 2
+            COMPUTE PB-W = L-A - L-B
+            CALL "PB-WRAP"
+        WHEN 3
+            COMPUTE PB-W = L-A * L-B
+            CALL "PB-WRAP"
+        WHEN 4
+            EVALUATE TRUE
+                WHEN L-B = 0
+                    MOVE 0 TO PB-Z
+                WHEN L-B = -1
+                    COMPUTE PB-W = 0 - L-A
+                    CALL "PB-WRAP"
+                WHEN OTHER
+                    DIVIDE L-A BY L-B GIVING L-Q
+                    MOVE L-Q TO PB-Z
+            END-EVALUATE
+        WHEN 5
+            IF L-B = 0 OR L-B = -1
+                MOVE 0 TO PB-Z
+            ELSE
+                DIVIDE L-A BY L-B GIVING L-Q REMAINDER L-R
+                MOVE L-R TO PB-Z
+            END-IF
+        WHEN 6
+            IF L-B < 0
+                MOVE 0 TO PB-Z
+            ELSE
+                MOVE 1 TO L-ACC
+                MOVE PB-X TO L-BASE
+                MOVE PB-Y TO L-E
+                PERFORM UNTIL L-E = 0
+                    DIVIDE L-E BY 2 GIVING L-Q REMAINDER L-R
+                    IF L-R = 1
+                        COMPUTE PB-W = L-ACC * L-BASE
+                        CALL "PB-WRAP"
+                        MOVE PB-Z TO L-ACC
+                    END-IF
+                    COMPUTE PB-W = L-BASE * L-BASE
+                    CALL "PB-WRAP"
+                    MOVE PB-Z TO L-BASE
+                    MOVE L-Q TO L-E
+                END-PERFORM
+                MOVE L-ACC TO PB-Z
+            END-IF
+        WHEN 7
+            IF L-B < 0 OR L-B > 63
+                MOVE 0 TO PB-Z
+            ELSE
+                MOVE PB-Y TO L-S
+                COMPUTE PB-W = L-A * PB-POW2(L-S + 1)
+                CALL "PB-WRAP"
+            END-IF
+        WHEN 8
+            IF L-B < 0
+                MOVE 0 TO PB-Z
+            ELSE
+                IF L-B > 63
+                    MOVE 63 TO L-B
+                END-IF
+                MOVE L-B TO L-S
+                DIVIDE L-A BY PB-POW2(L-S + 1) GIVING L-Q REMAINDER L-R
+                IF L-R < 0
+                    SUBTRACT 1 FROM L-Q
+                END-IF
+                MOVE L-Q TO PB-Z
+            END-IF
+        WHEN 9
+            MOVE PB-X TO L-T1
+            MOVE PB-Y TO L-T2
+            CALL "CBL_AND" USING L-T1 L-T2 BY VALUE 8
+            MOVE L-T2 TO PB-Z
+        WHEN 10
+            MOVE PB-X TO L-T1
+            MOVE PB-Y TO L-T2
+            CALL "CBL_OR" USING L-T1 L-T2 BY VALUE 8
+            MOVE L-T2 TO PB-Z
+        WHEN 11
+            MOVE PB-X TO L-T1
+            MOVE PB-Y TO L-T2
+            CALL "CBL_XOR" USING L-T1 L-T2 BY VALUE 8
+            MOVE L-T2 TO PB-Z
+        WHEN 12
+            COMPUTE PB-W = 0 - L-A
+            CALL "PB-WRAP"
+        WHEN 13
+            COMPUTE PB-W = -1 - L-A
+            CALL "PB-WRAP"
+        WHEN OTHER
+            MOVE 0 TO PB-Z
+    END-EVALUATE
+    GOBACK.
+END PROGRAM PB-IOP.
+
+*> PB-FZ := PB-FX <PB-OP> PB-FY: 1 + 2 - 3 * 4 / 6 pow 12 neg 20 min
+*> 21 max 22 sqrt (NaN below zero). NaN in, NaN out; x / 0 is an infinity (NaN for 0 / 0).
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-FOP.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-NAN BINARY-LONG SIGNED.
+01 L-U PIC S9(38) COMP-3.
+01 L-Q PIC S9(38) COMP-3.
+01 L-R PIC S9(38) COMP-3.
+01 K-2P64 PIC S9(38) COMP-3 VALUE 18446744073709551616.
+01 K-2P52 PIC S9(38) COMP-3 VALUE 4503599627370496.
+PROCEDURE DIVISION.
+    MOVE 0 TO L-NAN
+    MOVE PB-FX-B TO L-U
+    PERFORM CHECK-NAN
+    IF PB-OP NOT = 12 AND PB-OP NOT = 22
+        MOVE PB-FY-B TO L-U
+        PERFORM CHECK-NAN
+    END-IF
+    IF L-NAN = 1
+        MOVE 9221120237041090560 TO PB-FZ-B
+        GOBACK
+    END-IF
+    EVALUATE PB-OP
+        WHEN 1
+            COMPUTE PB-FZ = PB-FX + PB-FY
+                ON SIZE ERROR PERFORM SET-NAN
+            END-COMPUTE
+        WHEN 2
+            COMPUTE PB-FZ = PB-FX - PB-FY
+                ON SIZE ERROR PERFORM SET-NAN
+            END-COMPUTE
+        WHEN 3
+            COMPUTE PB-FZ = PB-FX * PB-FY
+                ON SIZE ERROR PERFORM SET-NAN
+            END-COMPUTE
+        WHEN 4
+            IF PB-FY = 0
+                EVALUATE TRUE
+                    WHEN PB-FX > 0
+                        MOVE 9218868437227405312 TO PB-FZ-B
+                    WHEN PB-FX < 0
+                        MOVE -4503599627370496 TO PB-FZ-B
+                    WHEN OTHER
+                        PERFORM SET-NAN
+                END-EVALUATE
+            ELSE
+                COMPUTE PB-FZ = PB-FX / PB-FY
+                    ON SIZE ERROR PERFORM SET-NAN
+                END-COMPUTE
+            END-IF
+        WHEN 6
+            COMPUTE PB-FZ = PB-FX ** PB-FY
+                ON SIZE ERROR PERFORM SET-NAN
+            END-COMPUTE
+        WHEN 12
+            COMPUTE PB-FZ = 0 - PB-FX
+        WHEN 22
+            IF PB-FX < 0
+                PERFORM SET-NAN
+            ELSE
+                COMPUTE PB-FZ = FUNCTION SQRT(PB-FX)
+                    ON SIZE ERROR PERFORM SET-NAN
+                END-COMPUTE
+            END-IF
+        WHEN 20
+            IF PB-FX < PB-FY
+                MOVE PB-FX TO PB-FZ
+            ELSE
+                MOVE PB-FY TO PB-FZ
+            END-IF
+        WHEN 21
+            IF PB-FX > PB-FY
+                MOVE PB-FX TO PB-FZ
+            ELSE
+                MOVE PB-FY TO PB-FZ
+            END-IF
+        WHEN OTHER
+            MOVE 0 TO PB-FZ
+    END-EVALUATE
+    GOBACK.
+CHECK-NAN.
+    IF L-U < 0
+        ADD K-2P64 TO L-U
+    END-IF
+    DIVIDE L-U BY K-2P52 GIVING L-Q
+    DIVIDE L-Q BY 2048 GIVING L-R REMAINDER L-Q
+    IF L-Q = 2047
+        MOVE 1 TO L-NAN
+    END-IF.
+SET-NAN.
+    MOVE 9221120237041090560 TO PB-FZ-B.
+END PROGRAM PB-FOP.
+
+*> PB-Z := PB-FX truncated toward zero (NaN 0, saturating).
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-FTOI.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-U PIC S9(38) COMP-3.
+01 L-Q PIC S9(38) COMP-3.
+01 L-E PIC S9(38) COMP-3.
+01 L-M PIC S9(38) COMP-3.
+01 L-NEG BINARY-LONG SIGNED.
+01 L-D PIC S9(20)V9(4) COMP-3.
+01 K-2P64 PIC S9(38) COMP-3 VALUE 18446744073709551616.
+01 K-2P52 PIC S9(38) COMP-3 VALUE 4503599627370496.
+PROCEDURE DIVISION.
+    MOVE PB-FX-B TO L-U
+    MOVE 0 TO L-NEG
+    IF L-U < 0
+        ADD K-2P64 TO L-U
+        MOVE 1 TO L-NEG
+    END-IF
+    DIVIDE L-U BY K-2P52 GIVING L-Q REMAINDER L-M
+    DIVIDE L-Q BY 2048 GIVING L-U REMAINDER L-E
+    EVALUATE TRUE
+        WHEN L-E = 2047 AND L-M NOT = 0
+            MOVE 0 TO PB-Z
+        WHEN L-E >= 1086 AND L-NEG = 1
+            MOVE -9223372036854775808 TO PB-Z
+        WHEN L-E >= 1086
+            MOVE 9223372036854775807 TO PB-Z
+        WHEN L-E < 1023
+            MOVE 0 TO PB-Z
+        WHEN OTHER
+            MOVE PB-FX TO L-D
+            MOVE L-D TO PB-Z
+    END-EVALUATE
+    GOBACK.
+END PROGRAM PB-FTOI.
+
+*> PB-Z := PB-X truncated to PB-A1 bits, sign-extended when PB-A2 = 1.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-TRUNC.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-U PIC S9(38) COMP-3.
+01 L-Q PIC S9(38) COMP-3.
+01 L-R PIC S9(38) COMP-3.
+01 L-W BINARY-LONG SIGNED.
+PROCEDURE DIVISION.
+    IF PB-A1 >= 64 OR PB-A1 <= 0
+        MOVE PB-X TO PB-Z
+        GOBACK
+    END-IF
+    MOVE PB-A1 TO L-W
+    MOVE PB-X TO L-U
+    DIVIDE L-U BY PB-POW2(L-W + 1) GIVING L-Q REMAINDER L-R
+    IF L-R < 0
+        ADD PB-POW2(L-W + 1) TO L-R
+    END-IF
+    IF PB-A2 = 1 AND L-R >= PB-POW2(L-W)
+        SUBTRACT PB-POW2(L-W + 1) FROM L-R
+    END-IF
+    MOVE L-R TO PB-Z
+    GOBACK.
+END PROGRAM PB-TRUNC.
+
+*> PB-Z := PB-X with bit PB-A1 - 1 copied into the bits above it.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-SEXT.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-U PIC S9(38) COMP-3.
+01 L-Q PIC S9(38) COMP-3.
+01 L-R PIC S9(38) COMP-3.
+01 L-W BINARY-LONG SIGNED.
+01 K-2P64 PIC S9(38) COMP-3 VALUE 18446744073709551616.
+PROCEDURE DIVISION.
+    MOVE PB-X TO PB-Z
+    IF PB-A1 >= 64 OR PB-A1 <= 0
+        GOBACK
+    END-IF
+    MOVE PB-A1 TO L-W
+    MOVE PB-X TO L-U
+    IF L-U < 0
+        ADD K-2P64 TO L-U
+    END-IF
+    DIVIDE L-U BY PB-POW2(L-W + 1) GIVING L-Q REMAINDER L-R
+    IF L-R >= PB-POW2(L-W)
+        COMPUTE L-R = L-R - PB-POW2(L-W + 1)
+        MOVE L-R TO PB-Z
+    END-IF
+    GOBACK.
+END PROGRAM PB-SEXT.
+
+*> PB-Z := bits PB-A1 .. PB-A1 + PB-A2 - 1 of PB-X (as unsigned),
+*> sign-extended when PB-A3 = 1.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-EXTRACT.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-U PIC S9(38) COMP-3.
+01 L-Q PIC S9(38) COMP-3.
+01 L-R PIC S9(38) COMP-3.
+01 L-S BINARY-LONG SIGNED.
+01 L-W BINARY-LONG SIGNED.
+01 K-2P64 PIC S9(38) COMP-3 VALUE 18446744073709551616.
+01 K-2P63 PIC S9(38) COMP-3 VALUE 9223372036854775808.
+PROCEDURE DIVISION.
+    MOVE PB-A1 TO L-S
+    MOVE PB-A2 TO L-W
+    MOVE PB-X TO L-U
+    IF L-U < 0
+        ADD K-2P64 TO L-U
+    END-IF
+    DIVIDE L-U BY PB-POW2(L-S + 1) GIVING L-Q
+    IF L-W < 64
+        DIVIDE L-Q BY PB-POW2(L-W + 1) GIVING L-U REMAINDER L-R
+        IF PB-A3 = 1 AND L-R >= PB-POW2(L-W)
+            SUBTRACT PB-POW2(L-W + 1) FROM L-R
+        END-IF
+    ELSE
+        MOVE L-Q TO L-R
+        IF L-R >= K-2P63
+            SUBTRACT K-2P64 FROM L-R
+        END-IF
+    END-IF
+    MOVE L-R TO PB-Z
+    GOBACK.
+END PROGRAM PB-EXTRACT.
+
+*> PB-Z := PB-X with the low PB-A2 bits of PB-Y or-ed in at bit PB-A1.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-INSERT.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-U PIC S9(38) COMP-3.
+01 L-Q PIC S9(38) COMP-3.
+01 L-R PIC S9(38) COMP-3.
+01 L-S BINARY-LONG SIGNED.
+01 L-W BINARY-LONG SIGNED.
+01 L-T1 BINARY-DOUBLE SIGNED.
+01 L-T2 BINARY-DOUBLE SIGNED.
+01 K-2P64 PIC S9(38) COMP-3 VALUE 18446744073709551616.
+PROCEDURE DIVISION.
+    MOVE PB-A1 TO L-S
+    MOVE PB-A2 TO L-W
+    MOVE PB-Y TO L-U
+    IF L-U < 0
+        ADD K-2P64 TO L-U
+    END-IF
+    IF L-W < 64
+        DIVIDE L-U BY PB-POW2(L-W + 1) GIVING L-Q REMAINDER L-R
+        MOVE L-R TO L-U
+    END-IF
+    COMPUTE PB-W = L-U * PB-POW2(L-S + 1)
+    CALL "PB-WRAP"
+    MOVE PB-Z TO L-T1
+    MOVE PB-X TO L-T2
+    CALL "CBL_OR" USING L-T1 L-T2 BY VALUE 8
+    MOVE L-T2 TO PB-Z
+    GOBACK.
+END PROGRAM PB-INSERT.
+
+*> Element PB-X of the array at PB-GP holding PB-A1 elements of kind
+*> PB-A2 (1 bytes, 2 BINARY-DOUBLE, 3 FLOAT-SHORT, 4 FLOAT-LONG): PB-Z or
+*> PB-FZ, 0 when out of range.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-INDEX.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-P USAGE POINTER.
+01 L-OFF BINARY-DOUBLE SIGNED.
+LINKAGE SECTION.
+01 L-BY BINARY-CHAR UNSIGNED.
+01 L-I8 BINARY-DOUBLE SIGNED.
+01 L-F4 FLOAT-SHORT.
+01 L-F8 FLOAT-LONG.
+PROCEDURE DIVISION.
+    MOVE 0 TO PB-Z
+    MOVE 0 TO PB-FZ
+    IF PB-X < 0 OR PB-X >= PB-A1
+        GOBACK
+    END-IF
+    SET L-P TO PB-GP
+    EVALUATE PB-A2
+        WHEN 1
+            MOVE PB-X TO L-OFF
+            SET L-P UP BY L-OFF
+            SET ADDRESS OF L-BY TO L-P
+            MOVE L-BY TO PB-Z
+        WHEN 2
+            COMPUTE L-OFF = PB-X * 8
+            SET L-P UP BY L-OFF
+            SET ADDRESS OF L-I8 TO L-P
+            MOVE L-I8 TO PB-Z
+        WHEN 3
+            COMPUTE L-OFF = PB-X * 4
+            SET L-P UP BY L-OFF
+            SET ADDRESS OF L-F4 TO L-P
+            MOVE L-F4 TO PB-FZ
+        WHEN OTHER
+            COMPUTE L-OFF = PB-X * 8
+            SET L-P UP BY L-OFF
+            SET ADDRESS OF L-F8 TO L-P
+            MOVE L-F8 TO PB-FZ
+    END-EVALUATE
+    GOBACK.
+END PROGRAM PB-INDEX.
+
+*> Sum (PB-A3 = 1) or product (2) of the array at PB-GP (PB-A1 elements
+*> of kind PB-A2, as for PB-INDEX): PB-Z, or PB-FZ for floats.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-AGG.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-P USAGE POINTER.
+01 L-I BINARY-DOUBLE SIGNED.
+01 L-N BINARY-DOUBLE SIGNED.
+01 L-K BINARY-DOUBLE SIGNED.
+01 L-OP BINARY-DOUBLE SIGNED.
+01 L-ACC BINARY-DOUBLE SIGNED.
+01 L-FACC FLOAT-LONG.
+01 L-V BINARY-DOUBLE SIGNED.
+01 L-FV FLOAT-LONG.
+PROCEDURE DIVISION.
+    MOVE PB-A1 TO L-N
+    MOVE PB-A2 TO L-K
+    MOVE PB-A3 TO L-OP
+    IF L-OP = 1
+        MOVE 0 TO L-ACC
+        MOVE 0 TO L-FACC
+    ELSE
+        MOVE 1 TO L-ACC
+        MOVE 1 TO L-FACC
+    END-IF
+    PERFORM VARYING L-I FROM 0 BY 1 UNTIL L-I >= L-N
+        MOVE L-N TO PB-A1
+        MOVE L-K TO PB-A2
+        MOVE L-I TO PB-X
+        CALL "PB-INDEX"
+        IF L-K >= 3
+            MOVE PB-FZ TO L-FV
+            IF L-OP = 1
+                COMPUTE L-FACC = L-FACC + L-FV
+            ELSE
+                COMPUTE L-FACC = L-FACC * L-FV
+            END-IF
+        ELSE
+            MOVE PB-Z TO L-V
+            IF L-OP = 1
+                COMPUTE PB-W = L-ACC + L-V
+            ELSE
+                COMPUTE PB-W = L-ACC * L-V
+            END-IF
+            CALL "PB-WRAP"
+            MOVE PB-Z TO L-ACC
+        END-IF
+    END-PERFORM
+    MOVE L-ACC TO PB-Z
+    MOVE L-FACC TO PB-FZ
+    GOBACK.
+END PROGRAM PB-AGG.
+
+*> ---- memory ---------------------------------------------------------------
+
+*> PB-RP := PB-A1 * PB-A2 zeroed bytes (at least one).
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-ALLOC.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-N BINARY-DOUBLE SIGNED.
+PROCEDURE DIVISION.
+    COMPUTE L-N = PB-A1 * PB-A2
+    IF L-N < 1
+        MOVE 1 TO L-N
+    END-IF
+    IF L-N > 67108864
+        MOVE "allocation too large" TO PB-MSG
+        MOVE 4 TO PB-A1
+        MOVE 0 TO PB-A2
+        CALL "PB-FAIL"
+        SET PB-RP TO NULL
+        GOBACK
+    END-IF
+    ALLOCATE L-N CHARACTERS INITIALIZED RETURNING PB-RP
+    GOBACK.
+END PROGRAM PB-ALLOC.
+
+*> Make the array at PB-GP (PB-GCAP elements of PB-A2 bytes) hold at
+*> least PB-A1 elements, keeping its contents.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-GROW.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-NEED BINARY-DOUBLE SIGNED.
+01 L-ESZ BINARY-DOUBLE SIGNED.
+01 L-CAP BINARY-DOUBLE SIGNED.
+01 L-OLD BINARY-DOUBLE SIGNED.
+01 L-NEW USAGE POINTER.
+LINKAGE SECTION.
+01 L-SRC PIC X(262144).
+01 L-DST PIC X(262144).
+PROCEDURE DIVISION.
+    IF PB-A1 <= PB-GCAP
+        GOBACK
+    END-IF
+    MOVE PB-A1 TO L-NEED
+    MOVE PB-A2 TO L-ESZ
+    COMPUTE L-CAP = PB-GCAP * 2 + 4
+    IF L-CAP < L-NEED
+        MOVE L-NEED TO L-CAP
+    END-IF
+    MOVE L-CAP TO PB-A1
+    MOVE L-ESZ TO PB-A2
+    CALL "PB-ALLOC"
+    IF PB-RC NOT = 0
+        GOBACK
+    END-IF
+    SET L-NEW TO PB-RP
+    COMPUTE L-OLD = PB-GCAP * L-ESZ
+    IF PB-GP NOT = NULL
+        IF L-OLD > 0
+            SET ADDRESS OF L-SRC TO PB-GP
+            SET ADDRESS OF L-DST TO L-NEW
+            MOVE L-SRC(1:L-OLD) TO L-DST(1:L-OLD)
+        END-IF
+        FREE PB-GP
+    END-IF
+    SET PB-GP TO L-NEW
+    MOVE L-CAP TO PB-GCAP
+    GOBACK.
+END PROGRAM PB-GROW.
+
+*> PB-RP := a copy of the PB-RN bytes at PB-RP.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-DUP.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-SRCP USAGE POINTER.
+01 L-N BINARY-DOUBLE SIGNED.
+LINKAGE SECTION.
+01 L-SRC PIC X(262144).
+01 L-DST PIC X(262144).
+PROCEDURE DIVISION.
+    SET L-SRCP TO PB-RP
+    MOVE PB-RN TO L-N
+    MOVE L-N TO PB-A1
+    MOVE 1 TO PB-A2
+    CALL "PB-ALLOC"
+    IF PB-RC NOT = 0
+        GOBACK
+    END-IF
+    IF L-N > 0
+        SET ADDRESS OF L-SRC TO L-SRCP
+        SET ADDRESS OF L-DST TO PB-RP
+        MOVE L-SRC(1:L-N) TO L-DST(1:L-N)
+    END-IF
+    MOVE L-N TO PB-RN
+    GOBACK.
+END PROGRAM PB-DUP.
+
+*> ---- reader ---------------------------------------------------------------
+
+*> Start reading the PB-LEN bytes in PB-IN.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-RINIT.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+PROCEDURE DIVISION.
+    MOVE 0 TO PB-POS PB-WINS PB-WRITING PB-DEPTH PB-RC PB-PATHSET PB-VER
+    COMPUTE PB-LIMIT = PB-LEN * 8
+    MOVE 0 TO PB-EMLEN PB-EPLEN PB-ENEED
+    GOBACK.
+END PROGRAM PB-RINIT.
+
+*> Fail: PB-NB bits are needed but the input (or its window) ends first.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-SHORT.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-ED PIC -(19)9.
+01 L-P BINARY-LONG SIGNED.
+PROCEDURE DIVISION.
+    MOVE SPACES TO PB-MSG
+    MOVE 1 TO L-P
+    MOVE PB-NB TO L-ED
+    IF PB-WINS = 0
+        STRING "unexpected end of data: the field needs " FUNCTION TRIM(L-ED)
+            " more bit(s)" DELIMITED BY SIZE INTO PB-MSG WITH POINTER L-P
+        END-STRING
+        MOVE 1 TO PB-A1
+        COMPUTE PB-A2 = PB-NB - (PB-LIMIT - PB-POS)
+    ELSE
+        STRING "the field needs " FUNCTION TRIM(L-ED)
+            " bit(s) but its window ends first" DELIMITED BY SIZE INTO PB-MSG WITH POINTER L-P
+        END-STRING
+        MOVE 2 TO PB-A1
+        MOVE 0 TO PB-A2
+    END-IF
+    CALL "PB-FAIL"
+    GOBACK.
+END PROGRAM PB-SHORT.
+
+*> Fail unless PB-NB more bits can be read.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-NEED.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+PROCEDURE DIVISION.
+    IF PB-NB < 0 OR PB-NB > PB-LIMIT - PB-POS
+        CALL "PB-SHORT"
+    END-IF
+    GOBACK.
+END PROGRAM PB-NEED.
+
+*> PB-Z := the next PB-A1 bits, most significant first; sign-extended
+*> from PB-A3 bits when PB-A3 > 0.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-RBITS.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-U PIC S9(38) COMP-3.
+01 L-Q PIC S9(38) COMP-3.
+01 L-R PIC S9(38) COMP-3.
+01 L-LEFT BINARY-LONG SIGNED.
+01 L-TAKE BINARY-LONG SIGNED.
+01 L-OFF BINARY-LONG SIGNED.
+01 L-K BINARY-LONG SIGNED.
+01 L-BI BINARY-DOUBLE SIGNED.
+01 L-B BINARY-LONG SIGNED.
+01 L-BITS BINARY-LONG SIGNED.
+01 L-SX BINARY-LONG SIGNED.
+01 K-2P64 PIC S9(38) COMP-3 VALUE 18446744073709551616.
+01 K-2P63 PIC S9(38) COMP-3 VALUE 9223372036854775808.
+PROCEDURE DIVISION.
+    MOVE PB-A1 TO L-LEFT
+    MOVE PB-A3 TO L-SX
+    MOVE PB-A1 TO PB-NB
+    CALL "PB-NEED"
+    IF PB-RC NOT = 0
+        GOBACK
+    END-IF
+    MOVE 0 TO L-U
+    PERFORM UNTIL L-LEFT <= 0
+        DIVIDE PB-POS BY 8 GIVING L-BI REMAINDER L-OFF
+        MOVE PB-INB(L-BI + 1) TO L-B
+        COMPUTE L-TAKE = 8 - L-OFF
+        IF L-TAKE > L-LEFT
+            MOVE L-LEFT TO L-TAKE
+        END-IF
+        COMPUTE L-K = 9 - L-OFF - L-TAKE
+        DIVIDE L-B BY PB-POW2(L-K) GIVING L-BITS
+        DIVIDE L-BITS BY PB-POW2(L-TAKE + 1) GIVING L-K REMAINDER L-BITS
+        COMPUTE L-U = L-U * PB-POW2(L-TAKE + 1) + L-BITS
+        ADD L-TAKE TO PB-POS
+        SUBTRACT L-TAKE FROM L-LEFT
+    END-PERFORM
+    PERFORM FINISH-U
+    GOBACK.
+FINISH-U.
+    IF L-SX > 0 AND L-SX < 64
+        DIVIDE L-U BY PB-POW2(L-SX + 1) GIVING L-Q REMAINDER L-R
+        IF L-R >= PB-POW2(L-SX)
+            COMPUTE L-U = L-R - PB-POW2(L-SX + 1)
+        END-IF
+    END-IF
+    IF L-U >= K-2P63
+        SUBTRACT K-2P64 FROM L-U
+    END-IF
+    MOVE L-U TO PB-Z.
+END PROGRAM PB-RBITS.
+
+*> PB-Z := the next PB-A1 whole bytes as an integer, little-endian when
+*> PB-A2 = 1; sign-extended from PB-A3 bits when PB-A3 > 0.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-RUINT.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-U PIC S9(38) COMP-3.
+01 L-Q PIC S9(38) COMP-3.
+01 L-R PIC S9(38) COMP-3.
+01 L-N BINARY-LONG SIGNED.
+01 L-I BINARY-LONG SIGNED.
+01 L-K BINARY-DOUBLE SIGNED.
+01 L-ST BINARY-DOUBLE SIGNED.
+01 L-SX BINARY-LONG SIGNED.
+01 K-2P64 PIC S9(38) COMP-3 VALUE 18446744073709551616.
+01 K-2P63 PIC S9(38) COMP-3 VALUE 9223372036854775808.
+PROCEDURE DIVISION.
+    MOVE PB-A1 TO L-N
+    MOVE PB-A3 TO L-SX
+    COMPUTE PB-NB = L-N * 8
+    CALL "PB-NEED"
+    IF PB-RC NOT = 0
+        GOBACK
+    END-IF
+    DIVIDE PB-POS BY 8 GIVING L-ST
+    MOVE 0 TO L-U
+    PERFORM VARYING L-I FROM 0 BY 1 UNTIL L-I >= L-N
+        IF PB-A2 = 1
+            COMPUTE L-K = L-ST + L-N - L-I
+        ELSE
+            COMPUTE L-K = L-ST + L-I + 1
+        END-IF
+        COMPUTE L-U = L-U * 256 + PB-INB(L-K)
+    END-PERFORM
+    COMPUTE PB-POS = PB-POS + L-N * 8
+    IF L-SX > 0 AND L-SX < 64
+        DIVIDE L-U BY PB-POW2(L-SX + 1) GIVING L-Q REMAINDER L-R
+        IF L-R >= PB-POW2(L-SX)
+            COMPUTE L-U = L-R - PB-POW2(L-SX + 1)
+        END-IF
+    END-IF
+    IF L-U >= K-2P63
+        SUBTRACT K-2P64 FROM L-U
+    END-IF
+    MOVE L-U TO PB-Z
+    GOBACK.
+END PROGRAM PB-RUINT.
+
+*> Skip PB-X bits.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-SKIP.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+PROCEDURE DIVISION.
+    MOVE PB-X TO PB-NB
+    CALL "PB-NEED"
+    IF PB-RC NOT = 0
+        GOBACK
+    END-IF
+    ADD PB-X TO PB-POS
+    GOBACK.
+END PROGRAM PB-SKIP.
+
+*> Skip to the next multiple of PB-A1 bits counted from bit PB-X.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-RALIGN.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-Q BINARY-DOUBLE SIGNED.
+01 L-R BINARY-DOUBLE SIGNED.
+PROCEDURE DIVISION.
+    COMPUTE L-Q = PB-POS - PB-X
+    DIVIDE L-Q BY PB-A1 GIVING L-Q REMAINDER L-R
+    COMPUTE PB-X = PB-A1 - L-R
+    DIVIDE PB-X BY PB-A1 GIVING L-Q REMAINDER L-R
+    MOVE L-R TO PB-X
+    CALL "PB-SKIP"
+    GOBACK.
+END PROGRAM PB-RALIGN.
+
+*> PB-Z := element count PB-X, checked against what is left for
+*> elements of at least PB-A1 bits.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-COUNT.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-B PIC S9(38) COMP-3.
+01 L-Q BINARY-DOUBLE SIGNED.
+01 L-ED PIC -(19)9.
+01 L-P BINARY-LONG SIGNED.
+PROCEDURE DIVISION.
+    IF PB-X < 0
+        MOVE SPACES TO PB-MSG
+        MOVE 1 TO L-P
+        MOVE PB-X TO L-ED
+        STRING "negative length " FUNCTION TRIM(L-ED) DELIMITED BY SIZE
+            INTO PB-MSG WITH POINTER L-P
+        END-STRING
+        MOVE 2 TO PB-A1
+        MOVE 0 TO PB-A2
+        CALL "PB-FAIL"
+        GOBACK
+    END-IF
+    IF PB-A1 > 0
+        COMPUTE L-Q = (PB-LIMIT - PB-POS) / PB-A1
+        IF PB-X > L-Q
+            COMPUTE L-B = PB-X * PB-A1
+            IF L-B > 9223372036854775807
+                MOVE 9223372036854775807 TO L-B
+            END-IF
+            MOVE L-B TO PB-NB
+            CALL "PB-SHORT"
+            GOBACK
+        END-IF
+    END-IF
+    MOVE PB-X TO PB-Z
+    GOBACK.
+END PROGRAM PB-COUNT.
+
+*> PB-RP / PB-RN := the next PB-X bytes (in PB-IN, not copied).
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-RREF.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-N BINARY-DOUBLE SIGNED.
+01 L-K BINARY-DOUBLE SIGNED.
+PROCEDURE DIVISION.
+    MOVE PB-X TO L-N
+    COMPUTE PB-NB = L-N * 8
+    CALL "PB-NEED"
+    IF PB-RC NOT = 0
+        GOBACK
+    END-IF
+    DIVIDE PB-POS BY 8 GIVING L-K
+    ADD 1 TO L-K
+    SET PB-RP TO ADDRESS OF PB-INB(L-K)
+    MOVE L-N TO PB-RN
+    COMPUTE PB-POS = PB-POS + L-N * 8
+    GOBACK.
+END PROGRAM PB-RREF.
+
+*> PB-RP / PB-RN := the bytes up to the terminator PB-TERM (PB-TLEN
+*> bytes), which is consumed; when PB-A2 = 1 the terminator may be
+*> missing and the bytes run to the end.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-RUNTIL.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-ST BINARY-DOUBLE SIGNED.
+01 L-STOP BINARY-DOUBLE SIGNED.
+01 L-I BINARY-DOUBLE SIGNED.
+PROCEDURE DIVISION.
+    DIVIDE PB-POS BY 8 GIVING L-ST
+    DIVIDE PB-LIMIT BY 8 GIVING L-STOP
+    MOVE L-ST TO L-I
+    PERFORM UNTIL L-I + PB-TLEN > L-STOP
+        IF PB-IN(L-I + 1:PB-TLEN) = PB-TERM(1:PB-TLEN)
+            SET PB-RP TO ADDRESS OF PB-INB(L-ST + 1)
+            COMPUTE PB-RN = L-I - L-ST
+            COMPUTE PB-POS = (L-I + PB-TLEN) * 8
+            GOBACK
+        END-IF
+        ADD 1 TO L-I
+    END-PERFORM
+    IF PB-A2 NOT = 1
+        COMPUTE PB-NB = PB-LIMIT - PB-POS + 8
+        CALL "PB-SHORT"
+        GOBACK
+    END-IF
+    SET PB-RP TO ADDRESS OF PB-INB(L-ST + 1)
+    COMPUTE PB-RN = L-STOP - L-ST
+    MOVE PB-LIMIT TO PB-POS
+    GOBACK.
+END PROGRAM PB-RUNTIL.
+
+*> PB-SP / PB-SN := the text in the PB-RN bytes at PB-RP, as UTF-8 in a
+*> new buffer. PB-A3: the encoding (0 UTF-8, 1 ASCII, 2 Latin-1,
+*> 3 UTF-16LE, 4 UTF-16BE); PB-A2 = 1: the text ends at the first NUL.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-CONVTEXT.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-N BINARY-DOUBLE SIGNED.
+01 L-I BINARY-DOUBLE SIGNED.
+01 L-K BINARY-DOUBLE SIGNED.
+01 L-O BINARY-DOUBLE SIGNED.
+01 L-ENC BINARY-LONG SIGNED.
+01 L-UNITS BINARY-LONG SIGNED.
+01 L-MORE BINARY-LONG SIGNED.
+01 L-C BINARY-DOUBLE SIGNED.
+01 L-D BINARY-DOUBLE SIGNED.
+01 L-B BINARY-LONG SIGNED.
+01 L-Q BINARY-DOUBLE SIGNED.
+01 L-R BINARY-DOUBLE SIGNED.
+01 L-BAD BINARY-LONG SIGNED.
+01 L-SRC USAGE POINTER.
+LINKAGE SECTION.
+01 L-RAW.
+   05 L-RB BINARY-CHAR UNSIGNED OCCURS 262144.
+01 L-DST PIC X(262144).
+PROCEDURE DIVISION.
+    SET L-SRC TO PB-RP
+    MOVE PB-RN TO L-N
+    MOVE PB-A3 TO L-ENC
+    MOVE 0 TO L-O
+    MOVE 0 TO L-BAD
+    IF L-N > 0
+        SET ADDRESS OF L-RAW TO L-SRC
+    END-IF
+    IF L-ENC >= 3
+        MOVE 2 TO L-UNITS
+        DIVIDE L-N BY 2 GIVING L-Q REMAINDER L-R
+        IF L-R NOT = 0
+            MOVE "invalid UTF-16 (an odd number of bytes)" TO PB-MSG
+            PERFORM FAIL-TEXT
+            GOBACK
+        END-IF
+    ELSE
+        MOVE 1 TO L-UNITS
+    END-IF
+    IF PB-A2 = 1
+        PERFORM VARYING L-I FROM 1 BY L-UNITS UNTIL L-I > L-N
+            IF L-RB(L-I) = 0 AND L-RB(L-I + L-UNITS - 1) = 0
+                COMPUTE L-N = L-I - 1
+                EXIT PERFORM
+            END-IF
+        END-PERFORM
+    END-IF
+    EVALUATE L-ENC
+        WHEN 0
+            PERFORM FROM-UTF8
+        WHEN 1
+            PERFORM VARYING L-I FROM 1 BY 1 UNTIL L-I > L-N
+                IF L-RB(L-I) > 127
+                    MOVE 1 TO L-BAD
+                    EXIT PERFORM
+                END-IF
+                ADD 1 TO L-O
+                MOVE L-RB(L-I) TO PB-CBB(L-O)
+            END-PERFORM
+            IF L-BAD = 1
+                MOVE "invalid ASCII" TO PB-MSG
+            END-IF
+        WHEN 2
+            PERFORM VARYING L-I FROM 1 BY 1 UNTIL L-I > L-N
+                MOVE L-RB(L-I) TO L-C
+                PERFORM PUT-CP
+            END-PERFORM
+        WHEN OTHER
+            PERFORM FROM-UTF16
+    END-EVALUATE
+    IF L-BAD = 1
+        PERFORM FAIL-TEXT
+        GOBACK
+    END-IF
+    MOVE L-O TO PB-A1
+    MOVE 1 TO PB-A2
+    CALL "PB-ALLOC"
+    IF PB-RC NOT = 0
+        GOBACK
+    END-IF
+    SET PB-SP TO PB-RP
+    MOVE L-O TO PB-SN
+    IF L-O > 0
+        SET ADDRESS OF L-DST TO PB-SP
+        MOVE PB-CBUF(1:L-O) TO L-DST(1:L-O)
+    END-IF
+    GOBACK.
+FROM-UTF8.
+    MOVE 1 TO L-I
+    PERFORM UNTIL L-I > L-N OR L-BAD = 1
+        MOVE L-RB(L-I) TO L-C
+        EVALUATE TRUE
+            WHEN L-C < 128
+                MOVE 0 TO L-MORE
+            WHEN L-C >= 194 AND L-C <= 223
+                MOVE 1 TO L-MORE
+                SUBTRACT 192 FROM L-C
+            WHEN L-C >= 224 AND L-C <= 239
+                MOVE 2 TO L-MORE
+                SUBTRACT 224 FROM L-C
+            WHEN L-C >= 240 AND L-C <= 244
+                MOVE 3 TO L-MORE
+                SUBTRACT 240 FROM L-C
+            WHEN OTHER
+                MOVE 1 TO L-BAD
+        END-EVALUATE
+        IF L-BAD = 0
+            PERFORM VARYING L-K FROM 1 BY 1 UNTIL L-K > L-MORE
+                IF L-I + L-K > L-N
+                    MOVE 1 TO L-BAD
+                    EXIT PERFORM
+                END-IF
+                MOVE L-RB(L-I + L-K) TO L-B
+                IF L-B < 128 OR L-B > 191
+                    MOVE 1 TO L-BAD
+                    EXIT PERFORM
+                END-IF
+                COMPUTE L-C = L-C * 64 + L-B - 128
+            END-PERFORM
+        END-IF
+        IF L-BAD = 0
+            IF (L-MORE = 2 AND (L-C < 2048 OR (L-C >= 55296 AND L-C <= 57343)))
+               OR (L-MORE = 3 AND (L-C < 65536 OR L-C > 1114111))
+                MOVE 1 TO L-BAD
+            END-IF
+        END-IF
+        IF L-BAD = 0
+            PERFORM VARYING L-K FROM 0 BY 1 UNTIL L-K > L-MORE
+                ADD 1 TO L-O
+                MOVE L-RB(L-I + L-K) TO PB-CBB(L-O)
+            END-PERFORM
+            COMPUTE L-I = L-I + L-MORE + 1
+        END-IF
+    END-PERFORM
+    IF L-BAD = 1
+        MOVE "invalid UTF-8" TO PB-MSG
+    END-IF.
+FROM-UTF16.
+    MOVE 1 TO L-I
+    PERFORM UNTIL L-I > L-N OR L-BAD = 1
+        PERFORM GET-UNIT
+        ADD 2 TO L-I
+        EVALUATE TRUE
+            WHEN L-C >= 55296 AND L-C <= 56319
+                IF L-I > L-N
+                    MOVE 1 TO L-BAD
+                ELSE
+                    MOVE L-C TO L-D
+                    PERFORM GET-UNIT
+                    ADD 2 TO L-I
+                    IF L-C < 56320 OR L-C > 57343
+                        MOVE 1 TO L-BAD
+                    ELSE
+                        COMPUTE L-C = 65536 + (L-D - 55296) * 1024 + (L-C - 56320)
+                        PERFORM PUT-CP
+                    END-IF
+                END-IF
+            WHEN L-C >= 56320 AND L-C <= 57343
+                MOVE 1 TO L-BAD
+            WHEN OTHER
+                PERFORM PUT-CP
+        END-EVALUATE
+    END-PERFORM
+    IF L-BAD = 1
+        MOVE "invalid UTF-16" TO PB-MSG
+    END-IF.
+GET-UNIT.
+    IF L-ENC = 3
+        COMPUTE L-C = L-RB(L-I) + L-RB(L-I + 1) * 256
+    ELSE
+        COMPUTE L-C = L-RB(L-I) * 256 + L-RB(L-I + 1)
+    END-IF.
+PUT-CP.
+    EVALUATE TRUE
+        WHEN L-C < 128
+            ADD 1 TO L-O
+            MOVE L-C TO PB-CBB(L-O)
+        WHEN L-C < 2048
+            DIVIDE L-C BY 64 GIVING L-Q REMAINDER L-R
+            ADD 1 TO L-O
+            COMPUTE PB-CBB(L-O) = 192 + L-Q
+            ADD 1 TO L-O
+            COMPUTE PB-CBB(L-O) = 128 + L-R
+        WHEN L-C < 65536
+            DIVIDE L-C BY 4096 GIVING L-Q REMAINDER L-R
+            ADD 1 TO L-O
+            COMPUTE PB-CBB(L-O) = 224 + L-Q
+            DIVIDE L-R BY 64 GIVING L-Q REMAINDER L-R
+            ADD 1 TO L-O
+            COMPUTE PB-CBB(L-O) = 128 + L-Q
+            ADD 1 TO L-O
+            COMPUTE PB-CBB(L-O) = 128 + L-R
+        WHEN OTHER
+            DIVIDE L-C BY 262144 GIVING L-Q REMAINDER L-R
+            ADD 1 TO L-O
+            COMPUTE PB-CBB(L-O) = 240 + L-Q
+            DIVIDE L-R BY 4096 GIVING L-Q REMAINDER L-R
+            ADD 1 TO L-O
+            COMPUTE PB-CBB(L-O) = 128 + L-Q
+            DIVIDE L-R BY 64 GIVING L-Q REMAINDER L-R
+            ADD 1 TO L-O
+            COMPUTE PB-CBB(L-O) = 128 + L-Q
+            ADD 1 TO L-O
+            COMPUTE PB-CBB(L-O) = 128 + L-R
+    END-EVALUATE.
+FAIL-TEXT.
+    MOVE 5 TO PB-A1
+    MOVE 0 TO PB-A2
+    CALL "PB-FAIL".
+END PROGRAM PB-CONVTEXT.
+
+*> Start a window of PB-X bytes; PB-Z := the limit to restore.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-PUSHLIM.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-B PIC S9(38) COMP-3.
+PROCEDURE DIVISION.
+    IF PB-X < 0
+        MOVE "negative size" TO PB-MSG
+        MOVE 2 TO PB-A1
+        MOVE 0 TO PB-A2
+        CALL "PB-FAIL"
+        GOBACK
+    END-IF
+    IF PB-X > (PB-LIMIT - PB-POS) / 8
+        COMPUTE L-B = PB-X * 8
+        IF L-B > 9223372036854775807
+            MOVE 9223372036854775807 TO L-B
+        END-IF
+        MOVE L-B TO PB-NB
+        CALL "PB-SHORT"
+        GOBACK
+    END-IF
+    MOVE PB-LIMIT TO PB-Z
+    COMPUTE PB-LIMIT = PB-POS + PB-X * 8
+    ADD 1 TO PB-WINS
+    GOBACK.
+END PROGRAM PB-PUSHLIM.
+
+*> End a window: skip what is left (an error when PB-A1 = 1), then
+*> restore limit PB-X.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-POPLIM.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+PROCEDURE DIVISION.
+    IF PB-A1 = 1 AND PB-LIMIT - PB-POS > 0
+        MOVE "bit(s) left over in a field that must fill its size" TO PB-MSG
+        MOVE 2 TO PB-A1
+        MOVE 0 TO PB-A2
+        CALL "PB-FAIL"
+        GOBACK
+    END-IF
+    MOVE PB-LIMIT TO PB-POS
+    MOVE PB-X TO PB-LIMIT
+    SUBTRACT 1 FROM PB-WINS
+    GOBACK.
+END PROGRAM PB-POPLIM.
+
+*> Jump to PB-Y bytes after bit PB-X of the input; PB-Z, PB-Z2, PB-Z3
+*> := the position, limit and window count to come back to.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-JUMP.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-Q BINARY-DOUBLE SIGNED.
+01 L-R BINARY-DOUBLE SIGNED.
+PROCEDURE DIVISION.
+    DIVIDE PB-X BY 8 GIVING L-Q REMAINDER L-R
+    IF PB-Y < 0 OR L-R NOT = 0 OR PB-Y > PB-LEN
+       OR PB-X + PB-Y * 8 > PB-LEN * 8
+        MOVE "offset is past the end of the input" TO PB-MSG
+        MOVE 2 TO PB-A1
+        MOVE 0 TO PB-A2
+        CALL "PB-FAIL"
+        GOBACK
+    END-IF
+    MOVE PB-POS TO PB-Z
+    MOVE PB-LIMIT TO PB-Z2
+    MOVE PB-WINS TO PB-Z3
+    COMPUTE PB-POS = PB-X + PB-Y * 8
+    COMPUTE PB-LIMIT = PB-LEN * 8
+    MOVE 0 TO PB-WINS
+    GOBACK.
+END PROGRAM PB-JUMP.
+
+*> PB-Z := the varint of kind PB-A1 (0 uleb128, 1 sleb128, 2 zigzag,
+*> 3 vlq, 4 QUIC, 5 varint15), as 64 bits.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-RVARINT.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-KIND BINARY-LONG SIGNED.
+01 L-U PIC S9(38) COMP-3.
+01 L-Q PIC S9(38) COMP-3.
+01 L-R PIC S9(38) COMP-3.
+01 L-B BINARY-DOUBLE SIGNED.
+01 L-B7 BINARY-DOUBLE SIGNED.
+01 L-N BINARY-LONG SIGNED.
+01 L-SHIFT BINARY-LONG SIGNED.
+01 L-OK BINARY-LONG SIGNED.
+01 K-2P64 PIC S9(38) COMP-3 VALUE 18446744073709551616.
+01 K-2P63 PIC S9(38) COMP-3 VALUE 9223372036854775808.
+01 K-2P57 PIC S9(38) COMP-3 VALUE 144115188075855872.
+PROCEDURE DIVISION.
+    MOVE PB-A1 TO L-KIND
+    EVALUATE L-KIND
+        WHEN 5
+            PERFORM READ-BYTE
+            IF PB-RC NOT = 0
+                GOBACK
+            END-IF
+            IF L-B < 128
+                MOVE L-B TO PB-Z
+                GOBACK
+            END-IF
+            COMPUTE L-U = (L-B - 128) * 256
+            PERFORM READ-BYTE
+            IF PB-RC NOT = 0
+                GOBACK
+            END-IF
+            COMPUTE PB-Z = L-U + L-B
+            GOBACK
+        WHEN 4
+            PERFORM READ-BYTE
+            IF PB-RC NOT = 0
+                GOBACK
+            END-IF
+            DIVIDE L-B BY 64 GIVING L-N REMAINDER L-R
+            MOVE L-R TO L-U
+            COMPUTE L-N = 2 ** L-N
+            IF L-N > 1
+                COMPUTE PB-A1 = L-N - 1
+                MOVE 0 TO PB-A2
+                MOVE 0 TO PB-A3
+                CALL "PB-RUINT"
+                IF PB-RC NOT = 0
+                    GOBACK
+                END-IF
+                COMPUTE L-U = L-U * PB-POW2((L-N - 1) * 8 + 1) + PB-Z
+            END-IF
+            MOVE L-U TO PB-Z
+            GOBACK
+    END-EVALUATE
+    MOVE 0 TO L-U
+    MOVE 0 TO L-SHIFT
+    PERFORM UNTIL 1 = 0
+        PERFORM READ-BYTE
+        IF PB-RC NOT = 0
+            GOBACK
+        END-IF
+        DIVIDE L-B BY 128 GIVING L-Q REMAINDER L-B7
+        IF L-KIND = 3
+            IF L-U >= K-2P57
+                PERFORM TOO-BIG
+                GOBACK
+            END-IF
+            COMPUTE L-U = L-U * 128 + L-B7
+        ELSE
+            MOVE 0 TO L-OK
+            IF L-KIND = 1
+                IF L-B7 = 0 OR L-B7 = 127
+                    MOVE 1 TO L-OK
+                END-IF
+            ELSE
+                IF L-B7 < 2
+                    MOVE 1 TO L-OK
+                END-IF
+            END-IF
+            IF L-SHIFT >= 64 OR (L-SHIFT = 63 AND (L-B >= 128 OR L-OK = 0))
+                PERFORM TOO-BIG
+                GOBACK
+            END-IF
+            COMPUTE L-U = L-U + L-B7 * PB-POW2(L-SHIFT + 1)
+        END-IF
+        ADD 7 TO L-SHIFT
+        IF L-B < 128
+            IF L-KIND = 1 AND L-SHIFT < 64 AND L-B7 >= 64
+                COMPUTE L-U = L-U + K-2P64 - PB-POW2(L-SHIFT + 1)
+            END-IF
+            EXIT PERFORM
+        END-IF
+    END-PERFORM
+    DIVIDE L-U BY K-2P64 GIVING L-Q REMAINDER L-U
+    IF L-KIND = 2
+        DIVIDE L-U BY 2 GIVING L-Q REMAINDER L-R
+        IF L-R = 0
+            MOVE L-Q TO L-U
+        ELSE
+            COMPUTE L-U = 0 - L-Q - 1
+        END-IF
+    END-IF
+    IF L-U >= K-2P63
+        SUBTRACT K-2P64 FROM L-U
+    END-IF
+    MOVE L-U TO PB-Z
+    GOBACK.
+READ-BYTE.
+    MOVE 1 TO PB-A1
+    MOVE 0 TO PB-A2
+    MOVE 0 TO PB-A3
+    CALL "PB-RUINT"
+    MOVE PB-Z TO L-B.
+TOO-BIG.
+    MOVE "the varint does not fit in 64 bits" TO PB-MSG
+    MOVE 2 TO PB-A1
+    MOVE 0 TO PB-A2
+    CALL "PB-FAIL".
+END PROGRAM PB-RVARINT.
+
+*> PB-Z := the checksum PB-A1 of bytes PB-X / 8 .. PB-Y / 8 of the input
+*> (PB-A6 = 0) or of the writer's output (1), with bytes PB-A4 / 8 ..
+*> PB-A5 / 8 counted as zeros.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-CKSUM.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-ALGO BINARY-LONG SIGNED.
+01 L-FROM BINARY-DOUBLE SIGNED.
+01 L-TO BINARY-DOUBLE SIGNED.
+01 L-HF BINARY-DOUBLE SIGNED.
+01 L-HT BINARY-DOUBLE SIGNED.
+01 L-I BINARY-DOUBLE SIGNED.
+01 L-K BINARY-LONG SIGNED.
+01 L-X BINARY-DOUBLE SIGNED.
+01 L-A BINARY-DOUBLE SIGNED.
+01 L-B BINARY-DOUBLE SIGNED.
+01 L-Q BINARY-DOUBLE SIGNED.
+01 L-R BINARY-DOUBLE SIGNED.
+01 L-CRC BINARY-DOUBLE SIGNED.
+01 L-T BINARY-DOUBLE SIGNED.
+01 L-POLY BINARY-DOUBLE SIGNED.
+01 L-WIDTH BINARY-LONG SIGNED.
+01 L-REFL BINARY-LONG SIGNED.
+01 L-XOROUT BINARY-DOUBLE SIGNED.
+01 L-MASK BINARY-DOUBLE SIGNED.
+01 L-TOP BINARY-DOUBLE SIGNED.
+PROCEDURE DIVISION.
+    MOVE PB-A1 TO L-ALGO
+    DIVIDE PB-X BY 8 GIVING L-FROM
+    DIVIDE PB-Y BY 8 GIVING L-TO
+    DIVIDE PB-A4 BY 8 GIVING L-HF
+    DIVIDE PB-A5 BY 8 GIVING L-HT
+    IF L-ALGO < 8
+        EVALUATE L-ALGO
+            WHEN 0
+                MOVE 8 TO L-WIDTH
+                MOVE 7 TO L-POLY
+                MOVE 0 TO L-CRC L-REFL L-XOROUT
+            WHEN 1
+                MOVE 16 TO L-WIDTH
+                MOVE 40961 TO L-POLY
+                MOVE 0 TO L-CRC L-XOROUT
+                MOVE 1 TO L-REFL
+            WHEN 2
+                MOVE 16 TO L-WIDTH
+                MOVE 4129 TO L-POLY
+                MOVE 65535 TO L-CRC
+                MOVE 0 TO L-REFL L-XOROUT
+            WHEN 3
+                MOVE 16 TO L-WIDTH
+                MOVE 4129 TO L-POLY
+                MOVE 0 TO L-CRC L-REFL L-XOROUT
+            WHEN 4
+                MOVE 16 TO L-WIDTH
+                MOVE 33800 TO L-POLY
+                MOVE 0 TO L-CRC L-XOROUT
+                MOVE 1 TO L-REFL
+            WHEN 5
+                MOVE 16 TO L-WIDTH
+                MOVE 40961 TO L-POLY
+                MOVE 65535 TO L-CRC
+                MOVE 0 TO L-XOROUT
+                MOVE 1 TO L-REFL
+            WHEN 6
+                MOVE 32 TO L-WIDTH
+                MOVE 3988292384 TO L-POLY
+                MOVE 4294967295 TO L-CRC L-XOROUT
+                MOVE 1 TO L-REFL
+            WHEN OTHER
+                MOVE 32 TO L-WIDTH
+                MOVE 2197175160 TO L-POLY
+                MOVE 4294967295 TO L-CRC L-XOROUT
+                MOVE 1 TO L-REFL
+        END-EVALUATE
+        COMPUTE L-MASK = PB-POW2(L-WIDTH + 1) - 1
+        MOVE PB-POW2(L-WIDTH) TO L-TOP
+        PERFORM VARYING L-I FROM L-FROM BY 1 UNTIL L-I >= L-TO
+            PERFORM GET-BYTE
+            IF L-REFL = 1
+                CALL "CBL_XOR" USING L-X L-CRC BY VALUE 8
+                PERFORM 8 TIMES
+                    DIVIDE L-CRC BY 2 GIVING L-Q REMAINDER L-R
+                    MOVE L-Q TO L-CRC
+                    IF L-R = 1
+                        CALL "CBL_XOR" USING L-POLY L-CRC BY VALUE 8
+                    END-IF
+                END-PERFORM
+            ELSE
+                COMPUTE L-T = L-X * PB-POW2(L-WIDTH - 7)
+                CALL "CBL_XOR" USING L-T L-CRC BY VALUE 8
+                PERFORM 8 TIMES
+                    IF L-CRC >= L-TOP
+                        COMPUTE L-CRC = (L-CRC - L-TOP) * 2
+                        CALL "CBL_XOR" USING L-POLY L-CRC BY VALUE 8
+                    ELSE
+                        COMPUTE L-CRC = L-CRC * 2
+                    END-IF
+                END-PERFORM
+            END-IF
+        END-PERFORM
+        CALL "CBL_XOR" USING L-XOROUT L-CRC BY VALUE 8
+        CALL "CBL_AND" USING L-MASK L-CRC BY VALUE 8
+        MOVE L-CRC TO PB-Z
+        GOBACK
+    END-IF
+    MOVE 0 TO L-A L-B
+    PERFORM VARYING L-I FROM L-FROM BY 1 UNTIL L-I >= L-TO
+        PERFORM GET-BYTE
+        EVALUATE L-ALGO
+            WHEN 8
+                COMPUTE L-T = L-I - L-FROM
+                DIVIDE L-T BY 2 GIVING L-Q REMAINDER L-R
+                IF L-R = 0
+                    COMPUTE L-A = L-A + L-X * 256
+                ELSE
+                    ADD L-X TO L-A
+                END-IF
+            WHEN 9
+                COMPUTE L-T = L-A + L-X
+                DIVIDE L-T BY 255 GIVING L-Q REMAINDER L-A
+                COMPUTE L-T = L-B + L-A
+                DIVIDE L-T BY 255 GIVING L-Q REMAINDER L-B
+            WHEN 10
+                COMPUTE L-T = L-A + L-X
+                DIVIDE L-T BY 256 GIVING L-Q REMAINDER L-A
+            WHEN 12
+                COMPUTE L-T = L-A + L-X
+                DIVIDE L-T BY 65536 GIVING L-Q REMAINDER L-A
+            WHEN 13
+                COMPUTE L-T = L-I - L-FROM
+                DIVIDE L-T BY 4 GIVING L-Q REMAINDER L-R
+                COMPUTE L-K = (3 - L-R) * 8
+                COMPUTE L-T = L-A + L-X * PB-POW2(L-K + 1)
+                DIVIDE L-T BY 4294967296 GIVING L-Q REMAINDER L-A
+            WHEN OTHER
+                CALL "CBL_XOR" USING L-X L-A BY VALUE 8
+        END-EVALUATE
+    END-PERFORM
+    EVALUATE L-ALGO
+        WHEN 8
+            PERFORM UNTIL L-A < 65536
+                DIVIDE L-A BY 65536 GIVING L-Q REMAINDER L-R
+                COMPUTE L-A = L-R + L-Q
+            END-PERFORM
+            COMPUTE PB-Z = 65535 - L-A
+        WHEN 13
+            DIVIDE L-A BY 65536 GIVING L-Q REMAINDER L-R
+            COMPUTE L-T = L-Q + L-R
+            DIVIDE L-T BY 65536 GIVING L-Q REMAINDER PB-Z
+        WHEN 9
+            COMPUTE PB-Z = L-B * 256 + L-A
+        WHEN OTHER
+            MOVE L-A TO PB-Z
+    END-EVALUATE
+    GOBACK.
+GET-BYTE.
+    IF L-I >= L-HF AND L-I < L-HT
+        MOVE 0 TO L-X
+    ELSE
+        IF PB-A6 = 1
+            MOVE PB-OUTB(PB-WORG + L-I + 1) TO L-X
+        ELSE
+            MOVE PB-INB(L-I + 1) TO L-X
+        END-IF
+    END-IF.
+END PROGRAM PB-CKSUM.
+
+*> ---- writer ---------------------------------------------------------------
+
+*> Start writing at the start of PB-OUT.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-WINIT.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+PROCEDURE DIVISION.
+    MOVE 0 TO PB-WORG PB-WLEN PB-WPOS PB-WBASE PB-WPL0 PB-WSP PB-PLN PB-PDLEN
+    MOVE 0 TO PB-DEPTH PB-RC PB-PATHSET PB-VER
+    MOVE 1 TO PB-WRITING
+    MOVE 0 TO PB-EMLEN PB-EPLEN PB-ENEED
+    GOBACK.
+END PROGRAM PB-WINIT.
+
+*> Append byte PB-BV.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-ADDB.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-K BINARY-DOUBLE SIGNED.
+PROCEDURE DIVISION.
+    COMPUTE L-K = PB-WORG + PB-WLEN + 1
+    IF L-K > 65536
+        MOVE "the output does not fit in the 64 KiB buffer" TO PB-MSG
+        MOVE 4 TO PB-A1
+        MOVE 0 TO PB-A2
+        CALL "PB-FAIL"
+        GOBACK
+    END-IF
+    MOVE PB-BV TO PB-OUTB(L-K)
+    ADD 1 TO PB-WLEN
+    GOBACK.
+END PROGRAM PB-ADDB.
+
+*> Write the low PB-A1 bits of PB-X, most significant first.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-WBITS.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-U PIC S9(38) COMP-3.
+01 L-Q PIC S9(38) COMP-3.
+01 L-LEFT BINARY-LONG SIGNED.
+01 L-TAKE BINARY-LONG SIGNED.
+01 L-OFF BINARY-LONG SIGNED.
+01 L-K BINARY-DOUBLE SIGNED.
+01 L-BITS BINARY-LONG SIGNED.
+01 L-S BINARY-LONG SIGNED.
+01 K-2P64 PIC S9(38) COMP-3 VALUE 18446744073709551616.
+PROCEDURE DIVISION.
+    MOVE PB-A1 TO L-LEFT
+    MOVE PB-X TO L-U
+    IF L-U < 0
+        ADD K-2P64 TO L-U
+    END-IF
+    PERFORM UNTIL L-LEFT <= 0
+        DIVIDE PB-WPOS BY 8 GIVING L-K REMAINDER L-OFF
+        IF L-OFF = 0
+            MOVE 0 TO PB-BV
+            CALL "PB-ADDB"
+            IF PB-RC NOT = 0
+                GOBACK
+            END-IF
+        END-IF
+        COMPUTE L-TAKE = 8 - L-OFF
+        IF L-TAKE > L-LEFT
+            MOVE L-LEFT TO L-TAKE
+        END-IF
+        COMPUTE L-S = L-LEFT - L-TAKE
+        DIVIDE L-U BY PB-POW2(L-S + 1) GIVING L-Q
+        DIVIDE L-Q BY PB-POW2(L-TAKE + 1) GIVING L-Q REMAINDER L-BITS
+        COMPUTE L-K = PB-WORG + PB-WLEN
+        COMPUTE L-S = 9 - L-OFF - L-TAKE
+        COMPUTE PB-OUTB(L-K) = PB-OUTB(L-K) + L-BITS * PB-POW2(L-S)
+        ADD L-TAKE TO PB-WPOS
+        SUBTRACT L-TAKE FROM L-LEFT
+    END-PERFORM
+    GOBACK.
+END PROGRAM PB-WBITS.
+
+*> Write PB-X as PB-A1 bytes, little-endian when PB-A2 = 1.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-WUINT.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-U PIC S9(38) COMP-3.
+01 L-Q PIC S9(38) COMP-3.
+01 L-R PIC S9(38) COMP-3.
+01 L-N BINARY-LONG SIGNED.
+01 L-I BINARY-LONG SIGNED.
+01 L-S BINARY-LONG SIGNED.
+01 L-LITTLE BINARY-LONG SIGNED.
+01 K-2P64 PIC S9(38) COMP-3 VALUE 18446744073709551616.
+PROCEDURE DIVISION.
+    MOVE PB-A1 TO L-N
+    MOVE PB-A2 TO L-LITTLE
+    MOVE PB-X TO L-U
+    IF L-U < 0
+        ADD K-2P64 TO L-U
+    END-IF
+    PERFORM VARYING L-I FROM 0 BY 1 UNTIL L-I >= L-N
+        IF L-LITTLE = 1
+            COMPUTE L-S = 8 * L-I
+        ELSE
+            COMPUTE L-S = 8 * (L-N - 1 - L-I)
+        END-IF
+        DIVIDE L-U BY PB-POW2(L-S + 1) GIVING L-Q
+        DIVIDE L-Q BY 256 GIVING L-Q REMAINDER L-R
+        MOVE L-R TO PB-BV
+        CALL "PB-ADDB"
+        IF PB-RC NOT = 0
+            GOBACK
+        END-IF
+    END-PERFORM
+    COMPUTE PB-WPOS = PB-WPOS + L-N * 8
+    GOBACK.
+END PROGRAM PB-WUINT.
+
+*> Write the PB-A1 bytes at PB-WP.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-WRAW.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-K BINARY-DOUBLE SIGNED.
+LINKAGE SECTION.
+01 L-SRC PIC X(262144).
+PROCEDURE DIVISION.
+    IF PB-A1 <= 0
+        GOBACK
+    END-IF
+    IF PB-WORG + PB-WLEN + PB-A1 > 65536
+        MOVE "the output does not fit in the 64 KiB buffer" TO PB-MSG
+        MOVE 4 TO PB-A1
+        MOVE 0 TO PB-A2
+        CALL "PB-FAIL"
+        GOBACK
+    END-IF
+    SET ADDRESS OF L-SRC TO PB-WP
+    COMPUTE L-K = PB-WORG + PB-WLEN + 1
+    MOVE L-SRC(1:PB-A1) TO PB-OUT(L-K:PB-A1)
+    ADD PB-A1 TO PB-WLEN
+    COMPUTE PB-WPOS = PB-WPOS + PB-A1 * 8
+    GOBACK.
+END PROGRAM PB-WRAW.
+
+*> Write the PB-TLEN bytes of PB-TERM.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-WTERM.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+PROCEDURE DIVISION.
+    SET PB-WP TO ADDRESS OF PB-TERM
+    MOVE PB-TLEN TO PB-A1
+    CALL "PB-WRAW"
+    GOBACK.
+END PROGRAM PB-WTERM.
+
+*> Write PB-X zero bits.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-WZERO.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-LEFT BINARY-DOUBLE SIGNED.
+PROCEDURE DIVISION.
+    MOVE PB-X TO L-LEFT
+    PERFORM UNTIL L-LEFT <= 0
+        MOVE 0 TO PB-X
+        IF L-LEFT > 32
+            MOVE 32 TO PB-A1
+        ELSE
+            MOVE L-LEFT TO PB-A1
+        END-IF
+        SUBTRACT PB-A1 FROM L-LEFT
+        CALL "PB-WBITS"
+        IF PB-RC NOT = 0
+            GOBACK
+        END-IF
+    END-PERFORM
+    GOBACK.
+END PROGRAM PB-WZERO.
+
+*> Write zeros up to the next multiple of PB-A1 bits counted from bit PB-X.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-WALIGN.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-Q BINARY-DOUBLE SIGNED.
+01 L-R BINARY-DOUBLE SIGNED.
+PROCEDURE DIVISION.
+    COMPUTE L-Q = PB-WPOS - PB-X
+    DIVIDE L-Q BY PB-A1 GIVING L-Q REMAINDER L-R
+    COMPUTE PB-X = PB-A1 - L-R
+    DIVIDE PB-X BY PB-A1 GIVING L-Q REMAINDER L-R
+    MOVE L-R TO PB-X
+    CALL "PB-WZERO"
+    GOBACK.
+END PROGRAM PB-WALIGN.
+
+*> Write PB-X as a varint of kind PB-A1 (as for PB-RVARINT).
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-WVARINT.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-KIND BINARY-LONG SIGNED.
+01 L-S PIC S9(38) COMP-3.
+01 L-U PIC S9(38) COMP-3.
+01 L-Q PIC S9(38) COMP-3.
+01 L-B PIC S9(38) COMP-3.
+01 L-V PIC S9(38) COMP-3.
+01 L-NB BINARY-LONG SIGNED.
+01 L-N BINARY-LONG SIGNED.
+01 L-I BINARY-LONG SIGNED.
+01 L-DONE BINARY-LONG SIGNED.
+01 L-G PIC S9(38) COMP-3 OCCURS 10.
+01 L-ED PIC Z(19)9.
+01 L-P BINARY-LONG SIGNED.
+01 K-2P64 PIC S9(38) COMP-3 VALUE 18446744073709551616.
+01 K-2P63 PIC S9(38) COMP-3 VALUE 9223372036854775808.
+PROCEDURE DIVISION.
+    MOVE PB-A1 TO L-KIND
+    MOVE PB-X TO L-S
+    MOVE PB-X TO L-U
+    IF L-U < 0
+        ADD K-2P64 TO L-U
+    END-IF
+    EVALUATE L-KIND
+        WHEN 5
+            EVALUATE TRUE
+                WHEN L-U < 128
+                    MOVE L-U TO L-V
+                    MOVE 1 TO L-NB
+                    PERFORM PUT
+                WHEN L-U <= 32767
+                    COMPUTE L-V = L-U + 32768
+                    MOVE 2 TO L-NB
+                    PERFORM PUT
+                WHEN OTHER
+                    MOVE "varint15" TO PB-NAME
+                    PERFORM TOO-BIG
+            END-EVALUATE
+        WHEN 4
+            EVALUATE TRUE
+                WHEN L-U <= 63
+                    MOVE L-U TO L-V
+                    MOVE 1 TO L-NB
+                    PERFORM PUT
+                WHEN L-U <= 16383
+                    COMPUTE L-V = L-U + 16384
+                    MOVE 2 TO L-NB
+                    PERFORM PUT
+                WHEN L-U <= 1073741823
+                    COMPUTE L-V = L-U + 2147483648
+                    MOVE 4 TO L-NB
+                    PERFORM PUT
+                WHEN L-U <= 4611686018427387903
+                    COMPUTE L-V = L-U + 13835058055282163712
+                    MOVE 8 TO L-NB
+                    PERFORM PUT
+                WHEN OTHER
+                    MOVE "QUIC varint" TO PB-NAME
+                    PERFORM TOO-BIG
+            END-EVALUATE
+        WHEN 1
+            MOVE 0 TO L-DONE
+            PERFORM UNTIL L-DONE = 1
+                DIVIDE L-S BY 128 GIVING L-Q REMAINDER L-B
+                IF L-B < 0
+                    ADD 128 TO L-B
+                    SUBTRACT 1 FROM L-Q
+                END-IF
+                MOVE L-Q TO L-S
+                IF (L-S = 0 AND L-B < 64) OR (L-S = -1 AND L-B >= 64)
+                    MOVE 1 TO L-DONE
+                    MOVE L-B TO L-V
+                ELSE
+                    COMPUTE L-V = L-B + 128
+                END-IF
+                MOVE 1 TO L-NB
+                PERFORM PUT
+                IF PB-RC NOT = 0
+                    GOBACK
+                END-IF
+            END-PERFORM
+        WHEN 3
+            DIVIDE L-U BY 128 GIVING L-Q REMAINDER L-G(1)
+            MOVE L-Q TO L-U
+            MOVE 1 TO L-N
+            PERFORM UNTIL L-U = 0
+                ADD 1 TO L-N
+                DIVIDE L-U BY 128 GIVING L-Q REMAINDER L-G(L-N)
+                ADD 128 TO L-G(L-N)
+                MOVE L-Q TO L-U
+            END-PERFORM
+            PERFORM VARYING L-I FROM L-N BY -1 UNTIL L-I < 1
+                MOVE L-G(L-I) TO L-V
+                MOVE 1 TO L-NB
+                PERFORM PUT
+                IF PB-RC NOT = 0
+                    GOBACK
+                END-IF
+            END-PERFORM
+        WHEN OTHER
+            IF L-KIND = 2
+                IF L-S >= 0
+                    COMPUTE L-U = L-S * 2
+                ELSE
+                    COMPUTE L-U = 0 - L-S * 2 - 1
+                END-IF
+            END-IF
+            MOVE 0 TO L-DONE
+            PERFORM UNTIL L-DONE = 1
+                DIVIDE L-U BY 128 GIVING L-Q REMAINDER L-B
+                MOVE L-Q TO L-U
+                IF L-U = 0
+                    MOVE 1 TO L-DONE
+                    MOVE L-B TO L-V
+                ELSE
+                    COMPUTE L-V = L-B + 128
+                END-IF
+                MOVE 1 TO L-NB
+                PERFORM PUT
+                IF PB-RC NOT = 0
+                    GOBACK
+                END-IF
+            END-PERFORM
+    END-EVALUATE
+    GOBACK.
+PUT.
+    IF L-V >= K-2P63
+        SUBTRACT K-2P64 FROM L-V
+    END-IF
+    MOVE L-V TO PB-X
+    MOVE L-NB TO PB-A1
+    MOVE 0 TO PB-A2
+    CALL "PB-WUINT".
+TOO-BIG.
+    MOVE SPACES TO PB-MSG
+    MOVE 1 TO L-P
+    MOVE L-U TO L-ED
+    STRING FUNCTION TRIM(L-ED) " does not fit in a " FUNCTION TRIM(PB-NAME)
+        DELIMITED BY SIZE INTO PB-MSG WITH POINTER L-P
+    END-STRING
+    MOVE 3 TO PB-A1
+    MOVE 0 TO PB-A2
+    CALL "PB-FAIL".
+END PROGRAM PB-WVARINT.
+
+*> Overwrite the PB-A1 bytes at bit PB-Y with PB-X (little-endian when
+*> PB-A2 = 1).
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-WPATCHU.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-U PIC S9(38) COMP-3.
+01 L-Q PIC S9(38) COMP-3.
+01 L-R PIC S9(38) COMP-3.
+01 L-I BINARY-LONG SIGNED.
+01 L-S BINARY-LONG SIGNED.
+01 L-K BINARY-DOUBLE SIGNED.
+01 K-2P64 PIC S9(38) COMP-3 VALUE 18446744073709551616.
+PROCEDURE DIVISION.
+    MOVE PB-X TO L-U
+    IF L-U < 0
+        ADD K-2P64 TO L-U
+    END-IF
+    PERFORM VARYING L-I FROM 0 BY 1 UNTIL L-I >= PB-A1
+        IF PB-A2 = 1
+            COMPUTE L-S = 8 * L-I
+        ELSE
+            COMPUTE L-S = 8 * (PB-A1 - 1 - L-I)
+        END-IF
+        DIVIDE L-U BY PB-POW2(L-S + 1) GIVING L-Q
+        DIVIDE L-Q BY 256 GIVING L-Q REMAINDER L-R
+        DIVIDE PB-Y BY 8 GIVING L-K
+        COMPUTE L-K = PB-WORG + L-K + L-I + 1
+        MOVE L-R TO PB-OUTB(L-K)
+    END-PERFORM
+    GOBACK.
+END PROGRAM PB-WPATCHU.
+
+*> Overwrite the PB-A1 bits at bit PB-Y with the low bits of PB-X.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-WPATCHB.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-U PIC S9(38) COMP-3.
+01 L-Q PIC S9(38) COMP-3.
+01 L-I BINARY-LONG SIGNED.
+01 L-S BINARY-LONG SIGNED.
+01 L-BIT BINARY-LONG SIGNED.
+01 L-OFF BINARY-LONG SIGNED.
+01 L-OLD BINARY-LONG SIGNED.
+01 L-K BINARY-DOUBLE SIGNED.
+01 L-R BINARY-LONG SIGNED.
+01 K-2P64 PIC S9(38) COMP-3 VALUE 18446744073709551616.
+PROCEDURE DIVISION.
+    MOVE PB-X TO L-U
+    IF L-U < 0
+        ADD K-2P64 TO L-U
+    END-IF
+    PERFORM VARYING L-I FROM 0 BY 1 UNTIL L-I >= PB-A1
+        COMPUTE L-S = PB-A1 - 1 - L-I
+        DIVIDE L-U BY PB-POW2(L-S + 1) GIVING L-Q
+        DIVIDE L-Q BY 2 GIVING L-Q REMAINDER L-BIT
+        COMPUTE L-K = PB-Y + L-I
+        DIVIDE L-K BY 8 GIVING L-K REMAINDER L-OFF
+        COMPUTE L-OFF = 7 - L-OFF
+        COMPUTE L-K = PB-WORG + L-K + 1
+        MOVE PB-OUTB(L-K) TO L-OLD
+        DIVIDE L-OLD BY PB-POW2(L-OFF + 1) GIVING L-R
+        DIVIDE L-R BY 2 GIVING L-R REMAINDER L-R
+        IF L-R = 1
+            SUBTRACT PB-POW2(L-OFF + 1) FROM L-OLD
+        END-IF
+        COMPUTE L-OLD = L-OLD + L-BIT * PB-POW2(L-OFF + 1)
+        MOVE L-OLD TO PB-OUTB(L-K)
+    END-PERFORM
+    GOBACK.
+END PROGRAM PB-WPATCHB.
+
+*> End a window that started at bit PB-X and holds PB-Y bytes: pad it
+*> with zeros (PB-A1 = 1: it must be full already).
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-WENDWIN.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-USED BINARY-DOUBLE SIGNED.
+PROCEDURE DIVISION.
+    COMPUTE L-USED = PB-WPOS - PB-X
+    IF PB-Y < 0 OR L-USED > PB-Y * 8
+        MOVE "the content takes more bits than its size" TO PB-MSG
+        MOVE 3 TO PB-A1
+        MOVE 0 TO PB-A2
+        CALL "PB-FAIL"
+        GOBACK
+    END-IF
+    IF PB-A1 = 1 AND L-USED NOT = PB-Y * 8
+        MOVE "the content does not fill its size" TO PB-MSG
+        MOVE 6 TO PB-A1
+        MOVE 0 TO PB-A2
+        CALL "PB-FAIL"
+        GOBACK
+    END-IF
+    COMPUTE PB-X = PB-Y * 8 - L-USED
+    CALL "PB-WZERO"
+    GOBACK.
+END PROGRAM PB-WENDWIN.
+
+*> Start a writer for a packet placed PB-Y bytes after bit PB-X of this
+*> writer (of the whole output when PB-A1 = 1).
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-WSUB.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-START BINARY-DOUBLE SIGNED.
+01 L-Q BINARY-DOUBLE SIGNED.
+01 L-R BINARY-DOUBLE SIGNED.
+PROCEDURE DIVISION.
+    IF PB-A1 = 1
+        MOVE 0 TO L-START
+    ELSE
+        COMPUTE L-START = PB-WBASE + PB-X
+    END-IF
+    DIVIDE L-START BY 8 GIVING L-Q REMAINDER L-R
+    IF PB-Y < 0 OR L-R NOT = 0
+        MOVE "bad offset" TO PB-MSG
+        MOVE 3 TO PB-A1
+        MOVE 0 TO PB-A2
+        CALL "PB-FAIL"
+        GOBACK
+    END-IF
+    IF PB-WSP >= 64
+        MOVE "packets placed more than 64 deep" TO PB-MSG
+        MOVE 4 TO PB-A1
+        MOVE 0 TO PB-A2
+        CALL "PB-FAIL"
+        GOBACK
+    END-IF
+    ADD 1 TO PB-WSP
+    MOVE PB-WORG TO PB-WS-ORG(PB-WSP)
+    MOVE PB-WLEN TO PB-WS-LEN(PB-WSP)
+    MOVE PB-WPOS TO PB-WS-POS(PB-WSP)
+    MOVE PB-WBASE TO PB-WS-BASE(PB-WSP)
+    MOVE PB-WPL0 TO PB-WS-PL0(PB-WSP)
+    COMPUTE PB-WORG = PB-WORG + PB-WLEN
+    MOVE 0 TO PB-WLEN PB-WPOS
+    COMPUTE PB-WBASE = L-START + PB-Y * 8
+    MOVE PB-PLN TO PB-WPL0
+    GOBACK.
+END PROGRAM PB-WSUB.
+
+*> End the writer PB-WSUB started: keep its bytes for PB-WFINISH, to be
+*> placed at its offset, and go back to the writer before it.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-WPLACE.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-I BINARY-LONG SIGNED.
+01 L-AT BINARY-LONG SIGNED.
+01 L-Q BINARY-DOUBLE SIGNED.
+PROCEDURE DIVISION.
+    IF PB-PLN >= 256 OR PB-PDLEN + PB-WLEN > 65536
+        MOVE "too many placed packets" TO PB-MSG
+        MOVE 4 TO PB-A1
+        MOVE 0 TO PB-A2
+        CALL "PB-FAIL"
+        GOBACK
+    END-IF
+    COMPUTE L-AT = PB-WPL0 + 1
+    PERFORM VARYING L-I FROM PB-PLN BY -1 UNTIL L-I < L-AT
+        MOVE PB-PL(L-I) TO PB-PL(L-I + 1)
+    END-PERFORM
+    ADD 1 TO PB-PLN
+    DIVIDE PB-WBASE BY 8 GIVING L-Q
+    MOVE L-Q TO PB-PL-AT(L-AT)
+    MOVE PB-PDLEN TO PB-PL-OFF(L-AT)
+    MOVE PB-WLEN TO PB-PL-LEN(L-AT)
+    IF PB-WLEN > 0
+        MOVE PB-OUT(PB-WORG + 1:PB-WLEN) TO PB-PDATA(PB-PDLEN + 1:PB-WLEN)
+    END-IF
+    ADD PB-WLEN TO PB-PDLEN
+    MOVE PB-WS-ORG(PB-WSP) TO PB-WORG
+    MOVE PB-WS-LEN(PB-WSP) TO PB-WLEN
+    MOVE PB-WS-POS(PB-WSP) TO PB-WPOS
+    MOVE PB-WS-BASE(PB-WSP) TO PB-WBASE
+    MOVE PB-WS-PL0(PB-WSP) TO PB-WPL0
+    SUBTRACT 1 FROM PB-WSP
+    CALL "PB-PATH"
+    MOVE PB-EPATH TO PB-PL-PATH(L-AT)
+    MOVE PB-EPLEN TO PB-PL-PLEN(L-AT)
+    MOVE 0 TO PB-EPLEN
+    GOBACK.
+END PROGRAM PB-WPLACE.
+
+*> Put the placed packets at their offsets (sorted, stable); bytes
+*> already written there must match. The output is PB-OUT(1:PB-WLEN).
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-WFINISH.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-I BINARY-LONG SIGNED.
+01 L-J BINARY-LONG SIGNED.
+01 L-K BINARY-DOUBLE SIGNED.
+01 L-D BINARY-DOUBLE SIGNED.
+01 L-T.
+   05 L-T-AT   BINARY-DOUBLE SIGNED.
+   05 L-T-OFF  BINARY-DOUBLE SIGNED.
+   05 L-T-LEN  BINARY-DOUBLE SIGNED.
+   05 L-T-PLEN BINARY-LONG SIGNED.
+   05 L-T-PATH PIC X(512).
+PROCEDURE DIVISION.
+    PERFORM VARYING L-I FROM 2 BY 1 UNTIL L-I > PB-PLN
+        MOVE PB-PL(L-I) TO L-T
+        COMPUTE L-J = L-I - 1
+        PERFORM UNTIL L-J < 1
+            IF PB-PL-AT(L-J) <= L-T-AT
+                EXIT PERFORM
+            END-IF
+            MOVE PB-PL(L-J) TO PB-PL(L-J + 1)
+            SUBTRACT 1 FROM L-J
+        END-PERFORM
+        MOVE L-T TO PB-PL(L-J + 1)
+    END-PERFORM
+    PERFORM VARYING L-I FROM 1 BY 1 UNTIL L-I > PB-PLN
+        PERFORM UNTIL PB-WLEN >= PB-PL-AT(L-I)
+            MOVE 0 TO PB-BV
+            CALL "PB-ADDB"
+            IF PB-RC NOT = 0
+                GOBACK
+            END-IF
+        END-PERFORM
+        PERFORM VARYING L-J FROM 0 BY 1 UNTIL L-J >= PB-PL-LEN(L-I)
+            COMPUTE L-K = PB-PL-AT(L-I) + L-J
+            MOVE PB-PDB(PB-PL-OFF(L-I) + L-J + 1) TO L-D
+            IF L-K < PB-WLEN
+                IF PB-OUTB(L-K + 1) NOT = L-D
+                    MOVE PB-PL-PATH(L-I) TO PB-EPATH
+                    MOVE PB-PL-PLEN(L-I) TO PB-EPLEN
+                    MOVE 1 TO PB-PATHSET
+                    COMPUTE PB-WPOS = L-K * 8
+                    MOVE "the packet placed there does not match the bytes already there" TO PB-MSG
+                    MOVE 6 TO PB-A1
+                    MOVE 0 TO PB-A2
+                    CALL "PB-FAIL"
+                    GOBACK
+                END-IF
+            ELSE
+                PERFORM UNTIL PB-WLEN >= L-K
+                    MOVE 0 TO PB-BV
+                    CALL "PB-ADDB"
+                    IF PB-RC NOT = 0
+                        GOBACK
+                    END-IF
+                END-PERFORM
+                MOVE L-D TO PB-BV
+                CALL "PB-ADDB"
+                IF PB-RC NOT = 0
+                    GOBACK
+                END-IF
+            END-IF
+        END-PERFORM
+    END-PERFORM
+    MOVE 0 TO PB-PLN
+    GOBACK.
+END PROGRAM PB-WFINISH.
+
+*> PB-SP / PB-SN (UTF-8) := the text in encoding PB-A3 (as for
+*> PB-CONVTEXT), in PB-CBUF.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-TOTEXT.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-N BINARY-DOUBLE SIGNED.
+01 L-I BINARY-DOUBLE SIGNED.
+01 L-K BINARY-LONG SIGNED.
+01 L-O BINARY-DOUBLE SIGNED.
+01 L-ENC BINARY-LONG SIGNED.
+01 L-MORE BINARY-LONG SIGNED.
+01 L-C BINARY-DOUBLE SIGNED.
+01 L-U BINARY-DOUBLE SIGNED.
+01 L-Q BINARY-DOUBLE SIGNED.
+01 L-R BINARY-DOUBLE SIGNED.
+01 L-BAD BINARY-LONG SIGNED.
+LINKAGE SECTION.
+01 L-RAW.
+   05 L-RB BINARY-CHAR UNSIGNED OCCURS 262144.
+PROCEDURE DIVISION.
+    MOVE PB-A3 TO L-ENC
+    IF L-ENC = 0
+        GOBACK
+    END-IF
+    MOVE PB-SN TO L-N
+    MOVE 0 TO L-O
+    MOVE 0 TO L-BAD
+    IF L-N > 0
+        SET ADDRESS OF L-RAW TO PB-SP
+    END-IF
+    MOVE 1 TO L-I
+    PERFORM UNTIL L-I > L-N OR L-BAD = 1
+        MOVE L-RB(L-I) TO L-C
+        EVALUATE TRUE
+            WHEN L-C < 128
+                MOVE 0 TO L-MORE
+            WHEN L-C < 224
+                MOVE 1 TO L-MORE
+                SUBTRACT 192 FROM L-C
+            WHEN L-C < 240
+                MOVE 2 TO L-MORE
+                SUBTRACT 224 FROM L-C
+            WHEN OTHER
+                MOVE 3 TO L-MORE
+                SUBTRACT 240 FROM L-C
+        END-EVALUATE
+        PERFORM VARYING L-K FROM 1 BY 1 UNTIL L-K > L-MORE
+            IF L-I + L-K <= L-N
+                COMPUTE L-C = L-C * 64 + L-RB(L-I + L-K) - 128
+            END-IF
+        END-PERFORM
+        COMPUTE L-I = L-I + L-MORE + 1
+        EVALUATE TRUE
+            WHEN L-ENC = 1 AND L-C > 127
+                MOVE "the string is not valid ASCII" TO PB-MSG
+                MOVE 1 TO L-BAD
+            WHEN L-ENC = 2 AND L-C > 255
+                MOVE "the string is not valid Latin-1" TO PB-MSG
+                MOVE 1 TO L-BAD
+            WHEN L-ENC <= 2
+                ADD 1 TO L-O
+                MOVE L-C TO PB-CBB(L-O)
+            WHEN L-C >= 65536
+                SUBTRACT 65536 FROM L-C
+                DIVIDE L-C BY 1024 GIVING L-Q REMAINDER L-R
+                COMPUTE L-U = 55296 + L-Q
+                COMPUTE L-C = 56320 + L-R
+                PERFORM PUT-UNIT
+                MOVE L-C TO L-U
+                PERFORM PUT-UNIT
+            WHEN OTHER
+                MOVE L-C TO L-U
+                PERFORM PUT-UNIT
+        END-EVALUATE
+    END-PERFORM
+    IF L-BAD = 1
+        MOVE 5 TO PB-A1
+        MOVE 0 TO PB-A2
+        CALL "PB-FAIL"
+        GOBACK
+    END-IF
+    SET PB-SP TO ADDRESS OF PB-CBUF
+    MOVE L-O TO PB-SN
+    GOBACK.
+PUT-UNIT.
+    DIVIDE L-U BY 256 GIVING L-Q REMAINDER L-R
+    IF L-ENC = 3
+        ADD 1 TO L-O
+        MOVE L-R TO PB-CBB(L-O)
+        ADD 1 TO L-O
+        MOVE L-Q TO PB-CBB(L-O)
+    ELSE
+        ADD 1 TO L-O
+        MOVE L-Q TO PB-CBB(L-O)
+        ADD 1 TO L-O
+        MOVE L-R TO PB-CBB(L-O)
+    END-IF.
+END PROGRAM PB-TOTEXT.
+
+*> ---- encoder checks -------------------------------------------------------
+
+*> PB-X must fit in PB-A1 unsigned bits.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-CU.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-U PIC S9(38) COMP-3.
+01 L-W BINARY-LONG SIGNED.
+01 L-ED PIC Z(19)9.
+01 L-EW PIC Z9.
+01 L-P BINARY-LONG SIGNED.
+01 K-2P64 PIC S9(38) COMP-3 VALUE 18446744073709551616.
+PROCEDURE DIVISION.
+    IF PB-A1 >= 64
+        GOBACK
+    END-IF
+    MOVE PB-A1 TO L-W
+    MOVE PB-X TO L-U
+    IF L-U < 0
+        ADD K-2P64 TO L-U
+    END-IF
+    IF L-U >= PB-POW2(L-W + 1)
+        MOVE SPACES TO PB-MSG
+        MOVE 1 TO L-P
+        MOVE L-U TO L-ED
+        MOVE L-W TO L-EW
+        STRING "value " FUNCTION TRIM(L-ED) " does not fit in " FUNCTION TRIM(L-EW)
+            " bit(s)" DELIMITED BY SIZE INTO PB-MSG WITH POINTER L-P
+        END-STRING
+        MOVE 3 TO PB-A1
+        MOVE 0 TO PB-A2
+        CALL "PB-FAIL"
+    END-IF
+    GOBACK.
+END PROGRAM PB-CU.
+
+*> PB-X must fit in PB-A1 signed bits.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-CI.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-W BINARY-LONG SIGNED.
+01 L-ED PIC -(19)9.
+01 L-EW PIC Z9.
+01 L-P BINARY-LONG SIGNED.
+PROCEDURE DIVISION.
+    IF PB-A1 >= 64
+        GOBACK
+    END-IF
+    MOVE PB-A1 TO L-W
+    IF PB-X < 0 - PB-POW2(L-W) OR PB-X > PB-POW2(L-W) - 1
+        MOVE SPACES TO PB-MSG
+        MOVE 1 TO L-P
+        MOVE PB-X TO L-ED
+        MOVE L-W TO L-EW
+        STRING "value " FUNCTION TRIM(L-ED) " does not fit in " FUNCTION TRIM(L-EW)
+            " signed bit(s)" DELIMITED BY SIZE INTO PB-MSG WITH POINTER L-P
+        END-STRING
+        MOVE 3 TO PB-A1
+        MOVE 0 TO PB-A2
+        CALL "PB-FAIL"
+    END-IF
+    GOBACK.
+END PROGRAM PB-CI.
+
+*> PB-X elements, but the length expression says PB-Y.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-CLEN.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+PROCEDURE DIVISION.
+    IF PB-X NOT = PB-Y
+        MOVE "the element count differs from what the length expression says" TO PB-MSG
+        MOVE 6 TO PB-A1
+        MOVE 0 TO PB-A2
+        CALL "PB-FAIL"
+    END-IF
+    GOBACK.
+END PROGRAM PB-CLEN.
+
+*> PB-X bytes must fit in PB-Y.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-CFITS.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+PROCEDURE DIVISION.
+    IF PB-X > PB-Y
+        MOVE "the value is longer than its size" TO PB-MSG
+        MOVE 3 TO PB-A1
+        MOVE 0 TO PB-A2
+        CALL "PB-FAIL"
+    END-IF
+    GOBACK.
+END PROGRAM PB-CFITS.
+
+*> The PB-SN bytes at PB-SP must hold no NUL.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-CNONUL.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-I BINARY-DOUBLE SIGNED.
+LINKAGE SECTION.
+01 L-RAW.
+   05 L-RB BINARY-CHAR UNSIGNED OCCURS 262144.
+PROCEDURE DIVISION.
+    IF PB-SN <= 0
+        GOBACK
+    END-IF
+    SET ADDRESS OF L-RAW TO PB-SP
+    PERFORM VARYING L-I FROM 1 BY 1 UNTIL L-I > PB-SN
+        IF L-RB(L-I) = 0
+            MOVE "the string contains a NUL byte" TO PB-MSG
+            MOVE 5 TO PB-A1
+            MOVE 0 TO PB-A2
+            CALL "PB-FAIL"
+            GOBACK
+        END-IF
+    END-PERFORM
+    GOBACK.
+END PROGRAM PB-CNONUL.
+
+*> The PB-SN bytes at PB-SP must not contain the terminator PB-TERM.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-CNOTERM.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-I BINARY-DOUBLE SIGNED.
+LINKAGE SECTION.
+01 L-RAW PIC X(262144).
+PROCEDURE DIVISION.
+    IF PB-SN <= 0
+        GOBACK
+    END-IF
+    SET ADDRESS OF L-RAW TO PB-SP
+    PERFORM VARYING L-I FROM 0 BY 1 UNTIL L-I + PB-TLEN > PB-SN
+        IF L-RAW(L-I + 1:PB-TLEN) = PB-TERM(1:PB-TLEN)
+            MOVE "the value contains its terminator" TO PB-MSG
+            MOVE 2 TO PB-A1
+            MOVE 0 TO PB-A2
+            CALL "PB-FAIL"
+            GOBACK
+        END-IF
+    END-PERFORM
+    GOBACK.
+END PROGRAM PB-CNOTERM.
+
+*> ---- JSON -----------------------------------------------------------------
+
+*> Print PB-X as a signed number.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-JI.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-ED PIC -(19)9.
+PROCEDURE DIVISION.
+    MOVE PB-X TO L-ED
+    DISPLAY FUNCTION TRIM(L-ED) WITH NO ADVANCING
+    GOBACK.
+END PROGRAM PB-JI.
+
+*> Print PB-X as an unsigned number.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-JU.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-ED PIC Z(19)9.
+PROCEDURE DIVISION.
+    MOVE PB-X-U TO L-ED
+    DISPLAY FUNCTION TRIM(L-ED) WITH NO ADVANCING
+    GOBACK.
+END PROGRAM PB-JU.
+
+*> Print PB-FX (null for NaN and the infinities).
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-JF.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-U PIC S9(38) COMP-3.
+01 L-Q PIC S9(38) COMP-3.
+01 L-E PIC S9(38) COMP-3.
+01 K-2P64 PIC S9(38) COMP-3 VALUE 18446744073709551616.
+01 K-2P52 PIC S9(38) COMP-3 VALUE 4503599627370496.
+PROCEDURE DIVISION.
+    MOVE PB-FX-B TO L-U
+    IF L-U < 0
+        ADD K-2P64 TO L-U
+    END-IF
+    DIVIDE L-U BY K-2P52 GIVING L-Q
+    DIVIDE L-Q BY 2048 GIVING L-U REMAINDER L-E
+    IF L-E = 2047
+        DISPLAY "null" WITH NO ADVANCING
+    ELSE
+        DISPLAY PB-FX WITH NO ADVANCING
+    END-IF
+    GOBACK.
+END PROGRAM PB-JF.
+
+*> Print PB-FS (null for NaN and the infinities).
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-JF4.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-Q BINARY-DOUBLE SIGNED.
+01 L-U BINARY-DOUBLE SIGNED.
+01 L-E BINARY-DOUBLE SIGNED.
+PROCEDURE DIVISION.
+    DIVIDE PB-FS-B BY 8388608 GIVING L-Q
+    DIVIDE L-Q BY 256 GIVING L-U REMAINDER L-E
+    IF L-E = 255
+        DISPLAY "null" WITH NO ADVANCING
+    ELSE
+        MOVE PB-FS TO PB-FX
+        CALL "PB-JF"
+    END-IF
+    GOBACK.
+END PROGRAM PB-JF4.
+
+*> Print the PB-A1 bytes at PB-WP as a quoted hex string.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-JHEX.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-HEX PIC X(16) VALUE "0123456789abcdef".
+01 L-BUF PIC X(4096).
+01 L-I BINARY-DOUBLE SIGNED.
+01 L-O BINARY-LONG SIGNED.
+01 L-Q BINARY-LONG SIGNED.
+01 L-R BINARY-LONG SIGNED.
+LINKAGE SECTION.
+01 L-RAW.
+   05 L-RB BINARY-CHAR UNSIGNED OCCURS 262144.
+PROCEDURE DIVISION.
+    DISPLAY '"' WITH NO ADVANCING
+    IF PB-A1 > 0
+        SET ADDRESS OF L-RAW TO PB-WP
+        MOVE 0 TO L-O
+        PERFORM VARYING L-I FROM 1 BY 1 UNTIL L-I > PB-A1
+            DIVIDE L-RB(L-I) BY 16 GIVING L-Q REMAINDER L-R
+            ADD 1 TO L-O
+            MOVE L-HEX(L-Q + 1:1) TO L-BUF(L-O:1)
+            ADD 1 TO L-O
+            MOVE L-HEX(L-R + 1:1) TO L-BUF(L-O:1)
+            IF L-O >= 4000
+                DISPLAY L-BUF(1:L-O) WITH NO ADVANCING
+                MOVE 0 TO L-O
+            END-IF
+        END-PERFORM
+        IF L-O > 0
+            DISPLAY L-BUF(1:L-O) WITH NO ADVANCING
+        END-IF
+    END-IF
+    DISPLAY '"' WITH NO ADVANCING
+    GOBACK.
+END PROGRAM PB-JHEX.
+
+*> Print the PB-SN bytes (UTF-8) at PB-SP as a JSON string.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-JSTR.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-HEX PIC X(16) VALUE "0123456789abcdef".
+01 L-BUF PIC X(4096).
+01 L-I BINARY-DOUBLE SIGNED.
+01 L-O BINARY-LONG SIGNED.
+01 L-C BINARY-LONG SIGNED.
+01 L-Q BINARY-LONG SIGNED.
+01 L-R BINARY-LONG SIGNED.
+LINKAGE SECTION.
+01 L-RAW.
+   05 L-RB BINARY-CHAR UNSIGNED OCCURS 262144.
+01 L-RAWX REDEFINES L-RAW PIC X(262144).
+PROCEDURE DIVISION.
+    DISPLAY '"' WITH NO ADVANCING
+    IF PB-SN > 0
+        SET ADDRESS OF L-RAW TO PB-SP
+        MOVE 0 TO L-O
+        PERFORM VARYING L-I FROM 1 BY 1 UNTIL L-I > PB-SN
+            MOVE L-RB(L-I) TO L-C
+            EVALUATE TRUE
+                WHEN L-C = 34
+                    ADD 1 TO L-O
+                    MOVE "\" TO L-BUF(L-O:1)
+                    ADD 1 TO L-O
+                    MOVE '"' TO L-BUF(L-O:1)
+                WHEN L-C = 92
+                    ADD 1 TO L-O
+                    MOVE "\" TO L-BUF(L-O:1)
+                    ADD 1 TO L-O
+                    MOVE "\" TO L-BUF(L-O:1)
+                WHEN L-C < 32
+                    ADD 1 TO L-O
+                    MOVE "\u00" TO L-BUF(L-O:4)
+                    ADD 3 TO L-O
+                    DIVIDE L-C BY 16 GIVING L-Q REMAINDER L-R
+                    ADD 1 TO L-O
+                    MOVE L-HEX(L-Q + 1:1) TO L-BUF(L-O:1)
+                    ADD 1 TO L-O
+                    MOVE L-HEX(L-R + 1:1) TO L-BUF(L-O:1)
+                WHEN OTHER
+                    ADD 1 TO L-O
+                    MOVE L-RAWX(L-I:1) TO L-BUF(L-O:1)
+            END-EVALUATE
+            IF L-O >= 4000
+                DISPLAY L-BUF(1:L-O) WITH NO ADVANCING
+                MOVE 0 TO L-O
+            END-IF
+        END-PERFORM
+        IF L-O > 0
+            DISPLAY L-BUF(1:L-O) WITH NO ADVANCING
+        END-IF
+    END-IF
+    DISPLAY '"' WITH NO ADVANCING
+    GOBACK.
+END PROGRAM PB-JSTR.
+
+*> Print the error as JSON members: "error", "kind" and "path", with an
+*> "encode_" prefix when PB-A1 = 1.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-JERR.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-PRE PIC X(7).
+01 L-PLEN BINARY-LONG SIGNED.
+01 L-KIND PIC X(10).
+PROCEDURE DIVISION.
+    IF PB-A1 = 1
+        MOVE "encode_" TO L-PRE
+        MOVE 7 TO L-PLEN
+    ELSE
+        MOVE SPACES TO L-PRE
+        MOVE 0 TO L-PLEN
+    END-IF
+    EVALUATE PB-RC
+        WHEN 1 MOVE "incomplete" TO L-KIND
+        WHEN 2 MOVE "invalid" TO L-KIND
+        WHEN 3 MOVE "range" TO L-KIND
+        WHEN 5 MOVE "text" TO L-KIND
+        WHEN 6 MOVE "mismatch" TO L-KIND
+        WHEN 7 MOVE "constraint" TO L-KIND
+        WHEN OTHER MOVE "other" TO L-KIND
+    END-EVALUATE
+    DISPLAY ',"' WITH NO ADVANCING
+    IF L-PLEN > 0
+        DISPLAY L-PRE(1:L-PLEN) WITH NO ADVANCING
+    END-IF
+    DISPLAY 'error":' WITH NO ADVANCING
+    SET PB-SP TO ADDRESS OF PB-EMSG
+    MOVE PB-EMLEN TO PB-SN
+    CALL "PB-JSTR"
+    DISPLAY ',"' WITH NO ADVANCING
+    IF L-PLEN > 0
+        DISPLAY L-PRE(1:L-PLEN) WITH NO ADVANCING
+    END-IF
+    DISPLAY 'kind":"' FUNCTION TRIM(L-KIND) '","' WITH NO ADVANCING
+    IF L-PLEN > 0
+        DISPLAY L-PRE(1:L-PLEN) WITH NO ADVANCING
+    END-IF
+    DISPLAY 'path":' WITH NO ADVANCING
+    SET PB-SP TO ADDRESS OF PB-EPATH
+    MOVE PB-EPLEN TO PB-SN
+    CALL "PB-JSTR"
+    GOBACK.
+END PROGRAM PB-JERR.

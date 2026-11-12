@@ -1,0 +1,23 @@
+* Input for the COBOL program generated from network.packet:
+*
+*   packet_builder gen examples/network.packet -l cobol -o out
+*   cobc -free -x -o out/network out/network.cob
+*   out/network examples/network.dat
+*
+* One packet per line: <Packet> <hex bytes> [path=value ...].
+* Blank lines and lines starting with * are comments.
+
+* An Ethernet frame carrying IPv4 and UDP (a DNS query)
+Ethernet ffffffffffff0242ac110002080045000028000040004011b8acc0a80001c0a800c7cf080035001400001a2b01000001000000000000
+
+* IPv4 with a TCP segment and an MSS option
+Ipv4 4500002c000040004006b8b3c0a80001c0a800c7c001005012345678000000006002faf01c460000020405b4
+
+* A DNS answer whose name is compressed
+DnsMessage 1a2b81800001000100000000076578616d706c6503636f6d0000010001c00c0001000100000e1000045db8d822
+
+* The same UDP header with its source port changed before re-encoding
+Udp cf080035001400001a2b01000001000000000000 source_port=53
+
+* Cut short: decoding reports `incomplete`
+Ipv4 45000028000040
