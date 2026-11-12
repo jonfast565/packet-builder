@@ -1,7 +1,7 @@
 # Notes for coding agents
 
 packet-builder compiles `.packet` descriptions into decoders/encoders for C,
-Rust, Go, Python, C#, Zig and Object Pascal. See `README.md` for the language itself.
+Rust, Go, Python, C#, Zig, Object Pascal and Fortran. See `README.md` for the language itself.
 
 ## Pipeline and layout
 
@@ -21,7 +21,7 @@ source ──parser──▶ PacketExprList ──ir::analyze──▶ ir::Modul
 | `src/ir/interp/` | the reference interpreter: decodes/encodes a `Module` directly, using `runtime/rust.rs` (included as `interp::rt`). `show.rs` renders decoded values for the `decode` command. |
 | `src/pcap.rs` | pcap/pcapng reading and pcap writing (no dependencies). |
 | `src/generators/common/` | code shared by every backend (see below). |
-| `src/generators/<lang>/` | one backend per language, always split the same way: `mod.rs` (file preamble, `Backend` impl), `naming.rs` (identifiers, types, `Dialect` marker), `expr.rs` (`ExprLang` impl, `store_value`), `decode.rs` / `encode.rs` (`StepEmitter` impls), `packet.rs` (struct + method wrappers), `json.rs` (`to_json`), `stream.rs` (`try_decode`, `frame_len`). Decoders take a `zero_copy` flag (`GenOptions::zero_copy`; `common::buffers` finds what holds byte buffers). Pascal adds `locals.rs`: every routine declares its locals in a `var` block, so the emitters collect them while writing the body. Its classes are declared in the interface and implemented after the runtime, which `runtime/pascal.pas` splits at its `@implementation` line. |
+| `src/generators/<lang>/` | one backend per language, always split the same way: `mod.rs` (file preamble, `Backend` impl), `naming.rs` (identifiers, types, `Dialect` marker), `expr.rs` (`ExprLang` impl, `store_value`), `decode.rs` / `encode.rs` (`StepEmitter` impls), `packet.rs` (struct + method wrappers), `json.rs` (`to_json`), `stream.rs` (`try_decode`, `frame_len`). Decoders take a `zero_copy` flag (`GenOptions::zero_copy`; `common::buffers` finds what holds byte buffers). Pascal adds `locals.rs`: every routine declares its locals in a `var` block, so the emitters collect them while writing the body. Its classes are declared in the interface and implemented after the runtime, which `runtime/pascal.pas` splits at its `@implementation` line. Fortran (2008) also has `locals.rs`; `runtime/fortran.f90` is split at its `! @contains` line into the module's declarations and procedures. Fortran has no exceptions, so every fallible call is followed by a check of the reader's or writer's `%e` and a return, and no unsigned integers, so `naming::int_kind` stores unsigned fields in the next wider kind. |
 | `src/generators/wireshark/` | the Wireshark Lua dissector generator (`dissector` command; not a `Language`): `naming.rs` (`Lua` dialect, field keys), `expr.rs`, `fields.rs` (ProtoFields, value strings), `dissect.rs` (a decode `StepEmitter` that also fills the tree; failed checks become expert warnings), `mod.rs` (file layout, frame-length functions, registration). Runtime in `runtime/wireshark.lua`. |
 | `src/ir/frame.rs` | `Module::frame_length`: a packet's size from fixed-offset header fields, for TCP reassembly and stream framing. |
 | `src/tools/` | `doc` (Markdown with bit diagrams), `fuzz` (cargo-fuzz / libFuzzer harnesses), `diff` (wire compatibility); CLI glue in `src/commands.rs`. |
@@ -81,7 +81,7 @@ calls. Running out of data is
 `incomplete` only at the end of the real input; inside a reader window
 (`push_limit`/`pop_limit`) it is `invalid`. Checks that can fail live on the
 reader/writer so they can report the path. When adding a runtime function,
-add it to all seven runtimes with the same semantics, and to the interpreter
+add it to all eight runtimes with the same semantics, and to the interpreter
 if it changes what values mean. Code only files with protocol versions need
 sits between `@versions{` and `@versions}` comment lines
 (`common::runtime_source` drops it from other files).

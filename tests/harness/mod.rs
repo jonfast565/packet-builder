@@ -37,6 +37,7 @@
 
 pub mod c;
 pub mod csharp;
+pub mod fortran;
 pub mod go;
 pub mod interp;
 pub mod pascal;
