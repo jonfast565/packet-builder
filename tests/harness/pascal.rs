@@ -60,7 +60,7 @@ impl Target for PascalTarget {
             let _ = writeln!(s, "var\n  p: {};\n  v, s: string;\n  b, d: TBytes;\n  n, f: Integer;\nbegin", class);
             let _ = writeln!(s, "  d := HexBytes({});", pas_text(&c.hex));
             s.push_str("  p := nil;\n  try\n    try\n");
-            let _ = writeln!(s, "      p := {}.Decode(d{});", class, ver);
+            let _ = writeln!(s, "      p := {}.Decode(d{}{});", class, c.more_args(), ver);
             s.push_str("    except\n      on Err: EPbError do\n        WriteLn('{\"ok\":false' + E(Err, '') + '}');\n    end;\n");
             s.push_str("    if p <> nil then\n    begin\n");
             for (name, v) in &c.set {
@@ -72,11 +72,16 @@ impl Target for PascalTarget {
                 );
             }
             s.push_str("      v := p.ToJson;\n      try\n");
-            let enc = c.version.map(|v| format!("({})", v)).unwrap_or_default();
+            let enc = c.args_then(&ver);
+            let enc = if enc.is_empty() { enc } else { format!("({})", enc) };
             let _ = writeln!(s, "        b := p.Encode{};", enc);
             s.push_str("        WriteLn('{\"ok\":true,\"value\":' + v + ',\"encoded\":' + PbJsonHex(b) + '}');\n");
             s.push_str("      except\n        on Err: EPbError do\n          WriteLn('{\"ok\":true,\"value\":' + v + E(Err, 'encode_') + '}');\n      end;\n    end;\n");
             s.push_str("  finally\n    FreeAndNil(p);\n  end;\n");
+            if !c.args.is_empty() {
+                s.push_str("  WriteLn('{}');\n  v := '';\n  b := nil;\nend;\n\n");
+                continue;
+            }
             s.push_str("  try\n");
             let _ = writeln!(s, "    if {}.TryDecode(d, p, n{}) then", class, ver);
             s.push_str(

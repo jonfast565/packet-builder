@@ -59,21 +59,31 @@ local function fields(e, pre)
   return string.format(',"%serror":%s,"%skind":%s,"%spath":%s', pre, js(tostring(e)), pre, js(e.kind), pre, js(e.path))
 end
 
-local function run(C, h, version, set, frame)
+-- f(x, args..., version): parameters come before the version.
+local function call(f, x, args, version)
+  local t = { x }
+  for i, a in ipairs(args) do t[i + 1] = a end
+  t[#args + 2] = version
+  return pcall(f, (table.unpack or unpack)(t, 1, #args + 2))
+end
+
+local function run(C, h, version, set, frame, args)
   local d = unhex(h)
-  local ok, p = pcall(C.decode, d, version)
+  local ok, p = call(C.decode, d, args, version)
   if not ok then
     print('{"ok":false' .. fields(caught(p), "") .. "}")
   else
     if set then set(p) end
     local v = C.to_json(p)
-    local ok2, b = pcall(C.encode, p, version)
+    local ok2, b = call(C.encode, p, args, version)
     if ok2 then
       print('{"ok":true,"value":' .. v .. ',"encoded":"' .. hex(b) .. '"}')
     else
       print('{"ok":true,"value":' .. v .. fields(caught(b), "encode_") .. "}")
     end
   end
+  -- Packets with parameters have no stream helpers.
+  if #args > 0 then print("{}") return end
   local s
   local ok3, q, n = pcall(C.try_decode, d, version)
   if not ok3 then
@@ -127,15 +137,16 @@ impl Target for LuaTarget {
             };
             let _ = writeln!(
                 s,
-                "  {{ M{}, \"{}\", {}, {}, {} }},",
+                "  {{ M{}, \"{}\", {}, {}, {}, {{ {} }} }},",
                 index(&p.name),
                 c.hex,
                 ver,
                 set,
-                super::has_frame(module, p)
+                super::has_frame(module, p),
+                c.arg_list()
             );
         }
-        s.push_str("}\n\nfor _, c in ipairs(cases) do run(c[1], c[2], c[3], c[4], c[5]) end\n");
+        s.push_str("}\n\nfor _, c in ipairs(cases) do run(c[1], c[2], c[3], c[4], c[5], c[6]) end\n");
         s
     }
 

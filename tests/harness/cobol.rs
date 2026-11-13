@@ -1,6 +1,6 @@
 //! COBOL: the generated file is a whole program. Its main program reads a
 //! `.dat` file with one case per line (`<Packet> <hex or -> [@version]
-//! [path=integer | path=#hex]...`) and prints the two JSON lines per case.
+//! [!argument]... [path=integer | path=#hex]...`) and prints the two JSON lines per case.
 
 use std::fmt::Write as _;
 use std::fs;
@@ -47,6 +47,9 @@ impl Target for CobolTarget {
             let _ = write!(s, "{} {}", c.packet, if hex.is_empty() { "-" } else { &hex });
             if let Some(v) = c.version {
                 let _ = write!(s, " @{}", v);
+            }
+            for a in &c.args {
+                let _ = write!(s, " !{}", a);
             }
             for (path, v) in &c.set {
                 let _ = write!(s, " {}={}", path, set_value(v));

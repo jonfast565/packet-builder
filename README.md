@@ -914,6 +914,25 @@ Version gates, windows, `at` fields and parameters work as they do in the
 packet. `decode --access -k Ipv4_ttl` runs a view through the interpreter.
 A view's name must not clash with another packet's.
 
+Arrays with a count (`[n]`) or that run to the end (`[]`) also get an
+**element view**, `<Packet>_<field>_at`, which reads element `index` (a
+`uint32` parameter) and nothing after it:
+
+```rust
+let third = DnsMessage_answers_at::decode(&msg, 2)?.answers;   // one element
+```
+
+Elements of a fixed size are skipped (`index * size` bits). Variable-size
+elements before it are read into `<field>_before`, since their sizes are
+only known by reading them. An index past the count is a `constraint` error;
+for `[]` arrays, reading past the end is `incomplete`. Arrays of strings and
+arrays read with `until` or `term` have no element view, nor does an array
+whose element view's name is taken (by a field named `<field>_at`). Like
+other packets with parameters, element views have no `try_decode` or
+`frame_len`.
+`decode --access -k DnsMessage_answers_at --arg 2` reads one with the
+interpreter.
+
 ### COBOL
 
 The COBOL backend writes one free-format source file for GnuCOBOL 3.x

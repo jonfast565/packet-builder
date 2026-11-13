@@ -90,7 +90,7 @@ impl Target for ZigTarget {
             if let Some((v, min, latest)) = c.versions(module) {
                 let _ = writeln!(s, "    try r.setVersion({}, {}, {});", v, min, latest);
             }
-            let _ = writeln!(s, "    if (pk.{}.decodeFrom(allocator, &r)) |decoded| {{", p.name);
+            let _ = writeln!(s, "    if (pk.{}.decodeFrom(allocator, &r{})) |decoded| {{", p.name, c.more_args());
             s.push_str("        var p = decoded;\n        defer p.deinit(allocator);\n");
             let mut compile_time_reject = false;
             for (name, v) in &c.set {
@@ -119,12 +119,24 @@ impl Target for ZigTarget {
                 if let Some((v, min, latest)) = c.versions(module) {
                     let _ = writeln!(s, "        try pw.setVersion({}, {}, {});", v, min, latest);
                 }
-                s.push_str("        if (encodeAll(&p, &pw)) |_| {\n");
+                if c.args.is_empty() {
+                    s.push_str("        if (encodeAll(&p, &pw)) |_| {\n");
+                } else {
+                    let _ = writeln!(
+                        s,
+                        "        if (blk: {{\n            p.encodeTo(&pw{}) catch |e| break :blk e;\n            break :blk pw.finish();\n        }}) |_| {{",
+                        c.more_args()
+                    );
+                }
                 s.push_str("            try w.writeAll(\",\\\"encoded\\\":\");\n            try hx(w, pw.buf.items);\n            try w.writeAll(\"}\");\n");
                 s.push_str("        } else |err| {\n            try pbErr(w, \"encode_\", err, &pw.trace);\n            try w.writeAll(\"}\");\n        }\n");
             }
             s.push_str("    } else |err| {\n        try w.writeAll(\"{\\\"ok\\\":false\");\n        try pbErr(w, \"\", err, &r.trace);\n        try w.writeAll(\"}\");\n    }\n");
             s.push_str("    try w.writeAll(\"\\n\");\n");
+            if !c.args.is_empty() {
+                s.push_str("    try w.writeAll(\"{}\");\n}\n\n");
+                continue;
+            }
             match c.version {
                 Some(v) => {
                     let _ =

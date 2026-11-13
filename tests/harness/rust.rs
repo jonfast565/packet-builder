@@ -38,10 +38,18 @@ impl Target for RustTarget {
             let p = packet(module, &c.packet);
             match c.version {
                 Some(v) => {
-                    let _ = writeln!(s, "    match {}::decode_v(&pb_unhex({}), {}) {{", p.name, quote(&c.hex), v);
+                    let _ = writeln!(
+                        s,
+                        "    match {}::decode_v(&pb_unhex({}), {}{}) {{",
+                        p.name,
+                        quote(&c.hex),
+                        v,
+                        c.more_args()
+                    );
                 }
                 None => {
-                    let _ = writeln!(s, "    match {}::decode(&pb_unhex({})) {{", p.name, quote(&c.hex));
+                    let _ =
+                        writeln!(s, "    match {}::decode(&pb_unhex({}){}) {{", p.name, quote(&c.hex), c.more_args());
                 }
             }
             s.push_str("        Err(e) => println!(\"{{\\\"ok\\\":false,{}}}\", pb_e(&e, \"\")),\n");
@@ -57,13 +65,19 @@ impl Target for RustTarget {
             s.push_str("            let v = p.to_json();\n");
             match c.version {
                 Some(v) => {
-                    let _ = writeln!(s, "            match p.encode_v({}) {{", v);
+                    let _ = writeln!(s, "            match p.encode_v({}{}) {{", v, c.more_args());
                 }
-                None => s.push_str("            match p.encode() {\n"),
+                None => {
+                    let _ = writeln!(s, "            match p.encode({}) {{", c.arg_list());
+                }
             }
             s.push_str("                Ok(b) => println!(\"{{\\\"ok\\\":true,\\\"value\\\":{},\\\"encoded\\\":{}}}\", v, pb_hex(&b)),\n");
             s.push_str("                Err(e) => println!(\"{{\\\"ok\\\":true,\\\"value\\\":{},{}}}\", v, pb_e(&e, \"encode_\")),\n");
             s.push_str("            }\n        }\n    }\n");
+            if !c.args.is_empty() {
+                s.push_str("    println!(\"{{}}\");\n");
+                continue;
+            }
             let _ = writeln!(s, "    {{\n        let d = pb_unhex({});", quote(&c.hex));
             match c.version {
                 Some(v) => {

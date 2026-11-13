@@ -83,7 +83,7 @@ impl Target for JavaTarget {
                 "        try {{ p = {}.decode(hex({}){}); }} catch ({}.PbException e) {{ OUT.println(\"{{\\\"ok\\\":false\" + e(e, \"\") + \"}}\"); return; }}",
                 class,
                 quote(&c.hex),
-                ver,
+                c.more_args() + &ver,
                 outer
             );
             for (name, v) in &c.set {
@@ -97,12 +97,16 @@ impl Target for JavaTarget {
             let _ = writeln!(
                 s,
                 "        try {{ b = p.encode({}); }} catch ({}.PbException e) {{ OUT.println(\"{{\\\"ok\\\":true,\\\"value\\\":\" + v + e(e, \"encode_\") + \"}}\"); return; }}",
-                ver.trim_start_matches(", "),
+                c.args_then(&ver),
                 outer
             );
             s.push_str("        OUT.println(\"{\\\"ok\\\":true,\\\"value\\\":\" + v + \",\\\"encoded\\\":\" + hx(b) + \"}\");\n");
             s.push_str("    }\n");
             let _ = writeln!(s, "\n    static void s{}() {{", i);
+            if !c.args.is_empty() {
+                s.push_str("        OUT.println(\"{}\");\n    }\n");
+                continue;
+            }
             let _ = writeln!(s, "        byte[] d = hex({});", quote(&c.hex));
             s.push_str("        String s;\n");
             let _ = writeln!(

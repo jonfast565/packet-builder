@@ -26,3 +26,15 @@ packet Header be {
   target Entry at ptr,
   tail uint32
 }
+
+// Element views (`<Packet>_<field>_at`, parameter `index`): fixed-size
+// elements are skipped, variable-size ones read into `<field>_before`.
+packet Var be { k uint8, d bytes[k] }
+
+packet List be {
+  m uint8 = len(vars),
+  vars Var[m],
+  q uint8 = len(pairs),
+  pairs Pair[q],
+  rest uint16[]
+}

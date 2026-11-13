@@ -13,8 +13,8 @@ use super::{Case, Target, packet, run, set_literal, which};
 pub struct SwiftTarget;
 
 /// The driver is data-driven: one function per packet (with a `switch` over
-/// the `set` lists its cases use) and a table of `packet set version hex`
-/// lines, which keeps the Swift type checker fast for thousands of cases.
+/// the `set` lists its cases use) and a table of `packet set version args
+/// hex` lines, which keeps the Swift type checker fast for thousands of cases.
 impl Target for SwiftTarget {
     fn language(&self) -> Option<Language> {
         Some(Language::Swift)
@@ -89,7 +89,8 @@ func pbFrame(_ f: () throws -> Int?) -> String {
                 };
             }
             let ver = c.version.map(|v| v.to_string()).unwrap_or_else(|| "-".into());
-            let _ = writeln!(table, "{} {} {} {}", p.name, index, ver, c.hex);
+            let args = if c.args.is_empty() { "-".to_string() } else { c.arg_list().replace(' ', "") };
+            let _ = writeln!(table, "{} {} {} {} {}", p.name, index, ver, args, c.hex);
         }
 
         for (name, lists) in &sets {
@@ -98,13 +99,22 @@ func pbFrame(_ f: () throws -> Int?) -> String {
             let call = |plain: &str, with_version: &str| {
                 if versioned { format!("(ver == nil ? {} : {})", plain, with_version) } else { plain.to_string() }
             };
-            let _ = writeln!(s, "func run_{}(_ d: [UInt8], _ ver: Int?, _ set: Int) {{", name);
+            // Arguments of a packet with parameters (after the version).
+            let pargs: Vec<String> = (0..p.params.len()).map(|i| format!("numericCast(a[{}])", i)).collect();
+            let more: String = pargs.iter().map(|a| format!(", {}", a)).collect();
+            let _ = writeln!(s, "func run_{}(_ d: [UInt8], _ ver: Int?, _ set: Int, _ a: [Int]) {{", name);
+            if pargs.is_empty() {
+                s.push_str(
+                    "    _ = a
+",
+                );
+            }
             s.push_str("    var line: String\n    do {\n");
             let _ = writeln!(
                 s,
                 "        {} p = try {}",
                 if lists.is_empty() { "let" } else { "var" },
-                call(&format!("{}.decode(d)", name), &format!("{}.decode(d, version: ver!)", name))
+                call(&format!("{}.decode(d{})", name, more), &format!("{}.decode(d, version: ver!{})", name, more))
             );
             if !lists.is_empty() {
                 s.push_str("        switch set {\n");
@@ -114,7 +124,11 @@ func pbFrame(_ f: () throws -> Int?) -> String {
                 s.push_str("        default: break\n        }\n");
             }
             s.push_str("        let v = p.toJson()\n        do {\n");
-            let _ = writeln!(s, "            let b = try {}", call("p.encode()", "p.encode(version: ver!)"));
+            let _ = writeln!(
+                s,
+                "            let b = try {}",
+                call(&format!("p.encode({})", pargs.join(", ")), &format!("p.encode(version: ver!{})", more))
+            );
             s.push_str(
                 "            line = \"{\\\"ok\\\":true,\\\"value\\\":\\(v),\\\"encoded\\\":\\(pbJsonHex(b))}\"\n",
             );
@@ -123,6 +137,10 @@ func pbFrame(_ f: () throws -> Int?) -> String {
             s.push_str("        }\n        _ = p\n    } catch {\n");
             s.push_str("        line = \"{\\\"ok\\\":false,\\(pbE(error, \"\"))}\"\n    }\n");
             s.push_str("    print(line)\n");
+            if !p.params.is_empty() {
+                s.push_str("    print(\"{}\")\n}\n\n");
+                continue;
+            }
             let frame = super::has_frame(module, p);
             let _ = writeln!(
                 s,
@@ -143,10 +161,11 @@ func pbFrame(_ f: () throws -> Int?) -> String {
         s.push_str("    let f = row.split(separator: \" \", omittingEmptySubsequences: false)\n");
         s.push_str("    let set = Int(f[1]) ?? 0\n");
         s.push_str("    let ver: Int? = f[2] == \"-\" ? nil : Int(f[2])\n");
-        s.push_str("    let d = pbUnhex(f.count > 3 ? f[3] : \"\")\n");
+        s.push_str("    let a = f[3] == \"-\" ? [] : f[3].split(separator: \",\").map { Int($0)! }\n");
+        s.push_str("    let d = pbUnhex(f.count > 4 ? f[4] : \"\")\n");
         s.push_str("    switch f[0] {\n");
         for name in sets.keys() {
-            let _ = writeln!(s, "    case \"{}\": run_{}(d, ver, set)", name, name);
+            let _ = writeln!(s, "    case \"{}\": run_{}(d, ver, set, a)", name, name);
         }
         s.push_str("    default: print(\"unknown packet \\(f[0])\")\n    }\n}\n");
         s

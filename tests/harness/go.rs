@@ -35,10 +35,10 @@ impl Target for GoTarget {
             let _ = writeln!(s, "\t\tdata, _ := hex.DecodeString({})", quote(&c.hex));
             match c.version {
                 Some(v) => {
-                    let _ = writeln!(s, "\t\tp, err := Decode{}V(data, {})", p.name, v);
+                    let _ = writeln!(s, "\t\tp, err := Decode{}V(data, {}{})", p.name, v, c.more_args());
                 }
                 None => {
-                    let _ = writeln!(s, "\t\tp, err := Decode{}(data)", p.name);
+                    let _ = writeln!(s, "\t\tp, err := Decode{}(data{})", p.name, c.more_args());
                 }
             }
             s.push_str("\t\tif err != nil {\n\t\t\tfmt.Printf(\"{\\\"ok\\\":false,%s}\\n\", pbE(err, \"\"))\n\t\t\treturn\n\t\t}\n");
@@ -53,13 +53,19 @@ impl Target for GoTarget {
             s.push_str("\t\tv := p.ToJSON()\n");
             match c.version {
                 Some(v) => {
-                    let _ = writeln!(s, "\t\tb, err := p.EncodeV({})", v);
+                    let _ = writeln!(s, "\t\tb, err := p.EncodeV({}{})", v, c.more_args());
                 }
-                None => s.push_str("\t\tb, err := p.Encode()\n"),
+                None => {
+                    let _ = writeln!(s, "\t\tb, err := p.Encode({})", c.arg_list());
+                }
             }
             s.push_str("\t\tif err != nil {\n\t\t\tfmt.Printf(\"{\\\"ok\\\":true,\\\"value\\\":%s,%s}\\n\", v, pbE(err, \"encode_\"))\n\t\t\treturn\n\t\t}\n");
             s.push_str("\t\tfmt.Printf(\"{\\\"ok\\\":true,\\\"value\\\":%s,\\\"encoded\\\":%s}\\n\", v, hx(b))\n");
             s.push_str("\t}()\n");
+            if !c.args.is_empty() {
+                s.push_str("\tfmt.Println(\"{}\")\n");
+                continue;
+            }
             s.push_str("\tfunc() {\n");
             let _ = writeln!(s, "\t\tdata, _ := hex.DecodeString({})", quote(&c.hex));
             s.push_str("\t\ts := \"\"\n");

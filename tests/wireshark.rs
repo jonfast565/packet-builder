@@ -128,8 +128,11 @@ fn expect_packet(
 /// Run one spec through tshark; returns the problems found.
 fn run_spec(tshark: &str, spec: &Spec) -> Vec<String> {
     let dir = work_dir("wireshark", &spec.name);
+    // A dissector cannot pass arguments: packets with parameters (element
+    // views) are left out.
+    let cases: Vec<&Case> = spec.cases.iter().filter(|c| c.args.is_empty()).collect();
     let names: Vec<&str> = {
-        let mut n: Vec<&str> = spec.cases.iter().map(|c| c.packet.as_str()).collect();
+        let mut n: Vec<&str> = cases.iter().map(|c| c.packet.as_str()).collect();
         n.sort();
         n.dedup();
         n
@@ -167,7 +170,6 @@ end
     for v in [0xa1b2c3d4u32.to_le_bytes(), [2, 0, 4, 0], [0; 4], [0; 4], 65535u32.to_le_bytes(), 147u32.to_le_bytes()] {
         pcap.extend_from_slice(&v);
     }
-    let cases: Vec<&Case> = spec.cases.iter().collect();
     for c in &cases {
         let mut frame = vec![names.iter().position(|n| *n == c.packet).unwrap() as u8];
         if versioned {

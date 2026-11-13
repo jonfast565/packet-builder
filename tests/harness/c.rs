@@ -47,7 +47,7 @@ impl Target for CTarget {
             if let Some((v, min, latest)) = c.versions(module) {
                 let _ = writeln!(s, "        pb_set_version(&r.tr, {}, {}, {});", v, min, latest);
             }
-            let _ = writeln!(s, "        rc = {}_decode_from(&p, &r);", p.name);
+            let _ = writeln!(s, "        rc = {}_decode_from(&p, &r{});", p.name, c.more_args());
             s.push_str("        if (rc != PB_OK) { printf(\"{\\\"ok\\\":false,\"); err(\"\", rc, pb_reader_describe(&r, desc, sizeof desc), pb_reader_path(&r, path, sizeof path)); printf(\"}\\n\"); }\n");
             s.push_str("        else {\n");
             for (name, v) in &c.set {
@@ -75,7 +75,7 @@ impl Target for CTarget {
             if let Some((v, min, latest)) = c.versions(module) {
                 let _ = writeln!(s, "            pb_set_version(&w.tr, {}, {}, {});", v, min, latest);
             }
-            let _ = writeln!(s, "            rc = {}_encode_to(&p, &w);", p.name);
+            let _ = writeln!(s, "            rc = {}_encode_to(&p, &w{});", p.name, c.more_args());
             s.push_str("            if (rc == PB_OK) rc = pb_writer_finish(&w);\n");
             s.push_str(
                 "            if (rc != PB_OK) { printf(\",\"); err(\"encode_\", rc, pb_writer_describe(&w, desc, sizeof desc), pb_writer_path(&w, path, sizeof path)); printf(\"}\\n\"); }\n",
@@ -85,6 +85,10 @@ impl Target for CTarget {
             let _ = writeln!(s, "            {}_free(&p);", p.name);
             // Last: zero-copy values point into the input.
             s.push_str("        }\n        free(in);\n    }\n");
+            if !c.args.is_empty() {
+                s.push_str("    printf(\"{}\\n\");\n");
+                continue;
+            }
             s.push_str("    {\n");
             let _ = writeln!(s, "        size_t n = unhex({}, data), used = 0, size = 0;", quote(&c.hex));
             let _ = writeln!(s, "        {} p;", p.name);

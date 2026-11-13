@@ -67,9 +67,10 @@ impl Target for CSharpTarget {
             let ver = c.version.map(|v| format!(", version: {}", v)).unwrap_or_default();
             let _ = writeln!(
                 s,
-                "            try {{ p = {}.Decode(Convert.FromHexString({}){}); }}",
+                "            try {{ p = {}.Decode(Convert.FromHexString({}){}{}); }}",
                 p.name,
                 quote(&c.hex),
+                c.more_args(),
                 ver
             );
             s.push_str("            catch (PbException e) { Console.WriteLine(\"{\\\"ok\\\":false\" + E(e, \"\") + \"}\"); goto done; }\n");
@@ -83,10 +84,15 @@ impl Target for CSharpTarget {
             }
             s.push_str("            var v = p.ToJson();\n");
             s.push_str("            byte[] b;\n");
-            let _ = writeln!(s, "            try {{ b = p.Encode({}); }}", ver.trim_start_matches(", "));
+            let enc = c.args_then(&ver);
+            let _ = writeln!(s, "            try {{ b = p.Encode({}); }}", enc);
             s.push_str("            catch (PbException e) { Console.WriteLine(\"{\\\"ok\\\":true,\\\"value\\\":\" + v + E(e, \"encode_\") + \"}\"); goto done; }\n");
             s.push_str("            Console.WriteLine(\"{\\\"ok\\\":true,\\\"value\\\":\" + v + \",\\\"encoded\\\":\" + Hx(b) + \"}\");\n");
             s.push_str("            done:;\n        }\n");
+            if !c.args.is_empty() {
+                s.push_str("        Console.WriteLine(\"{}\");\n");
+                continue;
+            }
             s.push_str("        {\n");
             let _ = writeln!(s, "            var d = Convert.FromHexString({});", quote(&c.hex));
             s.push_str("            string s;\n");

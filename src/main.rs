@@ -95,6 +95,11 @@ struct DecodeArgs {
     /// Also accept the views of `generate --access` (`-k Ipv4_ttl`).
     #[arg(long)]
     access: bool,
+
+    /// An argument of a packet with parameters, in order (repeatable):
+    /// `--access -k DnsMessage_answers_at --arg 2` reads answer 2.
+    #[arg(long = "arg", value_name = "N", allow_hyphen_values = true)]
+    args: Vec<i64>,
 }
 
 #[derive(Args)]
@@ -474,7 +479,7 @@ fn decode(args: DecodeArgs) -> Result<(), String> {
                 (false, false) => label.clone(),
                 (false, true) => format!("{}, packet {} at byte {}", label, n + 1, at),
             };
-            match interp::decode_from(&module, &args.packet, &mut r) {
+            match interp::decode_from_args(&module, &args.packet, &mut r, &args.args) {
                 Ok(v) if args.json => println!("{}", v.to_json()),
                 Ok(v) => {
                     if !heading.is_empty() {

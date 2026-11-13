@@ -43,7 +43,7 @@ fn error_json(e: &interp::Error, pre: &str) -> String {
 fn run_case(module: &Module, c: &Case) -> String {
     let data: Vec<u8> =
         (0..c.hex.len()).step_by(2).map(|i| u8::from_str_radix(&c.hex[i..i + 2], 16).unwrap()).collect();
-    let mut value = match interp::decode_version(module, &c.packet, &data, c.version) {
+    let mut value = match interp::decode_args(module, &c.packet, &data, c.version, &c.args) {
         Ok(v) => v,
         Err(e) => return format!("{{\"ok\":false,{}}}", error_json(&e, "")),
     };
@@ -51,7 +51,7 @@ fn run_case(module: &Module, c: &Case) -> String {
         set(module, &c.packet, &mut value, path, v);
     }
     let dumped = value.to_json();
-    match interp::encode_version(module, &c.packet, &value, c.version) {
+    match interp::encode_args(module, &c.packet, &value, c.version, &c.args) {
         Ok(b) => format!("{{\"ok\":true,\"value\":{},\"encoded\":{}}}", dumped, Value::Bytes(b).to_json()),
         Err(e) => format!("{{\"ok\":true,\"value\":{},{}}}", dumped, error_json(&e, "encode_")),
     }
@@ -60,6 +60,9 @@ fn run_case(module: &Module, c: &Case) -> String {
 /// What a stream decoder sees: the bytes taken or still needed, and the
 /// frame length from the header.
 fn stream_case(module: &Module, c: &Case) -> String {
+    if !c.args.is_empty() {
+        return "{}".into();
+    }
     let data: Vec<u8> =
         (0..c.hex.len()).step_by(2).map(|i| u8::from_str_radix(&c.hex[i..i + 2], 16).unwrap()).collect();
     let mut r = interp::Reader::new(&data);

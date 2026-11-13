@@ -162,6 +162,102 @@
       "packet": "Header_tail",
       "hex": "45 85 02 0001 0002 0a0b 01 04 00000007 686900 17 dead",
       "error_kind": "incomplete"
+    },
+    {
+      "name": "whole list",
+      "packet": "List",
+      "hex": "03 01aa 00 02bbcc 02 0102 0304 0005 0006 0007",
+      "expect": {
+        "m": 3,
+        "q": 2
+      }
+    },
+    {
+      "name": "element of a fixed-size array",
+      "packet": "Header_items_at",
+      "hex": "45 85 02 0001 0002 0a0b 01 04 00000007 686900 17 deadbeef 1234",
+      "args": [
+        1
+      ],
+      "expect": {
+        "items": 2
+      },
+      "encoded": "00000200000002"
+    },
+    {
+      "name": "element past the end",
+      "packet": "Header_items_at",
+      "hex": "45 85 02 0001 0002 0a0b 01 04 00000007 686900 17 deadbeef 1234",
+      "args": [
+        2
+      ],
+      "error_kind": "constraint"
+    },
+    {
+      "name": "element of variable size",
+      "packet": "List_vars_at",
+      "hex": "03 01aa 00 02bbcc 02 0102 0304 0005 0006 0007",
+      "args": [
+        2
+      ],
+      "expect": {
+        "vars": {
+          "k": 2,
+          "d": "bbcc"
+        }
+      },
+      "encoded": "0301aa0002bbcc"
+    },
+    {
+      "name": "first element of variable size",
+      "packet": "List_vars_at",
+      "hex": "03 01aa 00 02bbcc 02 0102 0304 0005 0006 0007",
+      "args": [
+        0
+      ],
+      "expect": {
+        "vars": {
+          "k": 1,
+          "d": "aa"
+        }
+      },
+      "encoded": "0301aa"
+    },
+    {
+      "name": "element packet after a variable array",
+      "packet": "List_pairs_at",
+      "hex": "03 01aa 00 02bbcc 02 0102 0304 0005 0006 0007",
+      "args": [
+        1
+      ],
+      "expect": {
+        "pairs": {
+          "a": 3,
+          "b": 4
+        }
+      },
+      "encoded": "0301aa0002bbcc0200000304"
+    },
+    {
+      "name": "element of a remaining array",
+      "packet": "List_rest_at",
+      "hex": "03 01aa 00 02bbcc 02 0102 0304 0005 0006 0007",
+      "args": [
+        2
+      ],
+      "expect": {
+        "rest": 7
+      },
+      "encoded": "0301aa0002bbcc0200000000000000000007"
+    },
+    {
+      "name": "element of a remaining array past the end",
+      "packet": "List_rest_at",
+      "hex": "03 01aa 00 02bbcc 02 0102 0304 0005 0006 0007",
+      "args": [
+        3
+      ],
+      "error_kind": "incomplete"
     }
   ]
 }

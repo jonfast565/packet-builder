@@ -14,23 +14,33 @@
 use std::collections::HashSet;
 
 use super::expr::{ArithOp, TExpr, Ty};
-use super::model::{Codec, Count, Member, MemberKind, Module, Packet, Step, ValueType};
+use super::model::{Assertion, Codec, Count, Member, MemberKind, Module, Packet, Param, Step, ValueType};
 
 impl Module {
     /// Add a view for every member of every packet. Fails if a view's name
     /// is already taken.
     pub fn add_views(&mut self) -> Result<(), String> {
         let mut views = Vec::new();
+        let mut elements = Vec::new();
         for p in &self.packets {
             for m in 0..p.members.len() {
                 if let Some(v) = view(self, p, m) {
+                    elements.extend(element_view(self, &p.members[m].name, &v));
                     views.push(v);
                 }
             }
         }
-        for v in &views {
-            if self.packets.iter().any(|p| p.name.eq_ignore_ascii_case(&v.name)) {
+        let taken = |packets: &[Packet], name: &str| packets.iter().any(|p| p.name.eq_ignore_ascii_case(name));
+        for (i, v) in views.iter().enumerate() {
+            if taken(&self.packets, &v.name) || taken(&views[..i], &v.name) {
                 return Err(format!("cannot add view `{}`: a packet has that name", v.name));
+            }
+        }
+        // An element view whose name is taken (a member `<field>_at`) is
+        // left out: the field views come first.
+        for e in elements {
+            if !taken(&self.packets, &e.name) && !taken(&views, &e.name) {
+                views.push(e);
             }
         }
         self.packets.extend(views);
@@ -53,6 +63,14 @@ impl Module {
 pub fn view_name(packet: &str, member: &str) -> String {
     format!("{}_{}", packet, member)
 }
+
+/// The name of the view of one element of array `member` of packet `packet`.
+pub fn element_view_name(packet: &str, member: &str) -> String {
+    format!("{}_{}_at", packet, member)
+}
+
+/// The parameter an element view takes: which element to read.
+pub const INDEX_PARAM: &str = "index";
 
 /// What the view does with a step of the original packet.
 enum Plan {
@@ -398,4 +416,87 @@ fn view(module: &Module, p: &Packet, m: usize) -> Option<Packet> {
         version_member: p.version_member.map(|v| map[v]),
         versions: p.versions,
     })
+}
+
+/// From the view `v` of array member `name`, a view of element `index` of
+/// it (a parameter): `<Packet>_<field>_at`. Elements of a fixed size are
+/// skipped; others are read into `<field>_before`. Arrays read with
+/// `until` or `term`, and strings, have none. An index past a counted
+/// array's end is a `constraint` error.
+fn element_view(module: &Module, name: &str, v: &Packet) -> Option<Packet> {
+    let target = v.members.iter().position(|m| m.name == name)?;
+    let member = &v.members[target];
+    if member.ty == ValueType::Str || !matches!(member.array, Some(Count::Expr(_) | Count::Remaining)) {
+        return None;
+    }
+    // Only arrays read in place (not through `at`), and only one index.
+    let in_place =
+        v.steps.iter().any(|s| matches!(s, Step::Field { member: Some(m), array: Some(_), .. } if *m == target));
+    if !in_place || v.params.iter().any(|p| p.name == INDEX_PARAM) {
+        return None;
+    }
+    let packet = v.name.strip_suffix(&format!("_{}", name))?;
+    let mut e = v.clone();
+    e.name = element_view_name(packet, name);
+    let index = TExpr::Param { index: e.params.len() };
+    e.params.push(Param { name: INDEX_PARAM.into(), ty: ValueType::Int { width: 32, signed: false } });
+    e.members[target].array = None;
+    let before = e.members.len();
+    let mut before_member = member.clone();
+    before_member.name = format!("{}_before", name);
+    before_member.array = Some(Count::Expr(index.clone()));
+    let mut uses_before = false;
+
+    let mut steps = Vec::with_capacity(e.steps.len() + 2);
+    let mut map = Vec::with_capacity(e.steps.len());
+    for step in e.steps.drain(..) {
+        let Step::Field { member: Some(m), ty, codec, array: Some(count) } = step else {
+            map.push(steps.len());
+            steps.push(step);
+            continue;
+        };
+        if m != target {
+            map.push(steps.len());
+            steps.push(Step::Field { member: Some(m), ty, codec, array: Some(count) });
+            continue;
+        }
+        if let Count::Expr(n) = &count {
+            e.asserts.push(Assertion {
+                cond: TExpr::Cmp { op: super::expr::CmpOp::Lt, a: Box::new(index.clone()), b: Box::new(n.clone()) },
+                message: format!("`{}` must be less than the number of elements of `{}`", INDEX_PARAM, name),
+            });
+            steps.push(Step::Assert { index: e.asserts.len() - 1 });
+        }
+        match module.elem_bits(&codec) {
+            Some(bits) => steps.push(Step::Field {
+                member: None,
+                ty: ValueType::Int { width: 1, signed: false },
+                codec: Codec::Bits { width: 1 },
+                array: Some(Count::Expr(mul(index.clone(), bits))),
+            }),
+            // `<field>_before` must not clash with a member the view keeps.
+            None if e.members.iter().any(|m| m.name == before_member.name) => return None,
+            None => {
+                uses_before = true;
+                steps.push(Step::Field {
+                    member: Some(before),
+                    ty: ty.clone(),
+                    codec: codec.clone(),
+                    array: Some(Count::Expr(index.clone())),
+                });
+            }
+        }
+        map.push(steps.len());
+        steps.push(Step::Field { member: Some(m), ty, codec, array: None });
+    }
+    for step in &mut steps {
+        if let Step::CloseWindow { open, .. } | Step::CloseGate { open } = step {
+            *open = map[*open];
+        }
+    }
+    e.steps = steps;
+    if uses_before {
+        e.members.push(before_member);
+    }
+    Some(e)
 }

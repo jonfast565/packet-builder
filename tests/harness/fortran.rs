@@ -83,21 +83,22 @@ impl Target for FortranTarget {
         s.push_str("  implicit none\n");
         s.push_str("  character(len=:), allocatable :: pbh_line\n");
         s.push_str("  integer(int8), allocatable :: pbh_d(:)\n");
-        s.push_str("  integer :: pbh_u, pbh_ios, pbh_pk, pbh_ver, pbh_case, pbh_k\n");
+        s.push_str("  integer :: pbh_u, pbh_ios, pbh_pk, pbh_ver, pbh_case, pbh_k, pbh_na, pbh_i\n");
+        s.push_str("  integer(int64) :: pbh_a(16)\n");
         s.push_str("  open(newunit=pbh_u, file='cases.txt', status='old', action='read')\n");
         s.push_str("  do\n");
         s.push_str("    call pbh_read_line(pbh_u, pbh_line, pbh_ios)\n");
         s.push_str("    if (pbh_ios /= 0) exit\n");
         s.push_str("    pbh_k = index(pbh_line, ':')\n");
         s.push_str("    if (pbh_k == 0) cycle\n");
-        s.push_str("    read(pbh_line(1:pbh_k - 1), *) pbh_pk, pbh_ver, pbh_case\n");
+        s.push_str(
+            "    read(pbh_line(1:pbh_k - 1), *) pbh_pk, pbh_ver, pbh_case, pbh_na, (pbh_a(pbh_i), pbh_i = 1, pbh_na)\n",
+        );
         s.push_str("    call pbh_unhex(pbh_line(pbh_k + 1:), pbh_d)\n");
         s.push_str("    select case (pbh_pk)\n");
         for (i, p) in module.packets.iter().enumerate() {
-            if !p.params.is_empty() {
-                continue;
-            }
-            let _ = writeln!(s, "    case ({})\n      call pbh_run_{}(pbh_d, pbh_ver, pbh_case)", i, i);
+            let a = if p.params.is_empty() { "" } else { ", pbh_a" };
+            let _ = writeln!(s, "    case ({})\n      call pbh_run_{}(pbh_d, pbh_ver, pbh_case{})", i, i, a);
         }
         s.push_str("    end select\n");
         s.push_str("  end do\n");
@@ -163,17 +164,29 @@ impl Target for FortranTarget {
             if !c.set.is_empty() {
                 sets[pi].push((ci, c));
             }
-            let _ = writeln!(data, "{} {} {} :{}", pi, c.version.unwrap_or(0), ci, c.hex);
+            let args: String = c.args.iter().map(|a| format!(" {}", a)).collect();
+            let _ = writeln!(data, "{} {} {} {}{} :{}", pi, c.version.unwrap_or(0), ci, c.args.len(), args, c.hex);
         }
 
         for (pi, p) in module.packets.iter().enumerate() {
-            if !p.params.is_empty() {
-                continue;
-            }
             let t = type_name(&p.name);
-            let ver = if p.versions.is_some() { ", pb_version=pbh_ver" } else { "" };
-            let _ = writeln!(s, "\n  subroutine pbh_run_{}(pbh_d, pbh_ver, pbh_case)", pi);
+            // Arguments of a packet with parameters, then the version.
+            let args: String = p
+                .params
+                .iter()
+                .enumerate()
+                .map(|(k, x)| match x.ty {
+                    ValueType::Int { width, signed } => format!(", int(pbh_a({}), {})", k + 1, int_kind(width, signed)),
+                    _ => format!(", pbh_a({})", k + 1),
+                })
+                .collect();
+            let ver = format!("{}{}", args, if p.versions.is_some() { ", pb_version=pbh_ver" } else { "" });
+            let a = if p.params.is_empty() { "" } else { ", pbh_a" };
+            let _ = writeln!(s, "\n  subroutine pbh_run_{}(pbh_d, pbh_ver, pbh_case{})", pi, a);
             s.push_str("    integer(int8), intent(in) :: pbh_d(:)\n    integer, intent(in) :: pbh_ver, pbh_case\n");
+            if !p.params.is_empty() {
+                s.push_str("    integer(int64), intent(in) :: pbh_a(:)\n");
+            }
             let _ = writeln!(s, "    type({}) :: pbh_p", t);
             s.push_str("    type(pb_error) :: pbh_e\n    integer(int8), allocatable :: pbh_b(:)\n");
             s.push_str("    character(len=:), allocatable :: pbh_v, pbh_s\n    integer(int64) :: pbh_n\n");
@@ -205,6 +218,11 @@ impl Target for FortranTarget {
                 "        write(*, '(a)') '{\"ok\":true,\"value\":' // pbh_v // pbh_err(pbh_e, 'encode_') // '}'\n",
             );
             s.push_str("      end if\n    end if\n");
+            if !p.params.is_empty() {
+                s.push_str("    write(*, '(a)') '{}'\n");
+                let _ = writeln!(s, "  end subroutine pbh_run_{}", pi);
+                continue;
+            }
             let tver = if p.versions.is_some() { ", pbh_ver" } else { "" };
             let _ = writeln!(s, "    call {}_try_decode(pbh_d, pbh_p, pbh_n, pbh_e{})", t, tver);
             s.push_str("    if (pbh_e%kind == PB_OK) then\n");

@@ -11,8 +11,8 @@ mod frame;
 mod show;
 mod value;
 
-pub use decode::{decode, decode_from, decode_version};
-pub use encode::{encode, encode_version};
+pub use decode::{decode, decode_args, decode_from, decode_from_args, decode_version};
+pub use encode::{encode, encode_args, encode_version};
 pub use frame::frame_length;
 pub use rt::{PbError as Error, PbErrorKind as ErrorKind, PbReader as Reader};
 pub use show::render;

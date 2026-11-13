@@ -59,7 +59,7 @@ pub fn packet_linkage(module: &Module, p: &Packet, params: bool) -> (String, Str
     (l.buf, using)
 }
 
-fn param_usage(ty: &ValueType) -> &'static str {
+pub(super) fn param_usage(ty: &ValueType) -> &'static str {
     if matches!(ty, ValueType::Float { .. }) { FLOAT } else { INT }
 }
 

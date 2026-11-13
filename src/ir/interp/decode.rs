@@ -15,23 +15,40 @@ pub fn decode(module: &Module, name: &str, data: &[u8]) -> Result<Value, PbError
 
 /// Decode as protocol `version` (None: the in-band version, or the latest).
 pub fn decode_version(module: &Module, name: &str, data: &[u8], version: Option<u32>) -> Result<Value, PbError> {
+    decode_args(module, name, data, version, &[])
+}
+
+/// Decode a packet that takes parameters, with `args` as their values.
+pub fn decode_args(
+    module: &Module,
+    name: &str,
+    data: &[u8],
+    version: Option<u32>,
+    args: &[i64],
+) -> Result<Value, PbError> {
     let mut r = PbReader::new(data);
     if let Some(v) = version {
         let (min, latest) = versions(module);
         r.set_version(v as i64, min, latest)?;
     }
-    decode_from(module, name, &mut r)
+    decode_from_args(module, name, &mut r, args)
 }
 
 /// Decode packet `name` at the reader's position. Packets with parameters
-/// can only be decoded inside another packet.
+/// need [`decode_from_args`].
 pub fn decode_from(module: &Module, name: &str, r: &mut PbReader) -> Result<Value, PbError> {
+    decode_from_args(module, name, r, &[])
+}
+
+/// Decode packet `name` at the reader's position, with `args` as the
+/// values of its parameters.
+pub fn decode_from_args(module: &Module, name: &str, r: &mut PbReader, args: &[i64]) -> Result<Value, PbError> {
     let p = find(module, name, r)?;
-    if !p.params.is_empty() {
-        let msg = format!("packet `{}` takes {} argument(s); decode the packet containing it", name, p.params.len());
+    if p.params.len() != args.len() {
+        let msg = format!("packet `{}` takes {} argument(s), not {}", name, p.params.len(), args.len());
         return Err(r.error(PbErrorKind::Invalid, msg));
     }
-    Ok(Value::Struct(Decoder { module, r, params: Vec::new() }.packet(p, Vec::new())?))
+    Ok(Value::Struct(Decoder { module, r, params: Vec::new() }.packet(p, args.to_vec())?))
 }
 
 fn find<'m>(module: &'m Module, name: &str, r: &PbReader) -> Result<&'m Packet, PbError> {

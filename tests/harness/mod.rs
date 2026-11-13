@@ -26,6 +26,9 @@
 //! every feature must compile in every language.
 //! `version` (files with `version N`) is the protocol version the caller
 //! passes to decode, encode and try_decode.
+//! `args` (a list of integers) are the arguments of a packet with
+//! parameters, such as the index of an element view (`<Packet>_<field>_at`).
+//! Such packets have no stream helpers: drivers print `{}` as the second line.
 //! `error_kind` / `error_path` (and `encode_error_kind` / `encode_error_path`)
 //! also check the error's kind (`incomplete`, `invalid`, `range`, `text`,
 //! `mismatch`, `constraint`) and where it happened (`Packet.field[1].field`).
@@ -83,9 +86,27 @@ pub struct Case {
     /// The protocol version the caller passes (files with `version N`);
     /// None: the version in the data, or the latest.
     pub version: Option<u32>,
+    /// Arguments of a packet with parameters, passed to decode and encode.
+    pub args: Vec<i64>,
 }
 
 impl Case {
+    /// The arguments as a comma-separated list (empty without parameters).
+    pub fn arg_list(&self) -> String {
+        self.args.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(", ")
+    }
+
+    /// The arguments, then `rest` (`, version` or empty): the whole
+    /// argument list of a call whose only other arguments are optional.
+    pub fn args_then(&self, rest: &str) -> String {
+        if self.args.is_empty() { rest.trim_start_matches(", ").to_string() } else { self.arg_list() + rest }
+    }
+
+    /// The arguments with a leading `, `, to follow other arguments.
+    pub fn more_args(&self) -> String {
+        self.args.iter().map(|a| format!(", {}", a)).collect()
+    }
+
     /// `(version, min, latest)` when the case gives a version.
     pub fn versions(&self, module: &Module) -> Option<(u32, u32, u32)> {
         let vs = module.versions?;
@@ -158,6 +179,11 @@ fn load_spec(path: &Path) -> Spec {
             encode_error_path,
             any: false,
             version: c.get("version").and_then(|v| v.as_u64()).map(|v| v as u32),
+            args: c
+                .get("args")
+                .and_then(|a| a.as_array())
+                .map(|a| a.iter().map(|v| v.as_i64().expect("integer argument")).collect())
+                .unwrap_or_default(),
         };
         assert!(
             module.packets.iter().any(|p| p.name == case.packet),
@@ -211,6 +237,7 @@ fn derived_cases(cases: &[Case]) -> Vec<Case> {
                 encode_error_path: None,
                 any: true,
                 version: c.version,
+                args: c.args.clone(),
             });
         }
     }
@@ -363,7 +390,9 @@ pub fn run_target(target: &dyn Target) {
         }
         for (case, pair) in spec.cases.iter().zip(lines.chunks(2)) {
             let sequential = !uses_at(&spec.module, packet(&spec.module, &case.packet));
-            let result = check_case(case, pair[0]).and_then(|_| check_stream(case, sequential, pair[0], pair[1]));
+            let result = check_case(case, pair[0]).and_then(|_| {
+                if case.args.is_empty() { check_stream(case, sequential, pair[0], pair[1]) } else { Ok(()) }
+            });
             if let Err(e) = result {
                 failures.push(format!(
                     "[{} / {} / {}] {}\n    output: {}\n    stream: {}",

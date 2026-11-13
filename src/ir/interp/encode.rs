@@ -19,6 +19,17 @@ pub fn encode(module: &Module, name: &str, value: &Value) -> Result<Vec<u8>, PbE
 /// Encode as protocol `version` (None: the version the value carries
 /// in-band, or the latest).
 pub fn encode_version(module: &Module, name: &str, value: &Value, version: Option<u32>) -> Result<Vec<u8>, PbError> {
+    encode_args(module, name, value, version, &[])
+}
+
+/// Encode a packet that takes parameters, with `args` as their values.
+pub fn encode_args(
+    module: &Module,
+    name: &str,
+    value: &Value,
+    version: Option<u32>,
+    args: &[i64],
+) -> Result<Vec<u8>, PbError> {
     let mut w = PbWriter::new();
     if let Some(v) = version {
         let (min, latest) = versions(module);
@@ -29,11 +40,11 @@ pub fn encode_version(module: &Module, name: &str, value: &Value, version: Optio
         Value::Struct(s) => s.clone(),
         _ => return Err(w.error(PbErrorKind::Invalid, format!("a value of packet `{}` must be a struct", name))),
     };
-    if !p.params.is_empty() {
-        let msg = format!("packet `{}` takes {} argument(s); encode the packet containing it", name, p.params.len());
+    if p.params.len() != args.len() {
+        let msg = format!("packet `{}` takes {} argument(s), not {}", name, p.params.len(), args.len());
         return Err(w.error(PbErrorKind::Invalid, msg));
     }
-    Encoder { module, params: RefCell::new(Vec::new()), version: RefCell::new(0) }.packet(p, &s, &mut w)?;
+    Encoder { module, params: RefCell::new(args.to_vec()), version: RefCell::new(0) }.packet(p, &s, &mut w)?;
     w.finish()
 }
 

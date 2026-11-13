@@ -34,7 +34,14 @@ impl Target for TypeScriptTarget {
             let ver = c.version.map(|v| format!(", {}", v)).unwrap_or_default();
             let _ = writeln!(s, "function case{}(): void {{", i);
             let _ = writeln!(s, "  let p: {};", class);
-            let _ = writeln!(s, "  try {{\n    p = {}.decode(pb.pbFromHex({}){});", class, quote(&c.hex), ver);
+            let _ = writeln!(
+                s,
+                "  try {{\n    p = {}.decode(pb.pbFromHex({}){}{});",
+                class,
+                quote(&c.hex),
+                c.more_args(),
+                ver
+            );
             s.push_str("  } catch (e) {\n    console.log('{\"ok\":false' + pbE(e, \"\") + \"}\");\n    return;\n  }\n");
             for (name, v) in &c.set {
                 let path = resolve_path(module, p, name);
@@ -47,7 +54,8 @@ impl Target for TypeScriptTarget {
                 let _ = writeln!(s, "  p.{} = {};", target, lit);
             }
             s.push_str("  const v = p.toJson();\n  let b: Uint8Array;\n");
-            let _ = writeln!(s, "  try {{\n    b = p.encode({});", ver.trim_start_matches(", "));
+            let enc = c.args_then(&ver);
+            let _ = writeln!(s, "  try {{\n    b = p.encode({});", enc);
             s.push_str(
                 "  } catch (e) {\n    console.log('{\"ok\":true,\"value\":' + v + pbE(e, \"encode_\") + \"}\");\n    \
                  return;\n  }\n",
@@ -56,6 +64,10 @@ impl Target for TypeScriptTarget {
                 "  console.log('{\"ok\":true,\"value\":' + v + ',\"encoded\":\"' + pb.pbToHex(b) + '\"}');\n}\n\n",
             );
             let _ = writeln!(s, "function stream{}(): void {{", i);
+            if !c.args.is_empty() {
+                s.push_str("  console.log(\"{}\");\n}\n\n");
+                continue;
+            }
             let _ = writeln!(s, "  const d = pb.pbFromHex({});", quote(&c.hex));
             s.push_str("  let s: string;\n  try {\n");
             let _ = writeln!(s, "    const [p, n] = {}.tryDecode(d{});", class, ver);

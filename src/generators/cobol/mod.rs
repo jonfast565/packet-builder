@@ -21,6 +21,7 @@ mod encode;
 mod expr;
 mod json;
 mod locals;
+mod main;
 mod naming;
 mod packet;
 mod stream;
@@ -74,7 +75,7 @@ impl Backend for CobolGenerator {
         out.line("*> Build: cobc -free -x <this file>; run: ./<program> [cases.dat]");
         self.emit_constants(&mut out, module);
         out.line("");
-        stream::main_program(&mut out, module, &main_name(opts));
+        main::main_program(&mut out, module, &main_name(opts));
         out.line("");
         // The runtime without its state block, which is pasted into every program.
         let head = runtime.find("*>@state{").expect("runtime has a state block");

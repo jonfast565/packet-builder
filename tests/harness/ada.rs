@@ -86,7 +86,11 @@ impl Target for AdaTarget {
             let _ = writeln!(s, "      Hx_P : {};", ty);
             s.push_str("      Hx_Ok : Boolean := True;\n");
             s.push_str("      Hx_S : Ada.Strings.Unbounded.Unbounded_String;\n");
-            s.push_str("      Hx_N, Hx_F : Hx_Int := 0;\n   begin\n");
+            if c.args.is_empty() {
+                s.push_str("      Hx_N, Hx_F : Hx_Int := 0;\n");
+            }
+            s.push_str("   begin\n");
+            let ver = format!("{}{}", c.more_args(), ver);
             let _ = writeln!(s, "      begin\n         Hx_P := Decode (Hx_D{});", ver);
             s.push_str("      exception\n         when Pb_Error =>\n            Hx_Ok := False;\n");
             s.push_str("            Ada.Text_IO.Put_Line (\"{\"\"ok\"\":false\" & Hx_E (\"\") & \"}\");\n      end;\n");
@@ -112,6 +116,12 @@ impl Target for AdaTarget {
                 "               Ada.Text_IO.Put_Line (\"{\"\"ok\"\":true,\"\"value\"\":\" & Hx_V & Hx_E (\"encode_\") & \"}\");\n",
             );
             s.push_str("         end;\n      end if;\n");
+            if !c.args.is_empty() {
+                s.push_str("      Hx_S := Ada.Strings.Unbounded.To_Unbounded_String (\"{\");\n");
+                s.push_str("      Ada.Text_IO.Put_Line (Ada.Strings.Unbounded.To_String (Hx_S) & \"}\");\n");
+                let _ = writeln!(s, "   end Hx_Case_{};\n", i);
+                continue;
+            }
             let _ = writeln!(s, "      declare\n         Hx_Q : {};\n      begin", ty);
             let _ = writeln!(s, "         if Try_Decode (Hx_D, Hx_Q, Hx_N{}) then", ver);
             s.push_str(
