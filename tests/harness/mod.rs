@@ -20,6 +20,10 @@
 //!   ] }
 //! ```
 //! Unless `encoded` or an error is given, re-encoding must reproduce `hex`.
+//! `"access": true` next to `"spec"` adds the views of `generate --access`
+//! (`<Packet>_<field>`), which cases decode like any other packet.
+//! `PB_ACCESS_ALL=1 cargo test` adds them to every spec, so every view of
+//! every feature must compile in every language.
 //! `version` (files with `version N`) is the protocol version the caller
 //! passes to decode, encode and try_decode.
 //! `error_kind` / `error_path` (and `encode_error_kind` / `encode_error_path`)
@@ -114,7 +118,12 @@ fn load_spec(path: &Path) -> Spec {
     let json: Value = serde_json::from_str(&text).unwrap_or_else(|e| panic!("{}: {}", path.display(), e));
     let packet_file = json["spec"].as_str().expect("spec field");
     let source_path = path.parent().unwrap().join(packet_file);
-    let module = packet_builder::compile_file(&source_path).unwrap_or_else(|e| panic!("{}", e.render()));
+    let mut module = packet_builder::compile_file(&source_path).unwrap_or_else(|e| panic!("{}", e.render()));
+    // `"access": true`: generate with views (`generate --access`), so cases
+    // can decode `<Packet>_<field>`.
+    if std::env::var("PB_ACCESS_ALL").is_ok() || json.get("access").and_then(|a| a.as_bool()).unwrap_or(false) {
+        module.add_views().unwrap();
+    }
 
     let mut cases = Vec::new();
     for c in json["cases"].as_array().expect("cases array") {

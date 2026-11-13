@@ -77,6 +77,7 @@ cargo run -- decode examples/oscar.packet -k Flap --hex "2a01 1f3a 0004 00000001
 cargo run -- decode examples/oscar.packet -k Flap --all --hex "..."   # frames back to back
 cargo run -- decode examples/oscar.packet -k Flap --pcap capture.pcapng --offset 54 --json
 cargo run -- gen examples/oscar.packet --zero-copy -o out     # decoded buffers borrow the input
+cargo run -- gen examples/network.packet --access -o out      # plus a view per field (random access)
 cargo run -- dissector examples/oscar.packet -o out          # Wireshark Lua dissector, out/oscar.lua
 cargo run -- doc examples/network.packet -o network.md         # Markdown reference with bit diagrams
 cargo run -- fuzz examples/oscar.packet -l rust -o fuzz       # cargo-fuzz project (or -l c: libFuzzer)
@@ -881,6 +882,37 @@ instead of copying it; the input must then outlive the value:
 
 Byte lists read with `until` are built element by element, so they stay
 copies, except in C and Zig, where they point into the input too.
+
+### Random access
+
+`generate --access` adds a **view** for every field of every packet:
+a packet named `<Packet>_<field>` that reads that one field without decoding
+the rest. You decode a view like any other packet, in every language:
+
+```rust
+let ttl = Ipv4_ttl::decode(&frame)?.ttl;      // reads one byte at offset 8
+```
+
+Everything before the field whose size is known from values already read is
+skipped. That covers fixed-size fields, arrays of fixed-size elements
+(`[n]`), nested packets of fixed size, and whole `size n` windows, unions
+inside them included. The view reads the values those sizes depend on, and
+it keeps them as members, so `Header_tail` also holds `n` when `items u16[n]`
+comes before `tail`. Fields whose size is only known by reading them are
+read too: strings, `until` and `term` arrays, and unions outside a window.
+With those, a view is still correct, just no longer constant-time.
+`layout` gives each field's offset, and a `?` there shows where reading
+starts to be needed.
+
+Views only decode:
+
+* derived members are not verified;
+* checks (`==`, `in`, `strict`) and assertions are not enforced;
+* encoding a view writes zeros for the bits it skipped.
+
+Version gates, windows, `at` fields and parameters work as they do in the
+packet. `decode --access -k Ipv4_ttl` runs a view through the interpreter.
+A view's name must not clash with another packet's.
 
 ### COBOL
 

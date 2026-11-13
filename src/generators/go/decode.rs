@@ -203,6 +203,10 @@ impl StepEmitter for Decoder<'_> {
         let bits = codec.bits();
         match array {
             None => out.line(format!("pbR.SkipBits({})", bits)),
+            // gofmt tightens the spacing of a count multiplied by 1.
+            Some(Count::Expr(e)) if bits == 1 => {
+                out.line(format!("pbR.SkipBits(pbR.Count({}, 1))", self.scope.expr(e)))
+            }
             Some(Count::Expr(e)) => {
                 out.line(format!("pbR.SkipBits(pbR.Count({}, {}) * {})", self.scope.expr(e), bits, bits))
             }

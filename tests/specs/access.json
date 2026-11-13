@@ -1,0 +1,167 @@
+{
+  "spec": "access.packet",
+  "access": true,
+  "cases": [
+    {
+      "name": "whole packet",
+      "packet": "Header",
+      "hex": "45 85 02 0001 0002 0a0b 01 04 00000007 686900 17 deadbeef 1234",
+      "expect": {
+        "ihl": 5,
+        "code": 5,
+        "n": 2,
+        "name": "hi",
+        "tail": 3735928559
+      }
+    },
+    {
+      "name": "view version",
+      "packet": "Header_version",
+      "hex": "45 85 02 0001 0002 0a0b 01 04 00000007 686900 17 deadbeef 1234",
+      "encoded": "40",
+      "expect": {
+        "version": 4
+      }
+    },
+    {
+      "name": "view ihl",
+      "packet": "Header_ihl",
+      "hex": "45 85 02 0001 0002 0a0b 01 04 00000007 686900 17 deadbeef 1234",
+      "encoded": "05",
+      "expect": {
+        "ihl": 5
+      }
+    },
+    {
+      "name": "view urgent",
+      "packet": "Header_urgent",
+      "hex": "45 85 02 0001 0002 0a0b 01 04 00000007 686900 17 deadbeef 1234",
+      "encoded": "0080",
+      "expect": {
+        "urgent": 1
+      }
+    },
+    {
+      "name": "view code",
+      "packet": "Header_code",
+      "hex": "45 85 02 0001 0002 0a0b 01 04 00000007 686900 17 deadbeef 1234",
+      "encoded": "0005",
+      "expect": {
+        "code": 5
+      }
+    },
+    {
+      "name": "view n",
+      "packet": "Header_n",
+      "hex": "45 85 02 0001 0002 0a0b 01 04 00000007 686900 17 deadbeef 1234",
+      "encoded": "000002",
+      "expect": {
+        "n": 2
+      }
+    },
+    {
+      "name": "view items",
+      "packet": "Header_items",
+      "hex": "45 85 02 0001 0002 0a0b 01 04 00000007 686900 17 deadbeef 1234",
+      "encoded": "00000200010002",
+      "expect": {
+        "items": [
+          1,
+          2
+        ]
+      }
+    },
+    {
+      "name": "view pair",
+      "packet": "Header_pair",
+      "hex": "45 85 02 0001 0002 0a0b 01 04 00000007 686900 17 deadbeef 1234",
+      "encoded": "000002000000000a0b",
+      "expect": {
+        "pair": {
+          "a": 10,
+          "b": 11
+        }
+      }
+    },
+    {
+      "name": "view kind",
+      "packet": "Header_kind",
+      "hex": "45 85 02 0001 0002 0a0b 01 04 00000007 686900 17 deadbeef 1234",
+      "encoded": "00000200000000000001",
+      "expect": {
+        "kind": 1
+      }
+    },
+    {
+      "name": "view length",
+      "packet": "Header_length",
+      "hex": "45 85 02 0001 0002 0a0b 01 04 00000007 686900 17 deadbeef 1234",
+      "encoded": "0000020000000000000004",
+      "expect": {
+        "length": 4
+      }
+    },
+    {
+      "name": "view body",
+      "packet": "Header_body",
+      "hex": "45 85 02 0001 0002 0a0b 01 04 00000007 686900 17 deadbeef 1234",
+      "encoded": "000002000000000000010400000007"
+    },
+    {
+      "name": "view name",
+      "packet": "Header_name",
+      "hex": "45 85 02 0001 0002 0a0b 01 04 00000007 686900 17 deadbeef 1234",
+      "encoded": "000002000000000000000400000000686900",
+      "expect": {
+        "name": "hi"
+      }
+    },
+    {
+      "name": "view ptr",
+      "packet": "Header_ptr",
+      "hex": "45 85 02 0001 0002 0a0b 01 04 00000007 686900 17 deadbeef 1234",
+      "encoded": "00000200000000000000040000000068690017",
+      "expect": {
+        "ptr": 23
+      }
+    },
+    {
+      "name": "view target",
+      "packet": "Header_target",
+      "hex": "45 85 02 0001 0002 0a0b 01 04 00000007 686900 17 deadbeef 1234",
+      "encoded": "00000200000000000000040000000068690017000000001234",
+      "expect": {
+        "target": {
+          "v": 4660
+        }
+      }
+    },
+    {
+      "name": "view tail",
+      "packet": "Header_tail",
+      "hex": "45 85 02 0001 0002 0a0b 01 04 00000007 686900 17 deadbeef 1234",
+      "encoded": "00000200000000000000040000000068690000deadbeef",
+      "expect": {
+        "tail": 3735928559
+      }
+    },
+    {
+      "name": "view of a field after a different-size window",
+      "packet": "Header_tail",
+      "hex": "45 85 00 0a0b 02 02 0c0d 00 05 cafef00d 0000",
+      "expect": {
+        "n": 0,
+        "length": 2,
+        "name": "",
+        "tail": 3405705229
+      },
+      "encoded": "0000000000000200000000cafef00d"
+    },
+    {
+      "name": "view of a truncated packet",
+      "packet": "Header_tail",
+      "hex": "45 85 02 0001 0002 0a0b 01 04 00000007 686900 17 dead",
+      "error_kind": "incomplete"
+    }
+  ]
+}

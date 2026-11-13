@@ -91,6 +91,10 @@ struct DecodeArgs {
     /// it, a version field in the data or else the latest version applies.
     #[arg(long)]
     version: Option<u32>,
+
+    /// Also accept the views of `generate --access` (`-k Ipv4_ttl`).
+    #[arg(long)]
+    access: bool,
 }
 
 #[derive(Args)]
@@ -163,6 +167,11 @@ struct GenerateArgs {
     /// to the input instead of copying it.
     #[arg(long)]
     zero_copy: bool,
+
+    /// Random access: also generate a view `<Packet>_<field>` per field,
+    /// which reads that field without decoding the rest of the packet.
+    #[arg(long)]
+    access: bool,
 
     /// Only these protocol versions (`2..3`, or `3`), for files with
     /// `version N`: code for other versions is left out, and they are rejected.
@@ -296,6 +305,9 @@ fn generate(args: GenerateArgs) -> Result<(), String> {
     if let Some((min, latest)) = args.versions {
         module.restrict_versions(min, latest)?;
     }
+    if args.access {
+        module.add_views()?;
+    }
     let langs = if args.langs.is_empty() { Language::ALL.to_vec() } else { args.langs };
     let opts =
         GenOptions { package: args.package.unwrap_or_else(|| package_from(&args.input)), zero_copy: args.zero_copy };
@@ -426,7 +438,10 @@ fn check_version(module: &Module, version: Option<u32>) -> Result<(), String> {
 fn decode(args: DecodeArgs) -> Result<(), String> {
     use packet_builder::ir::interp;
 
-    let module = load(&args.input)?;
+    let mut module = load(&args.input)?;
+    if args.access {
+        module.add_views()?;
+    }
     if !module.packets.iter().any(|p| p.name == args.packet) {
         return Err(format!("no packet named `{}` in {}", args.packet, args.input.display()));
     }

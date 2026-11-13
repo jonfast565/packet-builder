@@ -1,0 +1,28 @@
+// Random access: the views `generate --access` adds (`<Packet>_<field>`),
+// which read one field without decoding the rest. Used by tests/codegen.rs.
+
+const Kind uint8 { num = 1, pair = 2 }
+
+packet Pair be { a uint8, b uint8 }
+
+packet Entry be { v uint16 }
+
+packet Header be {
+  version u4 == 4,
+  ihl u4,
+  flags bitfield uint8 { urgent u1, _ u3, code u4 },
+  n uint8 = len(items),
+  items uint16[n],
+  pair Pair,
+  kind uint8 : Kind,
+  length uint8 = sizeof(body),
+  body switch kind {
+    Kind.num => num uint32,
+    Kind.pair => p Pair,
+    _ => other bytes[]
+  } size length,
+  name cstring,
+  ptr uint8,
+  target Entry at ptr,
+  tail uint32
+}

@@ -11,6 +11,7 @@
 //!   evaluated while decoding.
 //! - [`layout`] — the field-by-field layout report.
 //! - [`frame`] — a packet's size from its header (stream framing).
+//! - [`views`] — per-member views for random access (`generate --access`).
 //! - [`interp`] — a reference interpreter that decodes and encodes with a
 //!   module directly.
 
@@ -21,6 +22,7 @@ pub mod interp;
 pub mod layout;
 pub mod model;
 mod subset;
+pub mod views;
 pub mod wire;
 
 pub use analysis::analyze;

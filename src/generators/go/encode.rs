@@ -246,6 +246,10 @@ impl StepEmitter for Encoder<'_> {
         let bits = codec.bits();
         match array {
             None => out.line(format!("pbW.WriteZeroBits({})", bits)),
+            // gofmt tightens the spacing of a count multiplied by 1.
+            Some(Count::Expr(e)) if bits == 1 => {
+                out.line(format!("pbW.WriteZeroBits(pbMax({}, 0))", self.scope.expr(e)))
+            }
             Some(Count::Expr(e)) => out.line(format!("pbW.WriteZeroBits(pbMax({}, 0) * {})", self.scope.expr(e), bits)),
             Some(Count::Remaining | Count::Until(_) | Count::Terminated { .. }) => {}
         }

@@ -49,10 +49,14 @@ impl Backend for CGenerator {
         for p in &module.packets {
             out.line(format!("typedef struct {} {};", p.name, p.name));
         }
+        // A union is declared before the first packet holding it (views,
+        // `generate --access`, hold their packet's unions too).
+        let mut declared = std::collections::HashSet::new();
         for p in module.in_dependency_order() {
             for m in &p.members {
                 if let ValueType::Union(n) = &m.ty
                     && let Some(u) = module.union(n)
+                    && declared.insert(n)
                 {
                     out.line("");
                     packet::emit_union_declaration(&mut out, u, opts.zero_copy);
