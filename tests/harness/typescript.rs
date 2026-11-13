@@ -34,14 +34,33 @@ impl Target for TypeScriptTarget {
             let ver = c.version.map(|v| format!(", {}", v)).unwrap_or_default();
             let _ = writeln!(s, "function case{}(): void {{", i);
             let _ = writeln!(s, "  let p: {};", class);
-            let _ = writeln!(
-                s,
-                "  try {{\n    p = {}.decode(pb.pbFromHex({}){}{});",
-                class,
-                quote(&c.hex),
-                c.more_args(),
-                ver
-            );
+            if c.source {
+                let _ = writeln!(s, "  try {{\n    const d = pb.pbFromHex({});", quote(&c.hex));
+                s.push_str("    const fetch = (at: number, buf: Uint8Array): void => {\n");
+                if let Some((from, to)) = c.unread {
+                    let _ = writeln!(
+                        s,
+                        "      if (Math.max(at, {}) < Math.min(at + buf.length, {})) throw new Error(\"fetched an unread byte\");",
+                        from, to
+                    );
+                }
+                s.push_str("      buf.set(d.subarray(at, at + buf.length));\n    };\n");
+                let _ = writeln!(
+                    s,
+                    "    p = {}.decodeFrom(pb.PbReader.fromSource(new pb.PbSource(d.length, {}, fetch)));",
+                    class,
+                    super::SOURCE_PAGE
+                );
+            } else {
+                let _ = writeln!(
+                    s,
+                    "  try {{\n    p = {}.decode(pb.pbFromHex({}){}{});",
+                    class,
+                    quote(&c.hex),
+                    c.more_args(),
+                    ver
+                );
+            }
             s.push_str("  } catch (e) {\n    console.log('{\"ok\":false' + pbE(e, \"\") + \"}\");\n    return;\n  }\n");
             for (name, v) in &c.set {
                 let path = resolve_path(module, p, name);

@@ -933,6 +933,70 @@ other packets with parameters, element views have no `try_decode` or
 `decode --access -k DnsMessage_answers_at --arg 2` reads one with the
 interpreter.
 
+Fields that can change without moving anything else also get a **setter
+view**, `<Packet>_<field>_set`. Decode it, change the field, encode it, and
+you get the input back with only that field changed:
+
+```rust
+let mut v = Ipv4_ttl_set::decode(&frame)?;
+v.ttl -= 1;
+let frame = v.encode()?;                       // same bytes, new ttl and checksum
+```
+
+The bytes the view does not interpret are kept in hidden members
+(`skipped`, `skipped2`, ... and `rest` for everything after the field), so
+padding, reserved bits and trailing data come back unchanged. When a checksum
+covers the packet, the view decodes the whole packet instead, so encoding
+recomputes the checksum (and derived lengths). A field gets a setter when it
+is stored (not derived, calculated or the version field), has a size that
+does not depend on its value (a fixed-size scalar, a bit field part, or an
+array with a constant count), and nothing in its packet reads it: no count,
+size, selector, offset, derived value, assertion or other field's check. The
+field's own checks still apply when encoding. Checksums of an enclosing
+packet are not recomputed. Packets that are not a whole number of bytes have
+no setters.
+
+#### Seekable sources
+
+Every runtime can also decode from a **source**, input read on demand,
+instead of a buffer: you give its length and a function that fills a buffer
+with the bytes at an offset, and the reader fetches pages (4 KiB from a
+file) only when it reaches them. Together with views this reads one field of
+a large file without loading the rest: the pages a view skips are never
+fetched, and `at` offsets can point anywhere in the file.
+
+```rust
+let src = PbSource::from_file(File::open("capture.bin")?)?;
+let tail = Header_tail::decode_from(&mut PbReader::from_source(&src))?.tail;
+```
+
+A fetch that fails is an `invalid` error ("cannot read the input: ...");
+running past the end is `incomplete`, as with a buffer. Fetched pages stay
+in memory while the source lives, so zero-copy fields stay valid.
+`decode --seek <file>` decodes through a source with the interpreter and
+says how many bytes it read.
+
+| Language | Source | From a file | Reader |
+|----------|--------|-------------|--------|
+| Rust | `PbSource::new(len, page, \|at, buf\| ...)` | `PbSource::from_file(f)` | `PbReader::from_source(&src)` |
+| C | `pb_source_init(&s, len, page, fetch, user)` (free with `pb_source_free`) | `pb_source_open(&s, FILE *)` | `pb_reader_from_source(&r, &s)` |
+| Go | `NewPbSource(len, page, func(off, buf) error)` | `NewPbFileSource(f)` | `NewPbReaderFromSource(src)` |
+| Python | `PbSource(len, page, fetch)` | `PbSource.from_file(f)` | `PbReader.from_source(src)` |
+| C# | `new PbSource(len, page, (off, span) => ...)` | `PbSource.FromStream(s)` | `new PbReader(src)` |
+| Zig | `PbSource.init(alloc, len, page, ctx, fetch)` | `PbSource.fromFile(alloc, &file)` | `PbReader.fromSource(&src)` |
+| Pascal | `TPbSource.Create(len, page, fetch)` (a method) | `TPbSource.CreateFile(name)` | `TPbReader.CreateFromSource(src)` |
+| TypeScript | `new PbSource(len, page, (off, buf) => ...)` | `PbSource.fromFile(fs, fd)` | `PbReader.fromSource(src)` |
+| Lua | `PbSource.new(len, page, function(off, n) ... end)` (returns the bytes) | `PbSource.from_file(f)` | `PbReader.from_source(src)` |
+| Java | `new PbSource(len, page, (off, buf) -> ...)` | `PbSource.fromChannel(ch)` | `new PbReader(src)` |
+| Swift | `PbSource(count:page:fetch:)` | `PbSource(file: FileHandle)` | `PbReader(source: src)` |
+| Fortran | `type(pb_source)` with a `fetch` procedure pointer and `ctx` | `pb_source_open(src, path, iostat)` | `pb_reader_from_source(r, src)` |
+| Ada | a type derived from `Pb_Source` overriding `Pb_Fetch`, then `Pb_Open` | — | `Pb_Init (R, Src)` |
+| COBOL | `PB-SOPEN` with a fetch program named in `PB-SFETCH` (at most 65537 bytes) | `PB-SFILE` (`PB-SF-PATH`) | `PB-RINIT` |
+
+A fetch fails by returning an error, raising an exception, or setting an
+error code, as is usual in the language. Swift returns copies for zero-copy
+fields read from a source.
+
 ### COBOL
 
 The COBOL backend writes one free-format source file for GnuCOBOL 3.x
@@ -964,13 +1028,16 @@ command-line argument (default `PACKETS.DAT`). Each line holds one packet:
 
 ```
 * comment
-<Packet> <hex bytes, or - for none> [@version] [path=integer | path=#hexbytes]...
+<Packet> <hex bytes, or - for none> [@version] [%PROGRAM] [path=integer | path=#hexbytes]...
 ```
 
 * Blank lines, and lines starting with `*`, are skipped.
 * Spaces between hex digits are not allowed, since a space separates the
   items.
 * `@version` decodes and encodes at that protocol version.
+* `%PROGRAM` calls that program, with the line's bytes in `PB-IN`, before
+  decoding: it can call `PB-SOPEN` so the line is decoded through a source
+  (see [Seekable sources](#seekable-sources)).
 * `path=value` overwrites an integer, float or string member before
   re-encoding, and `#hex` sets a string. Dotted paths reach three levels
   into nested packets; array elements cannot be set.

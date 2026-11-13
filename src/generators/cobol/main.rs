@@ -31,7 +31,9 @@ M-MAIN.
     CLOSE PB-FILE
     STOP RUN.
 
-*> One line: `<Packet> <hex or -> [@version] [path=integer | path=#hex]...`.
+*> One line: `<Packet> <hex or -> [@version] [%program]
+*> [path=integer | path=#hex]...`. `%program`: decode through a source
+*> (PB-SOPEN) that the program sets up, with the bytes in PB-IN.
 M-LINE.
     MOVE FUNCTION LENGTH(FUNCTION TRIM(M-REC TRAILING)) TO M-LEN
     IF M-LEN = 1 AND M-REC(1:1) = SPACE
@@ -51,6 +53,8 @@ M-LINE.
     END-IF
     MOVE M-REC(M-TS:M-TL) TO M-NAME
     MOVE 0 TO PB-LEN PB-SETN PB-CVER M-BAD
+    MOVE SPACES TO M-SRCP
+    CALL "PB-SCLOSE"
 @RESET@
     PERFORM M-TOKEN
     IF M-TL = 0
@@ -74,6 +78,18 @@ M-LINE.
         PERFORM M-OPTION
         PERFORM M-TOKEN
     END-PERFORM
+    IF M-BAD = 0 AND M-SRCP NOT = SPACES
+        MOVE 0 TO PB-SF-RC
+        CALL M-SRCP
+            ON EXCEPTION
+                MOVE 1 TO PB-SF-RC
+                MOVE "no source program" TO PB-SF-MSG
+        END-CALL
+        IF PB-SF-RC NOT = 0
+            MOVE 1 TO M-BAD
+            MOVE PB-SF-MSG TO M-MSG
+        END-IF
+    END-IF
     IF M-BAD NOT = 0
         PERFORM M-REJECT
         EXIT PARAGRAPH
@@ -151,6 +167,12 @@ M-OPTION.
         COMPUTE M-I = M-TS + 1
         PERFORM M-DIGITS
         MOVE M-W TO PB-CVER
+        EXIT PARAGRAPH
+    END-IF
+    IF M-REC(M-TS:1) = "%"
+        IF M-TL > 1
+            MOVE M-REC(M-TS + 1:M-TL - 1) TO M-SRCP
+        END-IF
         EXIT PARAGRAPH
     END-IF
 @ARGUMENT@
@@ -264,6 +286,7 @@ pub fn main_program(out: &mut Out, module: &Module, name: &str) {
     out.line("01 M-FS PIC XX.");
     out.line("01 M-NAME PIC X(64).");
     out.line("01 M-MSG PIC X(64).");
+    out.line("01 M-SRCP PIC X(31).");
     out.line("01 M-W PIC S9(38) COMP-3.");
     out.line("01 M-BUF PIC X(70000).");
     out.line("01 M-BUFA REDEFINES M-BUF.");

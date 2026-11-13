@@ -2,6 +2,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 
 #ifndef PB_RUNTIME_DECLARED
 #define PB_RUNTIME_DECLARED
@@ -45,11 +46,29 @@ typedef struct pb_error {
     size_t bit_offset;
     size_t needed_bits;
     unsigned depth;
+    const char *msg; /* why a source could not be read (PB_ERR_INVALID), or NULL */
 } pb_error;
+
+/* Fills buf with the n input bytes at offset and returns 0, or sets *msg
+ * (a string that outlives the reader) and returns nonzero. */
+typedef int (*pb_fetch_fn)(void *user, uint64_t offset, uint8_t *buf, size_t n, const char **msg);
+
+/* Input read on demand (a file, a stream that can seek): len bytes, loaded
+ * a page at a time by fetch. Only the pages a decode touches are fetched:
+ * fields a view skips are never read. Pages stay loaded until
+ * pb_source_free, so zero-copy pointers into the input remain valid. */
+typedef struct pb_source {
+    uint8_t *buf;    /* len bytes, zero until their page is fetched */
+    uint8_t *loaded; /* one flag per page */
+    size_t len, page;
+    pb_fetch_fn fetch;
+    void *user;
+} pb_source;
 
 /* Reads integers of any bit width (MSB-first) and byte-aligned values. */
 typedef struct pb_reader {
     const uint8_t *data;
+    pb_source *src;    /* where data comes from, or NULL for a buffer */
     size_t len;        /* in bytes */
     size_t pos;        /* in bits */
     size_t limit;      /* end of the readable data in bits (a window inside data) */
@@ -89,6 +108,15 @@ typedef struct pb_writer {
 
 const char *pb_strerror(int rc);
 void pb_reader_init(pb_reader *r, const uint8_t *data, size_t len);
+/* A source of len bytes read in pages of `page` bytes by fetch(user, ...).
+ * Returns PB_OK or PB_ERR_NOMEM. */
+int pb_source_init(pb_source *s, size_t len, size_t page, pb_fetch_fn fetch, void *user);
+/* A source reading `f` (which must stay open), in pages of 4096 bytes.
+ * Returns PB_OK, PB_ERR_INVALID if f cannot seek, or PB_ERR_NOMEM. */
+int pb_source_open(pb_source *s, FILE *f);
+void pb_source_free(pb_source *s);
+/* A reader that fetches its input from src as it goes. */
+void pb_reader_from_source(pb_reader *r, pb_source *src);
 void pb_writer_init(pb_writer *w);
 void pb_writer_free(pb_writer *w);
 /* Write every placed packet at its offset: past the end (zero-filling the

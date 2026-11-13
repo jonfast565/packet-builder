@@ -139,9 +139,100 @@ fn pb_check_version(v: i64, min: u32, latest: u32) -> Result<u32, String> {
 }
 // @versions}
 
+/// Input read on demand (a file, a stream that can seek): `len` bytes,
+/// loaded a page at a time by `fetch(offset, buf)`, which fills `buf` with
+/// the bytes at `offset`. Only the pages a decode touches are fetched:
+/// fields a view skips are never read. Pages stay loaded while the source
+/// lives, so borrowed (zero-copy) slices remain valid.
+pub struct PbSource<'f> {
+    buf: Box<[std::cell::UnsafeCell<u8>]>,
+    page: usize,
+    loaded: std::cell::RefCell<Vec<bool>>,
+    #[allow(clippy::type_complexity)]
+    fetch: std::cell::RefCell<Box<dyn FnMut(u64, &mut [u8]) -> std::io::Result<()> + 'f>>,
+}
+
+impl<'f> PbSource<'f> {
+    /// A source of `len` bytes read in pages of `page` bytes.
+    pub fn new(len: usize, page: usize, fetch: impl FnMut(u64, &mut [u8]) -> std::io::Result<()> + 'f) -> Self {
+        let page = page.max(1);
+        // Zeroed memory is mapped lazily: pages never fetched cost nothing.
+        let raw = Box::into_raw(vec![0u8; len].into_boxed_slice()) as *mut [std::cell::UnsafeCell<u8>];
+        // SAFETY: UnsafeCell<u8> has the same layout as u8.
+        let buf = unsafe { Box::from_raw(raw) };
+        PbSource {
+            buf,
+            page,
+            loaded: std::cell::RefCell::new(vec![false; len.div_ceil(page)]),
+            fetch: std::cell::RefCell::new(Box::new(fetch)),
+        }
+    }
+
+    /// A source reading `file` (`std::fs::File`, or anything that can seek).
+    pub fn from_file<F: std::io::Read + std::io::Seek + 'f>(mut file: F) -> std::io::Result<Self> {
+        let len = file.seek(std::io::SeekFrom::End(0))? as usize;
+        Ok(PbSource::new(len, 4096, move |at, buf| {
+            file.seek(std::io::SeekFrom::Start(at))?;
+            file.read_exact(buf)
+        }))
+    }
+
+    pub fn len(&self) -> usize {
+        self.buf.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.buf.is_empty()
+    }
+
+}
+
+/// What a reader needs from a source (`PbSource`).
+pub trait PbFetch {
+    /// Bytes `start..start + n` (inside the input), fetched if needed.
+    fn bytes(&self, start: usize, n: usize) -> std::io::Result<&[u8]>;
+    /// The page size: how much a scan for a terminator reads at a time.
+    fn page(&self) -> usize;
+    fn size(&self) -> usize;
+}
+
+impl PbFetch for PbSource<'_> {
+    fn page(&self) -> usize {
+        self.page
+    }
+
+    fn size(&self) -> usize {
+        self.buf.len()
+    }
+
+    fn bytes(&self, start: usize, n: usize) -> std::io::Result<&[u8]> {
+        if n > 0 {
+            let mut loaded = self.loaded.borrow_mut();
+            for p in start / self.page..=(start + n - 1) / self.page {
+                if loaded[p] {
+                    continue;
+                }
+                let from = p * self.page;
+                let to = (from + self.page).min(self.buf.len());
+                let mut tmp = vec![0u8; to - from];
+                (self.fetch.borrow_mut())(from as u64, &mut tmp)?;
+                for (i, b) in tmp.into_iter().enumerate() {
+                    // SAFETY: no reference to an unloaded page exists yet.
+                    unsafe { *self.buf[from + i].get() = b };
+                }
+                loaded[p] = true;
+            }
+        }
+        // SAFETY: loaded pages are never written again.
+        Ok(unsafe { std::slice::from_raw_parts(self.buf.as_ptr().add(start) as *const u8, n) })
+    }
+}
+
 /// Reads integers of any bit width (MSB-first) and byte-aligned values.
 pub struct PbReader<'a> {
     data: &'a [u8],
+    src: Option<&'a dyn PbFetch>,
+    len: usize, // input size in bytes
     pos: usize,   // in bits
     limit: usize, // end of the readable data in bits (a window inside `data`)
     windows: usize, // windows open
@@ -151,7 +242,44 @@ pub struct PbReader<'a> {
 
 impl<'a> PbReader<'a> {
     pub fn new(data: &'a [u8]) -> Self {
-        PbReader { data, pos: 0, limit: data.len() * 8, windows: 0, trace: PbTrace::default(), version: 0 }
+        PbReader { data, src: None, len: data.len(), pos: 0, limit: data.len() * 8, windows: 0, trace: PbTrace::default(), version: 0 }
+    }
+
+    /// A reader that fetches its input from `src` as it goes.
+    pub fn from_source(src: &'a dyn PbFetch) -> Self {
+        let len = src.size();
+        PbReader { data: &[], src: Some(src), len, pos: 0, limit: len * 8, windows: 0, trace: PbTrace::default(), version: 0 }
+    }
+
+    /// Input bytes `start..start + n`, which `need` has checked exist.
+    fn bytes(&self, start: usize, n: usize) -> Result<&'a [u8], PbError> {
+        match self.src {
+            None => Ok(&self.data[start..start + n]),
+            Some(src) => src
+                .bytes(start, n)
+                .map_err(|e| self.error(PbErrorKind::Invalid, format!("cannot read the input: {}", e))),
+        }
+    }
+
+    /// Where `term` first starts in input bytes `start..end`.
+    fn find(&self, start: usize, end: usize, term: &[u8]) -> Result<Option<usize>, PbError> {
+        let Some(src) = self.src else {
+            return Ok(self.data[start..end].windows(term.len()).position(|w| w == term).map(|n| start + n));
+        };
+        // Page by page, so a long input is only read up to the terminator.
+        let mut from = start;
+        while from < end {
+            let to = ((from / src.page() + 1) * src.page() + term.len() - 1).min(end);
+            let chunk = self.bytes(from, to - from)?;
+            if let Some(n) = chunk.windows(term.len()).position(|w| w == term) {
+                return Ok(Some(from + n));
+            }
+            if to == end {
+                break;
+            }
+            from = to + 1 - term.len();
+        }
+        Ok(None)
     }
 
     // @versions{
@@ -268,12 +396,12 @@ impl<'a> PbReader<'a> {
             return Err(self.error(PbErrorKind::Invalid, format!("bad offset {} (from bit {})", offset, from)));
         }
         let target = (offset as u64).saturating_mul(8).saturating_add(from as u64);
-        if target > self.data.len() as u64 * 8 {
+        if target > self.len as u64 * 8 {
             return Err(self.error(PbErrorKind::Invalid, format!("offset {} is past the end of the input", offset)));
         }
         let saved = PbJump { pos: self.pos, limit: self.limit, windows: self.windows };
         self.pos = target as usize;
-        self.limit = self.data.len() * 8;
+        self.limit = self.len * 8;
         self.windows = 0;
         Ok(saved)
     }
@@ -287,10 +415,12 @@ impl<'a> PbReader<'a> {
 
     pub fn read_bits(&mut self, width: u32) -> Result<u64, PbError> {
         self.need(width as usize)?;
+        let first = self.pos >> 3;
+        let data = self.bytes(first, (self.pos + width as usize).div_ceil(8) - first)?;
         let mut v: u64 = 0;
         let mut left = width;
         while left > 0 {
-            let byte = self.data[self.pos >> 3];
+            let byte = data[(self.pos >> 3) - first];
             let off = (self.pos & 7) as u32;
             let take = (8 - off).min(left);
             let bits = (byte >> (8 - off - take)) & ((1u16 << take) - 1) as u8;
@@ -303,10 +433,10 @@ impl<'a> PbReader<'a> {
 
     pub fn read_uint(&mut self, nbytes: u32, little: bool) -> Result<u64, PbError> {
         self.need(nbytes as usize * 8)?;
-        let start = self.pos >> 3;
+        let data = self.bytes(self.pos >> 3, nbytes as usize)?;
         let mut v: u64 = 0;
         for i in 0..nbytes as usize {
-            let b = if little { self.data[start + nbytes as usize - 1 - i] } else { self.data[start + i] };
+            let b = if little { data[nbytes as usize - 1 - i] } else { data[i] };
             v = (v << 8) | b as u64;
         }
         self.pos += nbytes as usize * 8;
@@ -320,9 +450,9 @@ impl<'a> PbReader<'a> {
     /// The next `n` bytes, borrowed from the input.
     pub fn read_slice(&mut self, n: usize) -> Result<&'a [u8], PbError> {
         self.need(n.saturating_mul(8))?;
-        let start = self.pos >> 3;
+        let slice = self.bytes(self.pos >> 3, n)?;
         self.pos += n * 8;
-        Ok(&self.data[start..start + n])
+        Ok(slice)
     }
 
     pub fn read_mac(&mut self) -> Result<[u8; 6], PbError> {
@@ -344,11 +474,11 @@ impl<'a> PbReader<'a> {
     /// The bytes before a NUL, borrowed; the NUL is consumed.
     pub fn read_cstring_slice(&mut self) -> Result<&'a [u8], PbError> {
         let start = self.pos >> 3;
-        let data: &'a [u8] = self.data;
-        match data[start..self.limit >> 3].iter().position(|b| *b == 0) {
-            Some(n) => {
-                self.pos += (n + 1) * 8;
-                Ok(&data[start..start + n])
+        match self.find(start, self.limit >> 3, &[0])? {
+            Some(at) => {
+                let slice = self.bytes(start, at - start)?;
+                self.pos = (at + 1) * 8;
+                Ok(slice)
             }
             None => Err(self.short(self.remaining_bits() + 8, "the NUL-terminated string")),
         }
@@ -466,16 +596,16 @@ impl<'a> PbReader<'a> {
     pub fn read_until_slice(&mut self, term: &[u8], optional: bool) -> Result<&'a [u8], PbError> {
         let start = self.pos >> 3;
         let end = self.limit >> 3;
-        let data: &'a [u8] = self.data;
-        let window = &data[start..end];
-        match window.windows(term.len()).position(|w| w == term) {
-            Some(n) => {
-                self.pos += (n + term.len()) * 8;
-                Ok(&window[..n])
+        match self.find(start, end, term)? {
+            Some(at) => {
+                let slice = self.bytes(start, at - start)?;
+                self.pos = (at + term.len()) * 8;
+                Ok(slice)
             }
             None if optional => {
+                let slice = self.bytes(start, end - start)?;
                 self.pos = self.limit;
-                Ok(window)
+                Ok(slice)
             }
             None => Err(self.short(self.remaining_bits() + 8, "the terminated field")),
         }
@@ -483,8 +613,17 @@ impl<'a> PbReader<'a> {
 
     /// Checksum `algo` of the input between two bit positions (whole bytes);
     /// the bytes between `hole_from` and `hole_to` count as zero.
+    /// From a source that cannot be read, the checksum of zeros (which
+    /// then fails to match).
     pub fn checksum(&self, algo: u32, from: usize, to: usize, hole_from: usize, hole_to: usize) -> u64 {
-        pb_checksum(algo, self.data, from / 8, to / 8, hole_from / 8, hole_to / 8)
+        if self.src.is_none() {
+            return pb_checksum(algo, self.data, from / 8, to / 8, hole_from / 8, hole_to / 8);
+        }
+        let (base, end) = (from / 8, to / 8);
+        let zeros = vec![0u8; end.saturating_sub(base)];
+        let data = self.bytes(base, end.saturating_sub(base)).unwrap_or(&zeros);
+        let hole = |h: usize| (h / 8).saturating_sub(base);
+        pb_checksum(algo, data, 0, end.saturating_sub(base), hole(hole_from), hole(hole_to))
     }
 }
 

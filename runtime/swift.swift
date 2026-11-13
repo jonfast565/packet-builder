@@ -194,9 +194,62 @@ func pbValidUtf8<C: Collection>(_ raw: C) -> Bool where C.Element == UInt8 {
     return true
 }
 
+/// Input read on demand (a file, a stream that can seek): `count` bytes,
+/// loaded a page at a time by `fetch(offset, buf)`, which fills `buf` with the
+/// bytes at `offset` or throws. Only the pages a decode touches are fetched:
+/// fields a view skips are never read. Slices a reader returns from a source
+/// are copies, so loading more pages never copies the input.
+public final class PbSource {
+    var buf: [UInt8]
+    let page: Int
+    var loaded: [Bool]
+    let fetch: (Int, UnsafeMutableRawBufferPointer) throws -> Void
+
+    /// A source of `count` bytes read in pages of `page` bytes.
+    public init(count: Int, page: Int, fetch: @escaping (Int, UnsafeMutableRawBufferPointer) throws -> Void) {
+        self.page = Swift.max(page, 1)
+        buf = [UInt8](repeating: 0, count: count)
+        loaded = [Bool](repeating: false, count: (count + self.page - 1) / self.page)
+        self.fetch = fetch
+    }
+
+    /// A source reading `file`, which must be able to seek.
+    @available(macOS 10.15.4, iOS 13.4, tvOS 13.4, watchOS 6.2, *)
+    public convenience init(file: FileHandle) throws {
+        let count = Int(try file.seekToEnd())
+        self.init(count: count, page: 4096) { at, buf in
+            try file.seek(toOffset: UInt64(at))
+            guard let got = try file.read(upToCount: buf.count), got.count == buf.count else {
+                throw PbError(kind: .incomplete, message: "the file ended early", path: "", bitOffset: at * 8, neededBits: 0)
+            }
+            buf.copyBytes(from: got)
+        }
+    }
+
+    public var count: Int {
+        return buf.count
+    }
+
+    /// Fetch the pages holding bytes `start..<start + n` that are not loaded yet.
+    func load(_ start: Int, _ n: Int) throws {
+        if n <= 0 {
+            return
+        }
+        for p in (start / page)...((start + n - 1) / page) where !loaded[p] {
+            let from = p * page
+            let to = Swift.min(from + page, buf.count)
+            let fetch = self.fetch
+            try buf.withUnsafeMutableBytes { try fetch(from, UnsafeMutableRawBufferPointer(rebasing: $0[from..<to])) }
+            loaded[p] = true
+        }
+    }
+}
+
 /// Reads integers of any bit width (MSB-first) and byte-aligned values.
 public final class PbReader {
     let data: [UInt8]
+    let src: PbSource? // nil when reading a buffer
+    let len: Int // input size in bytes
     var pos = 0 // in bits
     var limit: Int // end of the readable data in bits (a window inside `data`)
     var windows = 0 // windows open
@@ -205,7 +258,56 @@ public final class PbReader {
 
     public init(_ data: [UInt8]) {
         self.data = data
+        self.src = nil
+        self.len = data.count
         self.limit = data.count * 8
+    }
+
+    /// A reader that fetches its input from `source` as it goes.
+    public init(source: PbSource) {
+        self.data = []
+        self.src = source
+        self.len = source.count
+        self.limit = source.count * 8
+    }
+
+    /// The input, with bytes `start..<start + n` (which `need` has checked
+    /// exist) loaded.
+    func input(_ start: Int, _ n: Int) throws -> [UInt8] {
+        guard let src = src else {
+            return data
+        }
+        do {
+            try src.load(start, n)
+        } catch {
+            throw self.error(.invalid, "cannot read the input: \(error)")
+        }
+        return src.buf
+    }
+
+    /// Input bytes `start..<end` as a slice: shared with a buffer, copied from a source.
+    func slice(_ d: [UInt8], _ start: Int, _ end: Int) -> ArraySlice<UInt8> {
+        return src == nil ? d[start..<end] : ArraySlice(Array(d[start..<end]))
+    }
+
+    /// Where `term` first starts in input bytes `start..<end`.
+    func find(_ start: Int, _ end: Int, _ term: [UInt8]) throws -> Int? {
+        guard let src = src else {
+            return pbFind(data, start, end, term)
+        }
+        // Page by page, so a long input is only read up to the terminator.
+        var from = start
+        while from < end {
+            let to = Swift.min((from / src.page + 1) * src.page + term.count - 1, end)
+            if let at = pbFind(try input(from, to - from), from, to, term) {
+                return at
+            }
+            if to == end {
+                break
+            }
+            from = to + 1 - term.count
+        }
+        return nil
     }
 
     // @versions{
@@ -310,12 +412,12 @@ public final class PbReader {
             throw error(.invalid, "bad offset \(offset) (from bit \(from))")
         }
         let off = pbSatMul(Int(truncatingIfNeeded: offset), 8)
-        if off > data.count * 8 - from {
+        if off > len * 8 - from {
             throw error(.invalid, "offset \(offset) is past the end of the input")
         }
         let saved = PbJump(pos: pos, limit: limit, windows: windows)
         pos = from + off
-        limit = data.count * 8
+        limit = len * 8
         windows = 0
         return saved
     }
@@ -329,6 +431,7 @@ public final class PbReader {
 
     public func readBits(_ width: Int) throws -> UInt64 {
         try need(width)
+        let data = try input(pos >> 3, ((pos + width + 7) >> 3) - (pos >> 3))
         var v: UInt64 = 0
         var left = width
         while left > 0 {
@@ -346,6 +449,7 @@ public final class PbReader {
     public func readUInt(_ nbytes: Int, _ little: Bool) throws -> UInt64 {
         try need(nbytes * 8)
         let start = pos >> 3
+        let data = try input(start, nbytes)
         var v: UInt64 = 0
         for i in 0..<nbytes {
             let b = little ? data[start + nbytes - 1 - i] : data[start + i]
@@ -359,12 +463,13 @@ public final class PbReader {
         return Array(try readSlice(n))
     }
 
-    /// The next `n` bytes, sharing the input's storage.
+    /// The next `n` bytes, sharing the input's storage (a buffer's, not a source's).
     public func readSlice(_ n: Int) throws -> ArraySlice<UInt8> {
         try need(pbSatMul(n, 8))
         let start = pos >> 3
+        let data = try input(start, n)
         pos += n * 8
-        return data[start..<start + n]
+        return slice(data, start, start + n)
     }
 
     public func readMac() throws -> [UInt8] {
@@ -384,14 +489,10 @@ public final class PbReader {
     /// The bytes before a NUL, sharing the input's storage; the NUL is consumed.
     public func readCStringSlice() throws -> ArraySlice<UInt8> {
         let start = pos >> 3
-        let end = limit >> 3
-        var i = start
-        while i < end {
-            if data[i] == 0 {
-                pos += (i - start + 1) * 8
-                return data[start..<i]
-            }
-            i += 1
+        if let i = try find(start, limit >> 3, [0]) {
+            let data = try input(start, i - start)
+            pos = (i + 1) * 8
+            return slice(data, start, i)
         }
         throw short(remainingBits() + 8, "the NUL-terminated string")
     }
@@ -532,31 +633,53 @@ public final class PbReader {
     public func readUntilSlice(_ term: [UInt8], _ optional: Bool) throws -> ArraySlice<UInt8> {
         let start = pos >> 3
         let end = limit >> 3
-        var i = start
-        while i + term.count <= end {
-            var hit = true
-            for k in 0..<term.count where data[i + k] != term[k] {
-                hit = false
-                break
-            }
-            if hit {
-                pos += (i - start + term.count) * 8
-                return data[start..<i]
-            }
-            i += 1
+        if let i = try find(start, end, term) {
+            let data = try input(start, i - start)
+            pos = (i + term.count) * 8
+            return slice(data, start, i)
         }
         if optional {
+            let data = try input(start, end - start)
             pos = limit
-            return data[start..<end]
+            return slice(data, start, end)
         }
         throw short(remainingBits() + 8, "the terminated field")
     }
 
     /// Checksum `algo` of the input between two bit positions (whole bytes);
-    /// the bytes between `holeFrom` and `holeTo` count as zero.
+    /// the bytes between `holeFrom` and `holeTo` count as zero. From a source
+    /// that cannot be read, the checksum of zeros (which then fails to match).
     public func checksum(_ algo: Int, _ from: Int, _ to: Int, _ holeFrom: Int, _ holeTo: Int) -> UInt64 {
-        return pbChecksum(algo, data, from / 8, to / 8, holeFrom / 8, holeTo / 8)
+        guard let src = src else {
+            return pbChecksum(algo, data, from / 8, to / 8, holeFrom / 8, holeTo / 8)
+        }
+        let base = from / 8
+        let n = Swift.max(to / 8 - base, 0)
+        do {
+            try src.load(base, n)
+        } catch {
+            let hole = { (h: Int) in Swift.max(h / 8 - base, 0) }
+            return pbChecksum(algo, [UInt8](repeating: 0, count: n), 0, n, hole(holeFrom), hole(holeTo))
+        }
+        return pbChecksum(algo, src.buf, from / 8, to / 8, holeFrom / 8, holeTo / 8)
     }
+}
+
+/// Where `term` first starts in `d[start..<end]`.
+func pbFind(_ d: [UInt8], _ start: Int, _ end: Int, _ term: [UInt8]) -> Int? {
+    var i = start
+    while i + term.count <= end {
+        var hit = true
+        for k in 0..<term.count where d[i + k] != term[k] {
+            hit = false
+            break
+        }
+        if hit {
+            return i
+        }
+        i += 1
+    }
+    return nil
 }
 
 /// Builds a byte buffer; integers may be written at any bit position.

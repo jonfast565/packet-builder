@@ -1,0 +1,83 @@
+{
+  "spec": "access.packet",
+  "access": true,
+  "source": true,
+  "cases": [
+    {
+      "name": "whole packet from a source",
+      "packet": "Header",
+      "hex": "45 85 02 0001 0002 0a0b 01 04 00000007 686900 17 deadbeef 1234",
+      "expect": {
+        "ihl": 5,
+        "code": 5,
+        "n": 2,
+        "name": "hi",
+        "tail": 3735928559
+      }
+    },
+    {
+      "name": "a view skips pages without reading them",
+      "packet": "Header_tail",
+      "hex": "45 85 28 eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee 0a0b 01 04 00000007 686900 63 deadbeef 1234",
+      "unread": [
+        4,
+        80
+      ],
+      "expect": {
+        "n": 40,
+        "name": "hi",
+        "tail": 3735928559
+      },
+      "encoded": "0000280000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000040000000068690000deadbeef"
+    },
+    {
+      "name": "a view follows an offset past skipped pages",
+      "packet": "Header_target",
+      "hex": "45 85 28 eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee 0a0b 01 04 00000007 686900 63 deadbeef 1234",
+      "unread": [
+        4,
+        80
+      ],
+      "expect": {
+        "target": {
+          "v": 4660
+        }
+      },
+      "encoded": "0000280000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000040000000068690063000000001234"
+    },
+    {
+      "name": "a full decode reads every page",
+      "packet": "Header",
+      "hex": "45 85 28 eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee 0a0b 01 04 00000007 686900 63 deadbeef 1234",
+      "unread": [
+        4,
+        80
+      ],
+      "error_kind": "invalid"
+    },
+    {
+      "name": "a truncated source",
+      "packet": "Header_tail",
+      "hex": "45 85 28 eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee 0a0b 01 04 00000007 686900 63 dead",
+      "error_kind": "incomplete"
+    },
+    {
+      "name": "a checksum over fetched pages",
+      "packet": "Summed",
+      "hex": "4011adba1234",
+      "expect": {
+        "ttl": 64,
+        "sum": 44474
+      }
+    },
+    {
+      "name": "a setter view from a source",
+      "packet": "Summed_ttl_set",
+      "hex": "4011adba1234ffee",
+      "set": {
+        "ttl": 1
+      },
+      "encoded": "0111ecba1234ffee"
+    }
+  ]
+}

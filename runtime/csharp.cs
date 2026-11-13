@@ -124,10 +124,66 @@
             new PbException(kind, reason, Path(), pos, neededBits);
     }
 
+    /// <summary>Fills <paramref name="buf"/> with the input bytes at <paramref name="offset"/>;
+    /// throws (any exception, whose message is reported) when they cannot be read.</summary>
+    public delegate void PbFetch(long offset, Span<byte> buf);
+
+    /// <summary>Input read on demand (a file, a stream that can seek): Length bytes,
+    /// loaded a page at a time by a PbFetch. Only the pages a decode touches are
+    /// fetched: fields a view skips are never read. Pages stay loaded while the
+    /// source lives, so zero-copy views into it remain valid.</summary>
+    public sealed class PbSource
+    {
+        internal readonly byte[] Buf;
+        internal readonly int Page;
+        private readonly bool[] loaded;
+        private readonly PbFetch fetch;
+
+        /// <summary>A source of <paramref name="len"/> bytes read in pages of <paramref name="page"/> bytes.</summary>
+        public PbSource(long len, int page, PbFetch fetch)
+        {
+            Page = Math.Max(page, 1);
+            Buf = new byte[len];
+            loaded = new bool[(len + Page - 1) / Page];
+            this.fetch = fetch;
+        }
+
+        /// <summary>A source reading <paramref name="stream"/>, which must be able to seek.</summary>
+        public static PbSource FromStream(System.IO.Stream stream) =>
+            new PbSource(stream.Length, 4096, (at, buf) =>
+            {
+                stream.Seek(at, System.IO.SeekOrigin.Begin);
+                while (buf.Length > 0)
+                {
+                    int n = stream.Read(buf);
+                    if (n <= 0) throw new System.IO.EndOfStreamException("the stream ended early");
+                    buf = buf.Slice(n);
+                }
+            });
+
+        public long Length => Buf.Length;
+
+        /// <summary>Fetch the pages holding bytes start..start + n that are not loaded yet.</summary>
+        internal void Load(long start, long n)
+        {
+            if (n <= 0) return;
+            for (long p = start / Page; p <= (start + n - 1) / Page; p++)
+            {
+                if (loaded[p]) continue;
+                long from = p * Page;
+                int size = (int)Math.Min(Page, Buf.Length - from);
+                fetch(from, new Span<byte>(Buf, (int)from, size));
+                loaded[p] = true;
+            }
+        }
+    }
+
     /// <summary>Reads integers of any bit width (MSB-first) and byte-aligned values.</summary>
     public sealed class PbReader : PbTrace
     {
         private readonly byte[] data;
+        private readonly PbSource src; // null when reading a buffer
+        private static readonly byte[] Nul = { 0 };
         private long limit; // end of the readable data in bits (a window inside data)
         private int windows; // windows open
 
@@ -135,6 +191,51 @@
         {
             this.data = data;
             limit = (long)data.Length * 8;
+        }
+
+        /// <summary>A reader that fetches its input from <paramref name="src"/> as it goes.</summary>
+        public PbReader(PbSource src)
+        {
+            this.src = src;
+            data = src.Buf;
+            limit = (long)data.Length * 8;
+        }
+
+        /// <summary>Make input bytes start..start + n (which Need has checked exist) available.</summary>
+        private void Load(long start, long n)
+        {
+            if (src == null) return;
+            try { src.Load(start, n); }
+            catch (Exception e) { throw Error(PbErrorKind.Invalid, $"cannot read the input: {e.Message}"); }
+        }
+
+        /// <summary>Where term first starts in input bytes start..end, or -1.</summary>
+        private long Find(long start, long end, byte[] term)
+        {
+            if (src == null) return Scan(start, end, term);
+            // Page by page, so a long input is only read up to the terminator.
+            for (long from = start; from < end;)
+            {
+                long to = Math.Min((from / src.Page + 1) * src.Page + term.Length - 1, end);
+                Load(from, to - from);
+                long at = Scan(from, to, term);
+                if (at >= 0) return at;
+                if (to == end) break;
+                from = to + 1 - term.Length;
+            }
+            return -1;
+        }
+
+        private long Scan(long start, long end, byte[] term)
+        {
+            if (term.Length == 1) return Array.IndexOf(data, term[0], (int)start, (int)(end - start));
+            for (long i = start; i + term.Length <= end; i++)
+            {
+                bool hit = true;
+                for (int k = 0; k < term.Length && hit; k++) hit = data[i + k] == term[k];
+                if (hit) return i;
+            }
+            return -1;
         }
 
         public long RemainingBits => limit - pos;
@@ -198,6 +299,7 @@
         public ulong ReadBits(int width)
         {
             Need(width);
+            Load(pos >> 3, ((pos + width + 7) >> 3) - (pos >> 3));
             ulong v = 0;
             for (int left = width; left > 0;)
             {
@@ -215,6 +317,7 @@
         {
             Need(nbytes * 8L);
             long start = pos >> 3;
+            Load(start, nbytes);
             ulong v = 0;
             for (int i = 0; i < nbytes; i++)
                 v = (v << 8) | data[little ? start + nbytes - 1 - i : start + i];
@@ -225,6 +328,7 @@
         public byte[] ReadBytes(long n)
         {
             Need(n * 8);
+            Load(pos >> 3, n);
             var outp = new byte[n];
             Array.Copy(data, pos >> 3, outp, 0, n);
             pos += n * 8;
@@ -235,6 +339,7 @@
         public ReadOnlyMemory<byte> ReadMemory(long n)
         {
             Need(n * 8);
+            Load(pos >> 3, n);
             var view = new ReadOnlyMemory<byte>(data, (int)(pos >> 3), (int)n);
             pos += n * 8;
             return view;
@@ -258,7 +363,7 @@
         public byte[] ReadCString()
         {
             long start = pos >> 3;
-            int end = Array.IndexOf(data, (byte)0, (int)start, (int)((limit >> 3) - start));
+            long end = Find(start, limit >> 3, Nul);
             if (end < 0) throw Short(RemainingBits + 8, "the NUL-terminated string");
             var outp = new byte[end - start];
             Array.Copy(data, start, outp, 0, outp.Length);
@@ -358,17 +463,16 @@
         public byte[] ReadUntil(byte[] term, bool optional)
         {
             long start = pos >> 3, end = limit >> 3;
-            for (long i = start; i + term.Length <= end; i++)
+            long i = Find(start, end, term);
+            if (i >= 0)
             {
-                bool hit = true;
-                for (int k = 0; k < term.Length && hit; k++) hit = data[i + k] == term[k];
-                if (!hit) continue;
                 var found = new byte[i - start];
                 Array.Copy(data, start, found, 0, found.Length);
                 pos = (i + term.Length) * 8;
                 return found;
             }
             if (!optional) throw Short(RemainingBits + 8, "the terminated field");
+            Load(start, end - start);
             var rest = new byte[end - start];
             Array.Copy(data, start, rest, 0, rest.Length);
             pos = limit;
@@ -376,9 +480,19 @@
         }
 
         /// <summary>Checksum algo of the input between two bit positions (whole
-        /// bytes); the bytes between holeFrom and holeTo count as zero.</summary>
-        public ulong Checksum(int algo, long from, long to, long holeFrom, long holeTo) =>
-            Pb.Checksum(algo, data, from / 8, to / 8, holeFrom / 8, holeTo / 8);
+        /// bytes); the bytes between holeFrom and holeTo count as zero. From a
+        /// source that cannot be read, the checksum of zeros (which then fails to match).</summary>
+        public ulong Checksum(int algo, long from, long to, long holeFrom, long holeTo)
+        {
+            if (src == null) return Pb.Checksum(algo, data, from / 8, to / 8, holeFrom / 8, holeTo / 8);
+            long b = from / 8, n = Math.Max(to / 8 - b, 0);
+            try { src.Load(b, n); }
+            catch (Exception)
+            {
+                return Pb.Checksum(algo, new byte[n], 0, n, Math.Max(holeFrom / 8 - b, 0), Math.Max(holeTo / 8 - b, 0));
+            }
+            return Pb.Checksum(algo, data, from / 8, to / 8, holeFrom / 8, holeTo / 8);
+        }
     }
 
     /// <summary>Builds a byte buffer; integers may be written at any bit position.</summary>

@@ -69,16 +69,51 @@ type
     Windows: Integer;
   end;
 
+  /// Fills Buf with the input bytes at AOffset; raises an exception (whose
+  /// message is reported) when it cannot.
+  TPbFetch = procedure(AOffset: Int64; var Buf: array of Byte) of object;
+
+  /// Input read on demand (a file, a stream that can seek): Size bytes,
+  /// loaded a page at a time by a TPbFetch. Only the pages a decode touches
+  /// are fetched: fields a view skips are never read. Pages stay loaded
+  /// while the source lives; free its readers first.
+  TPbSource = class
+  private
+    FBuf: TBytes; // the whole input, zero until loaded
+    FPage: Int64;
+    FLoaded: array of Boolean; // per page
+    FFetch: TPbFetch;
+    FFile: THandle;
+    FOwnsFile: Boolean;
+    procedure FetchFile(AOffset: Int64; var Buf: array of Byte);
+  public
+    /// A source of ALen bytes read in pages of APage bytes.
+    constructor Create(ALen, APage: Int64; AFetch: TPbFetch);
+    /// A source reading the file AFileName (pages of 4096 bytes).
+    constructor CreateFile(const AFileName: string);
+    destructor Destroy; override;
+    function Size: Int64;
+    /// Fetch the pages holding bytes AStart..AStart + N - 1 that are not
+    /// loaded yet; false (with the fetch's message in Why) when one fails.
+    function Load(AStart, N: Int64; out Why: string): Boolean;
+  end;
+
   /// Reads integers of any bit width (MSB-first) and byte-aligned values.
   TPbReader = class(TPbTrace)
   private
     FData: TBytes;
+    FSource: TPbSource; // nil for a buffer
     FLimit: Int64; // end of the readable data in bits (a window inside the data)
     FWindows: Integer; // windows open
     function Short(Bits: Int64; const What: string): EPbError;
     procedure Need(Bits: Int64);
+    procedure Load(AStart, N: Int64);
+    function Find(AStart, AStop: Int64; const Term: array of Byte): Int64;
   public
     constructor Create(const AData: TBytes);
+    /// A reader that fetches its input from ASource as it goes (the source
+    /// must outlive it).
+    constructor CreateFromSource(ASource: TPbSource);
     function RemainingBits: Int64;
     /// Whole bytes left before the end of the window or input (`remaining`).
     function RemainingBytes: Int64;
@@ -111,7 +146,8 @@ type
     /// rest of the input when Optional, otherwise an error.
     function ReadUntil(const Term: array of Byte; Optional: Boolean): TBytes;
     /// Checksum Algo of the input between two bit positions (whole bytes);
-    /// the bytes between HoleFrom and HoleTo count as zero.
+    /// the bytes between HoleFrom and HoleTo count as zero. From a source
+    /// that cannot be read, the checksum of zeros (which then fails to match).
     function Checksum(Algo: Integer; AFrom, ATo, HoleFrom, HoleTo: Int64): UInt64;
   end;
 
@@ -363,6 +399,101 @@ begin
   Result := EPbError.CreatePb(AKind, AReason, Path, FPos, ANeededBits);
 end;
 
+{ TPbSource }
+
+constructor TPbSource.Create(ALen, APage: Int64; AFetch: TPbFetch);
+begin
+  inherited Create;
+  if APage < 1 then
+    APage := 1;
+  SetLength(FBuf, ALen);
+  if ALen > 0 then
+    FillChar(FBuf[0], ALen, 0);
+  FPage := APage;
+  SetLength(FLoaded, (ALen + APage - 1) div APage);
+  if Length(FLoaded) > 0 then
+    FillChar(FLoaded[0], Length(FLoaded) * SizeOf(Boolean), 0);
+  FFetch := AFetch;
+end;
+
+constructor TPbSource.CreateFile(const AFileName: string);
+var
+  H: THandle;
+  Len: Int64;
+begin
+  H := FileOpen(AFileName, fmOpenRead or fmShareDenyWrite);
+  if H = THandle(-1) then
+    raise Exception.Create('cannot open ' + AFileName);
+  Len := FileSeek(H, Int64(0), 2);
+  if Len < 0 then
+  begin
+    FileClose(H);
+    raise Exception.Create('cannot seek in ' + AFileName);
+  end;
+  Create(Len, 4096, FetchFile);
+  FFile := H;
+  FOwnsFile := True;
+end;
+
+destructor TPbSource.Destroy;
+begin
+  if FOwnsFile then
+    FileClose(FFile);
+  inherited Destroy;
+end;
+
+procedure TPbSource.FetchFile(AOffset: Int64; var Buf: array of Byte);
+begin
+  if FileSeek(FFile, AOffset, 0) <> AOffset then
+    raise Exception.Create('cannot seek to ' + IntToStr(AOffset));
+  if (Length(Buf) > 0) and (FileRead(FFile, Buf[0], Length(Buf)) <> Length(Buf)) then
+    raise Exception.Create('short read at ' + IntToStr(AOffset));
+end;
+
+function TPbSource.Size: Int64;
+begin
+  Result := Length(FBuf);
+end;
+
+function TPbSource.Load(AStart, N: Int64; out Why: string): Boolean;
+var
+  P, From, Len: Int64;
+  Tmp: TBytes;
+  Failed: Boolean;
+begin
+  Why := '';
+  Result := True;
+  if N <= 0 then
+    Exit;
+  for P := AStart div FPage to (AStart + N - 1) div FPage do
+  begin
+    if FLoaded[P] then
+      Continue;
+    From := P * FPage;
+    Len := Length(FBuf) - From;
+    if Len > FPage then
+      Len := FPage;
+    SetLength(Tmp, Len);
+    Failed := False;
+    try
+      FFetch(From, Tmp);
+    except
+      on E: Exception do
+      begin
+        Why := E.Message;
+        Failed := True;
+      end;
+    end;
+    if Failed then
+    begin
+      Result := False;
+      Exit;
+    end;
+    Move(Tmp[0], FBuf[From], Len);
+    FLoaded[P] := True;
+  end;
+end;
+
 { TPbReader }
 
 constructor TPbReader.Create(const AData: TBytes);
@@ -370,6 +501,67 @@ begin
   inherited Create;
   FData := AData;
   FLimit := Int64(Length(AData)) * 8;
+end;
+
+constructor TPbReader.CreateFromSource(ASource: TPbSource);
+begin
+  inherited Create;
+  // The same array: pages the source loads appear in FData.
+  FData := ASource.FBuf;
+  FSource := ASource;
+  FLimit := Int64(Length(FData)) * 8;
+end;
+
+// Make input bytes AStart..AStart + N - 1 (which exist) readable.
+procedure TPbReader.Load(AStart, N: Int64);
+var
+  Why: string;
+begin
+  if (FSource <> nil) and not FSource.Load(AStart, N, Why) then
+    raise Error(pekInvalid, 'cannot read the input: ' + Why);
+end;
+
+// Where Term first starts in input bytes AStart..AStop - 1, or -1.
+function TPbReader.Find(AStart, AStop: Int64; const Term: array of Byte): Int64;
+var
+  From, ATo, I: Int64;
+  K: Integer;
+  Hit: Boolean;
+begin
+  Result := -1;
+  From := AStart;
+  while From < AStop do
+  begin
+    ATo := AStop;
+    if FSource <> nil then
+    begin
+      // Page by page, so a long input is only read up to the terminator.
+      ATo := (From div FSource.FPage + 1) * FSource.FPage + Length(Term) - 1;
+      if ATo > AStop then
+        ATo := AStop;
+      Load(From, ATo - From);
+    end;
+    I := From;
+    while I + Length(Term) <= ATo do
+    begin
+      Hit := True;
+      for K := 0 to High(Term) do
+        if FData[I + K] <> Term[K] then
+        begin
+          Hit := False;
+          Break;
+        end;
+      if Hit then
+      begin
+        Result := I;
+        Exit;
+      end;
+      Inc(I);
+    end;
+    if ATo = AStop then
+      Break;
+    From := ATo + 1 - Length(Term);
+  end;
 end;
 
 function TPbReader.RemainingBits: Int64;
@@ -443,6 +635,7 @@ var
   Left, Off, Take, B: Integer;
 begin
   Need(Width);
+  Load(FPos shr 3, (FPos + Width + 7) shr 3 - FPos shr 3);
   Result := 0;
   Left := Width;
   while Left > 0 do
@@ -465,6 +658,7 @@ var
 begin
   Need(Int64(NBytes) * 8);
   Start := FPos shr 3;
+  Load(Start, NBytes);
   Result := 0;
   for I := 0 to NBytes - 1 do
     if Little then
@@ -477,6 +671,7 @@ end;
 function TPbReader.ReadBytes(N: Int64): TBytes;
 begin
   Need(N * 8);
+  Load(FPos shr 3, N);
   SetLength(Result, N);
   if N > 0 then
     Move(FData[FPos shr 3], Result[0], N);
@@ -494,11 +689,10 @@ var
   Start, I: Int64;
 begin
   Start := FPos shr 3;
-  I := Start;
-  while (I < FLimit shr 3) and (FData[I] <> 0) do
-    Inc(I);
-  if I >= FLimit shr 3 then
+  I := Find(Start, FLimit shr 3, [0]);
+  if I < 0 then
     raise Short(RemainingBits + 8, 'the NUL-terminated string');
+  Load(Start, I - Start);
   SetLength(Result, I - Start);
   if I > Start then
     Move(FData[Start], Result[0], I - Start);
@@ -719,33 +913,22 @@ end;
 function TPbReader.ReadUntil(const Term: array of Byte; Optional: Boolean): TBytes;
 var
   Start, Stop, I: Int64;
-  K: Integer;
-  Hit: Boolean;
 begin
   Start := FPos shr 3;
   Stop := FLimit shr 3;
-  I := Start;
-  while I + Length(Term) <= Stop do
+  I := Find(Start, Stop, Term);
+  if I >= 0 then
   begin
-    Hit := True;
-    for K := 0 to High(Term) do
-      if FData[I + K] <> Term[K] then
-      begin
-        Hit := False;
-        Break;
-      end;
-    if Hit then
-    begin
-      SetLength(Result, I - Start);
-      if I > Start then
-        Move(FData[Start], Result[0], I - Start);
-      FPos := (I + Length(Term)) * 8;
-      Exit;
-    end;
-    Inc(I);
+    Load(Start, I - Start);
+    SetLength(Result, I - Start);
+    if I > Start then
+      Move(FData[Start], Result[0], I - Start);
+    FPos := (I + Length(Term)) * 8;
+    Exit;
   end;
   if not Optional then
     raise Short(RemainingBits + 8, 'the terminated field');
+  Load(Start, Stop - Start);
   SetLength(Result, Stop - Start);
   if Stop > Start then
     Move(FData[Start], Result[0], Stop - Start);
@@ -753,8 +936,20 @@ begin
 end;
 
 function TPbReader.Checksum(Algo: Integer; AFrom, ATo, HoleFrom, HoleTo: Int64): UInt64;
+var
+  Base, N: Int64;
+  Why: string;
 begin
-  Result := PbChecksum(Algo, FData, AFrom div 8, ATo div 8, HoleFrom div 8, HoleTo div 8);
+  Base := AFrom div 8;
+  N := ATo div 8 - Base;
+  if (FSource = nil) or FSource.Load(Base, N, Why) then
+  begin
+    Result := PbChecksum(Algo, FData, Base, ATo div 8, HoleFrom div 8, HoleTo div 8);
+    Exit;
+  end;
+  if N < 0 then
+    N := 0;
+  Result := PbChecksum(Algo, PbZeros(N), 0, N, Max(HoleFrom div 8 - Base, Int64(0)), Max(HoleTo div 8 - Base, Int64(0)));
 end;
 
 { TPbWriter }

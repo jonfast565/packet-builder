@@ -43,7 +43,23 @@ fn error_json(e: &interp::Error, pre: &str) -> String {
 fn run_case(module: &Module, c: &Case) -> String {
     let data: Vec<u8> =
         (0..c.hex.len()).step_by(2).map(|i| u8::from_str_radix(&c.hex[i..i + 2], 16).unwrap()).collect();
-    let mut value = match interp::decode_args(module, &c.packet, &data, c.version, &c.args) {
+    let decoded = if c.source {
+        let src = interp::Source::new(data.len(), super::SOURCE_PAGE, |at, buf| {
+            let at = at as usize;
+            if let Some((from, to)) = c.unread
+                && at < to
+                && at + buf.len() > from
+            {
+                return Err(std::io::Error::other("fetched an unread byte"));
+            }
+            buf.copy_from_slice(&data[at..at + buf.len()]);
+            Ok(())
+        });
+        interp::decode_from(module, &c.packet, &mut interp::Reader::from_source(&src))
+    } else {
+        interp::decode_args(module, &c.packet, &data, c.version, &c.args)
+    };
+    let mut value = match decoded {
         Ok(v) => v,
         Err(e) => return format!("{{\"ok\":false,{}}}", error_json(&e, "")),
     };

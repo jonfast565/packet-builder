@@ -119,6 +119,19 @@
           05 PB-SSTR      PIC X(4096).
           05 PB-FRC       BINARY-LONG SIGNED.
           05 PB-FLEN      BINARY-DOUBLE SIGNED.
+          05 PB-SRC       BINARY-LONG SIGNED.
+          05 PB-SPAGE     BINARY-DOUBLE SIGNED.
+          05 PB-SFETCH    PIC X(31).
+          05 PB-SF-AT     BINARY-DOUBLE SIGNED.
+          05 PB-SF-N      BINARY-DOUBLE SIGNED.
+          05 PB-SF-RC     BINARY-LONG SIGNED.
+          05 PB-SF-MSG    PIC X(200).
+          05 PB-SF-PATH   PIC X(1024).
+          05 PB-SF-H      PIC X(4).
+          05 PB-SF-OPEN   BINARY-LONG SIGNED.
+          05 PB-LD-AT     BINARY-DOUBLE SIGNED.
+          05 PB-LD-N      BINARY-DOUBLE SIGNED.
+          05 PB-SLOADED   PIC X(65537).
 *>@state}
 
 *> ---- errors and the trace ----------------------------------------------
@@ -137,7 +150,7 @@ PROCEDURE DIVISION.
             ON SIZE ERROR MOVE 0 TO PB-POW2(L-I)
         END-COMPUTE
     END-PERFORM
-    MOVE 0 TO PB-RC PB-DEPTH PB-VER PB-CVER PB-SETN
+    MOVE 0 TO PB-RC PB-DEPTH PB-VER PB-CVER PB-SETN PB-SRC PB-SF-OPEN
     GOBACK.
 END PROGRAM PB-INIT.
 
@@ -907,9 +920,196 @@ PROCEDURE DIVISION.
     GOBACK.
 END PROGRAM PB-DUP.
 
+*> ---- sources --------------------------------------------------------------
+*>
+*> A source is input read on demand (a file, a stream that can seek):
+*> PB-LEN bytes, fetched a page at a time into PB-IN by the program named
+*> in PB-SFETCH, so only the pages a decode touches are read (fields a view
+*> skips are never fetched). Set PB-LEN, PB-SFETCH and PB-A1 (the page
+*> size; 4096 when 0), CALL "PB-SOPEN", then decode as usual (PB-RINIT,
+*> then a -DEC program). PB-SFILE sets one up for a file. PB-SCLOSE goes
+*> back to reading the bytes in PB-IN.
+*>
+*> A fetch program fills PB-IN(PB-SF-AT + 1:PB-SF-N) with the input bytes
+*> at offset PB-SF-AT and changes nothing else in PB-STATE; to fail, it
+*> sets PB-SF-RC to non-zero and PB-SF-MSG to the reason. Pages stay loaded
+*> until the next PB-SOPEN, so pointers into PB-IN (PB-RP) stay valid.
+
+*> Read the input from a source (see above); PB-SF-RC is non-zero when
+*> PB-LEN is more than PB-IN holds.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-SOPEN.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+PROCEDURE DIVISION.
+    MOVE 0 TO PB-SF-RC
+    IF PB-LEN < 0 OR PB-LEN > 65537
+        MOVE 1 TO PB-SF-RC
+        MOVE "the input is longer than 65537 bytes" TO PB-SF-MSG
+        GOBACK
+    END-IF
+    IF PB-A1 > 0
+        MOVE PB-A1 TO PB-SPAGE
+    ELSE
+        MOVE 4096 TO PB-SPAGE
+    END-IF
+    IF PB-LEN > 0
+        MOVE LOW-VALUES TO PB-IN(1:PB-LEN)
+    END-IF
+    MOVE ALL "0" TO PB-SLOADED
+    MOVE 1 TO PB-SRC
+    GOBACK.
+END PROGRAM PB-SOPEN.
+
+*> A source reading the file named in PB-SF-PATH, in pages of 4096 bytes
+*> (fetched by PB-FFETCH); PB-SF-RC is non-zero when it cannot be read.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-SFILE.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-ACC PIC X COMP-X VALUE 1.
+01 L-DENY PIC X COMP-X VALUE 3.
+01 L-DEV PIC X COMP-X VALUE 0.
+01 L-OFF PIC X(8) COMP-X.
+01 L-CNT PIC X(4) COMP-X.
+01 L-FLG PIC X COMP-X.
+PROCEDURE DIVISION.
+    CALL "PB-SCLOSE"
+    MOVE 0 TO PB-SF-RC
+    CALL "CBL_OPEN_FILE" USING PB-SF-PATH L-ACC L-DENY L-DEV PB-SF-H
+    IF RETURN-CODE NOT = 0
+        MOVE 0 TO RETURN-CODE
+        MOVE 1 TO PB-SF-RC
+        MOVE "cannot open the file" TO PB-SF-MSG
+        GOBACK
+    END-IF
+    MOVE 1 TO PB-SF-OPEN
+    MOVE 0 TO L-OFF L-CNT
+    MOVE 128 TO L-FLG
+    CALL "CBL_READ_FILE" USING PB-SF-H L-OFF L-CNT L-FLG PB-IN
+    IF RETURN-CODE NOT = 0
+        MOVE 0 TO RETURN-CODE
+        MOVE 1 TO PB-SF-RC
+        MOVE "cannot find the size of the file" TO PB-SF-MSG
+        GOBACK
+    END-IF
+    MOVE L-OFF TO PB-LEN
+    MOVE "PB-FFETCH" TO PB-SFETCH
+    MOVE 4096 TO PB-A1
+    CALL "PB-SOPEN"
+    GOBACK.
+END PROGRAM PB-SFILE.
+
+*> The fetch program of PB-SFILE: reads the file it opened.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-FFETCH.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-OFF PIC X(8) COMP-X.
+01 L-CNT PIC X(4) COMP-X.
+01 L-FLG PIC X COMP-X VALUE 0.
+PROCEDURE DIVISION.
+    MOVE PB-SF-AT TO L-OFF
+    MOVE PB-SF-N TO L-CNT
+    CALL "CBL_READ_FILE" USING PB-SF-H L-OFF L-CNT L-FLG PB-IN(PB-SF-AT + 1:PB-SF-N)
+    IF RETURN-CODE NOT = 0
+        MOVE 0 TO RETURN-CODE
+        MOVE 1 TO PB-SF-RC
+        MOVE "the file cannot be read" TO PB-SF-MSG
+    END-IF
+    GOBACK.
+END PROGRAM PB-FFETCH.
+
+*> Stop reading from a source (closing PB-SFILE's file): the reader reads
+*> the bytes in PB-IN again.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-SCLOSE.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+PROCEDURE DIVISION.
+    IF PB-SF-OPEN = 1
+        CALL "CBL_CLOSE_FILE" USING PB-SF-H
+        MOVE 0 TO RETURN-CODE
+    END-IF
+    MOVE 0 TO PB-SRC PB-SF-OPEN
+    GOBACK.
+END PROGRAM PB-SCLOSE.
+
+*> Fetch the pages holding input bytes PB-LD-AT .. PB-LD-AT + PB-LD-N - 1
+*> that are not loaded yet, one page per fetch; PB-SF-RC is non-zero (and
+*> PB-SF-MSG says why) when a fetch fails.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-SLOAD.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-P BINARY-DOUBLE SIGNED.
+01 L-FIRST BINARY-DOUBLE SIGNED.
+01 L-LAST BINARY-DOUBLE SIGNED.
+01 L-END BINARY-DOUBLE SIGNED.
+PROCEDURE DIVISION.
+    MOVE 0 TO PB-SF-RC
+    COMPUTE L-END = PB-LD-AT + PB-LD-N
+    IF L-END > PB-LEN
+        MOVE PB-LEN TO L-END
+    END-IF
+    IF PB-SRC NOT = 1 OR PB-LD-AT < 0 OR L-END <= PB-LD-AT
+        GOBACK
+    END-IF
+    DIVIDE PB-LD-AT BY PB-SPAGE GIVING L-FIRST
+    COMPUTE L-END = L-END - 1
+    DIVIDE L-END BY PB-SPAGE GIVING L-LAST
+    PERFORM VARYING L-P FROM L-FIRST BY 1 UNTIL L-P > L-LAST
+        IF PB-SLOADED(L-P + 1:1) NOT = "1"
+            COMPUTE PB-SF-AT = L-P * PB-SPAGE
+            COMPUTE PB-SF-N = PB-LEN - PB-SF-AT
+            IF PB-SF-N > PB-SPAGE
+                MOVE PB-SPAGE TO PB-SF-N
+            END-IF
+            MOVE SPACES TO PB-SF-MSG
+            CALL PB-SFETCH
+                ON EXCEPTION
+                    MOVE 1 TO PB-SF-RC
+                    MOVE "no fetch program" TO PB-SF-MSG
+            END-CALL
+            IF PB-SF-RC NOT = 0
+                GOBACK
+            END-IF
+            MOVE "1" TO PB-SLOADED(L-P + 1:1)
+        END-IF
+    END-PERFORM
+    GOBACK.
+END PROGRAM PB-SLOAD.
+
+*> PB-SLOAD, failing (invalid input) when a fetch fails.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. PB-LOAD.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+*>@STATE
+01 L-P BINARY-LONG SIGNED.
+PROCEDURE DIVISION.
+    CALL "PB-SLOAD"
+    IF PB-SF-RC NOT = 0
+        MOVE SPACES TO PB-MSG
+        MOVE 1 TO L-P
+        STRING "cannot read the input: " FUNCTION TRIM(PB-SF-MSG) DELIMITED BY SIZE
+            INTO PB-MSG WITH POINTER L-P
+        END-STRING
+        MOVE 2 TO PB-A1
+        MOVE 0 TO PB-A2
+        CALL "PB-FAIL"
+    END-IF
+    GOBACK.
+END PROGRAM PB-LOAD.
+
 *> ---- reader ---------------------------------------------------------------
 
-*> Start reading the PB-LEN bytes in PB-IN.
+*> Start reading the PB-LEN bytes in PB-IN (or the source PB-SOPEN set up).
 IDENTIFICATION DIVISION.
 PROGRAM-ID. PB-RINIT.
 DATA DIVISION.
@@ -992,6 +1192,16 @@ PROCEDURE DIVISION.
     IF PB-RC NOT = 0
         GOBACK
     END-IF
+    IF PB-SRC = 1
+        DIVIDE PB-POS BY 8 GIVING PB-LD-AT
+        COMPUTE L-BI = PB-POS + L-LEFT + 7
+        DIVIDE L-BI BY 8 GIVING PB-LD-N
+        SUBTRACT PB-LD-AT FROM PB-LD-N
+        CALL "PB-LOAD"
+        IF PB-RC NOT = 0
+            GOBACK
+        END-IF
+    END-IF
     MOVE 0 TO L-U
     PERFORM UNTIL L-LEFT <= 0
         DIVIDE PB-POS BY 8 GIVING L-BI REMAINDER L-OFF
@@ -1048,6 +1258,14 @@ PROCEDURE DIVISION.
         GOBACK
     END-IF
     DIVIDE PB-POS BY 8 GIVING L-ST
+    IF PB-SRC = 1
+        MOVE L-ST TO PB-LD-AT
+        MOVE L-N TO PB-LD-N
+        CALL "PB-LOAD"
+        IF PB-RC NOT = 0
+            GOBACK
+        END-IF
+    END-IF
     MOVE 0 TO L-U
     PERFORM VARYING L-I FROM 0 BY 1 UNTIL L-I >= L-N
         IF PB-A2 = 1
@@ -1161,6 +1379,14 @@ PROCEDURE DIVISION.
         GOBACK
     END-IF
     DIVIDE PB-POS BY 8 GIVING L-K
+    IF PB-SRC = 1
+        MOVE L-K TO PB-LD-AT
+        MOVE L-N TO PB-LD-N
+        CALL "PB-LOAD"
+        IF PB-RC NOT = 0
+            GOBACK
+        END-IF
+    END-IF
     ADD 1 TO L-K
     SET PB-RP TO ADDRESS OF PB-INB(L-K)
     MOVE L-N TO PB-RN
@@ -1170,7 +1396,8 @@ END PROGRAM PB-RREF.
 
 *> PB-RP / PB-RN := the bytes up to the terminator PB-TERM (PB-TLEN
 *> bytes), which is consumed; when PB-A2 = 1 the terminator may be
-*> missing and the bytes run to the end.
+*> missing and the bytes run to the end. A source is scanned a page at a
+*> time, so it is only read up to the terminator.
 IDENTIFICATION DIVISION.
 PROGRAM-ID. PB-RUNTIL.
 DATA DIVISION.
@@ -1179,18 +1406,41 @@ WORKING-STORAGE SECTION.
 01 L-ST BINARY-DOUBLE SIGNED.
 01 L-STOP BINARY-DOUBLE SIGNED.
 01 L-I BINARY-DOUBLE SIGNED.
+01 L-FROM BINARY-DOUBLE SIGNED.
+01 L-TO BINARY-DOUBLE SIGNED.
 PROCEDURE DIVISION.
     DIVIDE PB-POS BY 8 GIVING L-ST
     DIVIDE PB-LIMIT BY 8 GIVING L-STOP
-    MOVE L-ST TO L-I
-    PERFORM UNTIL L-I + PB-TLEN > L-STOP
-        IF PB-IN(L-I + 1:PB-TLEN) = PB-TERM(1:PB-TLEN)
-            SET PB-RP TO ADDRESS OF PB-INB(L-ST + 1)
-            COMPUTE PB-RN = L-I - L-ST
-            COMPUTE PB-POS = (L-I + PB-TLEN) * 8
-            GOBACK
+    MOVE L-ST TO L-FROM
+    MOVE L-STOP TO L-TO
+    PERFORM UNTIL L-FROM >= L-STOP
+        IF PB-SRC = 1
+            DIVIDE L-FROM BY PB-SPAGE GIVING L-TO
+            COMPUTE L-TO = (L-TO + 1) * PB-SPAGE + PB-TLEN - 1
+            IF L-TO > L-STOP
+                MOVE L-STOP TO L-TO
+            END-IF
+            MOVE L-FROM TO PB-LD-AT
+            COMPUTE PB-LD-N = L-TO - L-FROM
+            CALL "PB-LOAD"
+            IF PB-RC NOT = 0
+                GOBACK
+            END-IF
         END-IF
-        ADD 1 TO L-I
+        MOVE L-FROM TO L-I
+        PERFORM UNTIL L-I + PB-TLEN > L-TO
+            IF PB-IN(L-I + 1:PB-TLEN) = PB-TERM(1:PB-TLEN)
+                SET PB-RP TO ADDRESS OF PB-INB(L-ST + 1)
+                COMPUTE PB-RN = L-I - L-ST
+                COMPUTE PB-POS = (L-I + PB-TLEN) * 8
+                GOBACK
+            END-IF
+            ADD 1 TO L-I
+        END-PERFORM
+        IF L-TO = L-STOP
+            EXIT PERFORM
+        END-IF
+        COMPUTE L-FROM = L-TO + 1 - PB-TLEN
     END-PERFORM
     IF PB-A2 NOT = 1
         COMPUTE PB-NB = PB-LIMIT - PB-POS + 8
@@ -1627,7 +1877,8 @@ END PROGRAM PB-RVARINT.
 
 *> PB-Z := the checksum PB-A1 of bytes PB-X / 8 .. PB-Y / 8 of the input
 *> (PB-A6 = 0) or of the writer's output (1), with bytes PB-A4 / 8 ..
-*> PB-A5 / 8 counted as zeros.
+*> PB-A5 / 8 counted as zeros. From a source that cannot be read, the
+*> checksum of zeros (which then fails to match).
 IDENTIFICATION DIVISION.
 PROGRAM-ID. PB-CKSUM.
 DATA DIVISION.
@@ -1653,12 +1904,22 @@ WORKING-STORAGE SECTION.
 01 L-XOROUT BINARY-DOUBLE SIGNED.
 01 L-MASK BINARY-DOUBLE SIGNED.
 01 L-TOP BINARY-DOUBLE SIGNED.
+01 L-ZERO BINARY-LONG SIGNED.
 PROCEDURE DIVISION.
     MOVE PB-A1 TO L-ALGO
     DIVIDE PB-X BY 8 GIVING L-FROM
     DIVIDE PB-Y BY 8 GIVING L-TO
     DIVIDE PB-A4 BY 8 GIVING L-HF
     DIVIDE PB-A5 BY 8 GIVING L-HT
+    MOVE 0 TO L-ZERO
+    IF PB-A6 = 0 AND PB-SRC = 1
+        MOVE L-FROM TO PB-LD-AT
+        COMPUTE PB-LD-N = L-TO - L-FROM
+        CALL "PB-SLOAD"
+        IF PB-SF-RC NOT = 0
+            MOVE 1 TO L-ZERO
+        END-IF
+    END-IF
     IF L-ALGO < 8
         EVALUATE L-ALGO
             WHEN 0
@@ -1783,7 +2044,7 @@ PROCEDURE DIVISION.
     END-EVALUATE
     GOBACK.
 GET-BYTE.
-    IF L-I >= L-HF AND L-I < L-HT
+    IF (L-I >= L-HF AND L-I < L-HT) OR L-ZERO = 1
         MOVE 0 TO L-X
     ELSE
         IF PB-A6 = 1

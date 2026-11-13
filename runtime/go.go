@@ -189,18 +189,136 @@ func (t *pbTrace) path() string {
 	return b.String()
 }
 
+// PbSource is input read on demand (a file, a stream that can seek): Len
+// bytes, loaded a page at a time by a fetch function that fills buf with
+// the bytes at offset. Only the pages a decode touches are fetched: fields
+// a view skips are never read. Pages stay loaded while the source lives, so
+// zero-copy slices remain valid.
+type PbSource struct {
+	buf    []byte // zero until its page is fetched
+	page   int
+	loaded []bool
+	fetch  func(offset int64, buf []byte) error
+}
+
+// NewPbSource is a source of length bytes read in pages of page bytes.
+func NewPbSource(length, page int, fetch func(offset int64, buf []byte) error) *PbSource {
+	if page < 1 {
+		page = 1
+	}
+	return &PbSource{buf: make([]byte, length), page: page, loaded: make([]bool, (length+page-1)/page), fetch: fetch}
+}
+
+// NewPbFileSource is a source reading f (an *os.File, or anything that can
+// seek and read at an offset), in pages of 4096 bytes.
+func NewPbFileSource(f interface {
+	ReadAt(p []byte, off int64) (int, error)
+	Seek(offset int64, whence int) (int64, error)
+}) (*PbSource, error) {
+	length, err := f.Seek(0, 2)
+	if err != nil {
+		return nil, err
+	}
+	return NewPbSource(int(length), 4096, func(offset int64, buf []byte) error {
+		_, err := f.ReadAt(buf, offset)
+		return err
+	}), nil
+}
+
+// Len is the size of the input in bytes.
+func (s *PbSource) Len() int { return len(s.buf) }
+
+// load fetches the pages holding bytes start..start+n (inside the input),
+// one page per call of fetch.
+func (s *PbSource) load(start, n int) error {
+	if n <= 0 {
+		return nil
+	}
+	for p := start / s.page; p <= (start+n-1)/s.page; p++ {
+		if s.loaded[p] {
+			continue
+		}
+		from := p * s.page
+		to := from + s.page
+		if to > len(s.buf) {
+			to = len(s.buf)
+		}
+		tmp := make([]byte, to-from)
+		if err := s.fetch(int64(from), tmp); err != nil {
+			return err
+		}
+		copy(s.buf[from:to], tmp)
+		s.loaded[p] = true
+	}
+	return nil
+}
+
 // PbReader reads integers of any bit width (MSB-first) and byte-aligned
 // values. The first error is sticky: later reads return zero values.
 type PbReader struct {
 	data    []byte
-	pos     int // in bits
-	limit   int // end of the readable data in bits (a window inside data)
-	windows int // windows open
+	src     *PbSource // where data comes from, or nil for a buffer
+	pos     int       // in bits
+	limit   int       // end of the readable data in bits (a window inside data)
+	windows int       // windows open
 	err     error
 	tr      pbTrace
 }
 
 func NewPbReader(data []byte) *PbReader { return &PbReader{data: data, limit: len(data) * 8} }
+
+// NewPbReaderFromSource is a reader that fetches its input from src as it
+// goes.
+func NewPbReaderFromSource(src *PbSource) *PbReader {
+	return &PbReader{data: src.buf, src: src, limit: len(src.buf) * 8}
+}
+
+// load makes input bytes start..start+n (which need has checked exist)
+// readable in data, fetching them from a source; false after an error.
+func (r *PbReader) load(start, n int) bool {
+	if r.src == nil {
+		return true
+	}
+	if err := r.src.load(start, n); err != nil {
+		r.Fail(PbInvalid, "cannot read the input: %v", err)
+		return false
+	}
+	return true
+}
+
+// find is where term first starts in input bytes start..end, or -1; ok is
+// false after an error. A source is read page by page, only up to the
+// terminator.
+func (r *PbReader) find(start, end int, term []byte) (at int, ok bool) {
+	if r.src == nil {
+		return pbIndex(r.data[start:end], term, start), true
+	}
+	page := r.src.page
+	for from := start; from < end; {
+		to := (from/page+1)*page + len(term) - 1
+		if to > end {
+			to = end
+		}
+		if !r.load(from, to-from) {
+			return -1, false
+		}
+		if at := pbIndex(r.data[from:to], term, from); at >= 0 || to == end {
+			return at, true
+		}
+		from = to + 1 - len(term)
+	}
+	return -1, true
+}
+
+// pbIndex is base plus where term first starts in data, or -1.
+func pbIndex(data, term []byte, base int) int {
+	for i := 0; i+len(term) <= len(data); i++ {
+		if string(data[i:i+len(term)]) == string(term) {
+			return base + i
+		}
+	}
+	return -1
+}
 
 // PbJump is where a reader was before Jump.
 type PbJump struct{ pos, limit, windows int }
@@ -310,7 +428,7 @@ func (r *PbReader) PopLimit(saved int, exact bool) {
 }
 
 func (r *PbReader) ReadBits(width int) uint64 {
-	if !r.need(width) {
+	if !r.need(width) || !r.load(r.pos>>3, (r.pos+width+7)>>3-r.pos>>3) {
 		return 0
 	}
 	var v uint64
@@ -329,7 +447,7 @@ func (r *PbReader) ReadBits(width int) uint64 {
 }
 
 func (r *PbReader) ReadUint(nbytes int, little bool) uint64 {
-	if !r.need(nbytes * 8) {
+	if !r.need(nbytes*8) || !r.load(r.pos>>3, nbytes) {
 		return 0
 	}
 	start := r.pos >> 3
@@ -348,7 +466,7 @@ func (r *PbReader) ReadUint(nbytes int, little bool) uint64 {
 }
 
 func (r *PbReader) ReadBytes(n int) []byte {
-	if !r.need(n * 8) {
+	if !r.need(n*8) || !r.load(r.pos>>3, n) {
 		return []byte{}
 	}
 	start := r.pos >> 3
@@ -361,7 +479,7 @@ func (r *PbReader) ReadBytes(n int) []byte {
 // ReadBytesRef returns the next n bytes as a slice of the input (zero-copy;
 // its capacity ends with it, so appending copies).
 func (r *PbReader) ReadBytesRef(n int) []byte {
-	if !r.need(n * 8) {
+	if !r.need(n*8) || !r.load(r.pos>>3, n) {
 		return []byte{}
 	}
 	start := r.pos >> 3
@@ -386,6 +504,18 @@ func (r *PbReader) ReadCString() []byte {
 		return nil
 	}
 	start := r.pos >> 3
+	if r.src != nil {
+		i, ok := r.find(start, r.limit>>3, []byte{0})
+		if !ok {
+			return nil
+		}
+		if i >= 0 {
+			r.pos = (i + 1) * 8
+			return append([]byte{}, r.data[start:i]...)
+		}
+		r.short(r.RemainingBits()+8, "the NUL-terminated string")
+		return nil
+	}
 	for i := start; i < r.limit>>3; i++ {
 		if r.data[i] == 0 {
 			r.pos = (i + 1) * 8
@@ -532,14 +662,19 @@ func (r *PbReader) ReadUntilRef(term []byte, optional bool) []byte {
 		return []byte{}
 	}
 	start, end := r.pos>>3, r.limit>>3
-	for i := start; i+len(term) <= end; i++ {
-		if string(r.data[i:i+len(term)]) == string(term) {
-			r.pos = (i + len(term)) * 8
-			return r.data[start:i:i]
-		}
+	i, ok := r.find(start, end, term)
+	if !ok {
+		return []byte{}
+	}
+	if i >= 0 {
+		r.pos = (i + len(term)) * 8
+		return r.data[start:i:i]
 	}
 	if !optional {
 		r.short(r.RemainingBits()+8, "the terminated field")
+		return []byte{}
+	}
+	if !r.load(start, end-start) {
 		return []byte{}
 	}
 	r.pos = r.limit
@@ -568,7 +703,15 @@ func (r *PbReader) Count(n int64, elemBits int) int {
 
 // Checksum computes algorithm algo over the input between two bit positions
 // (whole bytes); the bytes between holeFrom and holeTo count as zero.
+// From a source that cannot be read, the checksum of zeros (which then
+// fails to match).
 func (r *PbReader) Checksum(algo, from, to, holeFrom, holeTo int) uint64 {
+	if r.src != nil {
+		if err := r.src.load(from/8, to/8-from/8); err != nil {
+			// The whole range as a hole: zeros.
+			return pbChecksum(algo, r.data, from/8, to/8, from/8, to/8)
+		}
+	}
 	return pbChecksum(algo, r.data, from/8, to/8, holeFrom/8, holeTo/8)
 }
 

@@ -65,14 +65,32 @@ impl Target for CSharpTarget {
             s.push_str("        {\n");
             let _ = writeln!(s, "            {} p;", p.name);
             let ver = c.version.map(|v| format!(", version: {}", v)).unwrap_or_default();
-            let _ = writeln!(
-                s,
-                "            try {{ p = {}.Decode(Convert.FromHexString({}){}{}); }}",
-                p.name,
-                quote(&c.hex),
-                c.more_args(),
-                ver
-            );
+            if c.source {
+                let check = match c.unread {
+                    Some((from, to)) => format!(
+                        "if (Math.Max(at, {}L) < Math.Min(at + buf.Length, {}L)) throw new System.IO.IOException(\"fetched an unread byte\"); ",
+                        from, to
+                    ),
+                    None => String::new(),
+                };
+                let _ = writeln!(
+                    s,
+                    "            try {{ var sd = Convert.FromHexString({}); var src = new PbSource(sd.Length, {}, (at, buf) => {{ {}sd.AsSpan((int)at, buf.Length).CopyTo(buf); }}); p = {}.DecodeFrom(new PbReader(src)); }}",
+                    quote(&c.hex),
+                    super::SOURCE_PAGE,
+                    check,
+                    p.name
+                );
+            } else {
+                let _ = writeln!(
+                    s,
+                    "            try {{ p = {}.Decode(Convert.FromHexString({}){}{}); }}",
+                    p.name,
+                    quote(&c.hex),
+                    c.more_args(),
+                    ver
+                );
+            }
             s.push_str("            catch (PbException e) { Console.WriteLine(\"{\\\"ok\\\":false\" + E(e, \"\") + \"}\"); goto done; }\n");
             for (name, v) in &c.set {
                 let _ = writeln!(

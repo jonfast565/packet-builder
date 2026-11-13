@@ -86,10 +86,38 @@
       Version : Integer_64 := 0;  --  protocol version; 0 until set
    end record;
 
-   --  Reads Len bytes (a copy of the input).
+   type Pb_Byte_Array_Access is access Pb_Byte_Array;
+   type Pb_Flags is array (Natural range <>) of Boolean;
+   type Pb_Flags_Access is access Pb_Flags;
+
+   --  Input read on demand (a file, a stream that can seek): Size bytes,
+   --  loaded a page at a time by Pb_Fetch. Only the pages a decode touches
+   --  are fetched: fields a view skips are never read. Derive a type that
+   --  overrides Pb_Fetch, call Pb_Open, then decode with Decode_From on a
+   --  Pb_Reader (0) set up by Pb_Init (Reader, Source). Pages stay loaded
+   --  while the source lives.
+   type Pb_Source is abstract new Ada.Finalization.Limited_Controlled with record
+      Size   : Natural := 0;
+      Page   : Positive := 4096;
+      Buf    : Pb_Byte_Array_Access;  --  the input (0-based), zeros until loaded
+      Loaded : Pb_Flags_Access;       --  one flag per page
+   end record;
+
+   --  Fill Buf with the input bytes at Offset (0-based). To fail, raise any
+   --  exception: the reader reports its message.
+   procedure Pb_Fetch (S : in out Pb_Source; Offset : Integer_64; Buf : out Pb_Byte_Array) is abstract;
+
+   --  Make S a source of Size bytes, read in pages of Page bytes.
+   procedure Pb_Open (S : in out Pb_Source'Class; Size : Natural; Page : Positive := 4096);
+
+   overriding procedure Finalize (S : in out Pb_Source);
+
+   --  Reads Len bytes (a copy of the input), or a source (with Len 0).
    type Pb_Reader (Len : Natural) is limited record
       T       : Pb_Trace;
       Data    : Pb_Byte_Array (1 .. Len);
+      Src     : access Pb_Source'Class;  --  null when reading Data
+      Size    : Integer_64 := 0;         --  input size in bytes
       Limit   : Integer_64 := 0;
       Windows : Natural := 0;
    end record;
@@ -118,6 +146,9 @@
 
    --  Start reading Data.
    procedure Pb_Init (R : in out Pb_Reader; Data : Pb_Byte_Array);
+
+   --  Start reading Src (R is a Pb_Reader (0)), which must outlive R.
+   procedure Pb_Init (R : in out Pb_Reader; Src : in out Pb_Source'Class);
 
    --  JSON spellings (used by To_Json).
    function Pb_Json_Hex (B : Pb_Byte_Array) return String;
@@ -935,18 +966,90 @@
       return True;
    end Pb_Valid_Utf8;
 
+   -- ---- sources ------------------------------------------------------------
+
+   procedure Pb_Free_Source is new Ada.Unchecked_Deallocation (Pb_Byte_Array, Pb_Byte_Array_Access);
+   procedure Pb_Free_Source is new Ada.Unchecked_Deallocation (Pb_Flags, Pb_Flags_Access);
+
+   procedure Pb_Open (S : in out Pb_Source'Class; Size : Natural; Page : Positive := 4096) is
+   begin
+      Pb_Free_Source (S.Buf);
+      Pb_Free_Source (S.Loaded);
+      S.Size := Size;
+      S.Page := Page;
+      S.Buf := new Pb_Byte_Array'(0 .. Size - 1 => 0);
+      S.Loaded := new Pb_Flags'(0 .. (Size + Page - 1) / Page - 1 => False);
+   end Pb_Open;
+
+   overriding procedure Finalize (S : in out Pb_Source) is
+   begin
+      Pb_Free_Source (S.Buf);
+      Pb_Free_Source (S.Loaded);
+   end Finalize;
+
+   --  Fetch the pages holding bytes Start .. Start + N - 1 (inside the
+   --  input) that are not loaded yet, one Pb_Fetch call per page;
+   --  propagates what Pb_Fetch raises.
+   procedure Pb_Load_Pages (S : in out Pb_Source'Class; Start, N : Integer_64) is
+      Last : constant Integer_64 := Integer_64'Min (Start + N, Integer_64 (S.Size)) - 1;
+   begin
+      if Start < 0 or else Last < Start then
+         return;
+      end if;
+      for P in Natural (Start / Integer_64 (S.Page)) .. Natural (Last / Integer_64 (S.Page)) loop
+         if not S.Loaded (P) then
+            declare
+               From : constant Natural := P * S.Page;
+               Tmp  : Pb_Byte_Array (0 .. Natural'Min (S.Page, S.Size - From) - 1) := (others => 0);
+            begin
+               S.Pb_Fetch (Integer_64 (From), Tmp);
+               S.Buf (From .. From + Tmp'Length - 1) := Tmp;
+               S.Loaded (P) := True;
+            end;
+         end if;
+      end loop;
+   end Pb_Load_Pages;
+
    -- ---- reader -------------------------------------------------------------
 
    procedure Pb_Init (R : in out Pb_Reader; Data : Pb_Byte_Array) is
    begin
       R.Data := Data;
+      R.Src := null;
+      R.Size := Integer_64 (R.Len);
       R.T := (Frames => <>, Depth => 0, Pos => 0, Version => 0);
       R.Limit := Integer_64 (R.Len) * 8;
       R.Windows := 0;
    end Pb_Init;
 
+   procedure Pb_Init (R : in out Pb_Reader; Src : in out Pb_Source'Class) is
+   begin
+      R.Src := Src'Unchecked_Access;
+      R.Size := Integer_64 (Src.Size);
+      R.T := (Frames => <>, Depth => 0, Pos => 0, Version => 0);
+      R.Limit := R.Size * 8;
+      R.Windows := 0;
+   end Pb_Init;
+
+   --  Input bytes Start .. Start + N - 1 (inside the input), loaded from the
+   --  source if R has one. A failing fetch is an invalid-input error.
+   procedure Pb_Load (R : not null access Pb_Reader; Start, N : Integer_64) is
+   begin
+      if R.Src /= null then
+         Pb_Load_Pages (R.Src.all, Start, N);
+      end if;
+   exception
+      when Pb_Error =>
+         Pb_Fail (R, Pb_Invalid, "cannot read the input: " & Pb_SU.To_String (Pb_Last.Reason));
+      when E : others =>
+         Pb_Fail (R, Pb_Invalid, "cannot read the input: " & Ada.Exceptions.Exception_Message (E));
+   end Pb_Load;
+
+   --  Byte I of the input (0 outside it); Pb_Load first for a source.
    function Pb_Byte (R : not null access Pb_Reader; I : Integer_64) return Unsigned_8 is
-     (if I >= 0 and then I < Integer_64 (R.Len) then R.Data (Natural (I) + 1) else 0);
+     (if I < 0 or else I >= R.Size then 0
+      elsif R.Src = null then R.Data (Natural (I) + 1)
+      else R.Src.Buf (Natural (I)));
 
    function Pb_Remaining_Bits (R : not null access Pb_Reader) return Integer_64 is (R.Limit - R.T.Pos);
    function Pb_Remaining_Bytes (R : not null access Pb_Reader) return Integer_64 is
@@ -977,7 +1080,7 @@
 
    function Pb_Jump (R : not null access Pb_Reader; From, Offset : Integer_64) return Pb_Jump_State is
       Saved : constant Pb_Jump_State := (Pos => R.T.Pos, Limit => R.Limit, Windows => R.Windows);
-      Size  : constant Integer_64 := Integer_64 (R.Len);
+      Size  : constant Integer_64 := R.Size;
    begin
       if Offset < 0 or else From < 0 or else From mod 8 /= 0 or else Offset > Size
         or else From > Size * 8 - Offset * 8
@@ -1032,6 +1135,7 @@
       B    : Unsigned_64;
    begin
       Pb_Need (R, Integer_64 (Width));
+      Pb_Load (R, R.T.Pos / 8, (R.T.Pos + Integer_64 (Width) + 7) / 8 - R.T.Pos / 8);
       while Left > 0 loop
          B := Unsigned_64 (Pb_Byte (R, R.T.Pos / 8));
          Off := Natural (R.T.Pos mod 8);
@@ -1048,6 +1152,7 @@
       Start : constant Integer_64 := R.T.Pos / 8;
    begin
       Pb_Need (R, Integer_64 (N) * 8);
+      Pb_Load (R, Start, Integer_64 (N));
       for I in 0 .. N - 1 loop
          if Little then
             Res := Shift_Left (Res, 8) or Unsigned_64 (Pb_Byte (R, Start + Integer_64 (N - 1 - I)));
@@ -1063,6 +1168,7 @@
    function Pb_Slice (R : not null access Pb_Reader; Start, Stop : Integer_64) return Pb_Byte_Array is
       A : Pb_Byte_Array (0 .. Natural (Integer_64'Max (Stop - Start, 0)) - 1);
    begin
+      Pb_Load (R, Start, A'Length);
       for I in A'Range loop
          A (I) := Pb_Byte (R, Start + Integer_64 (I));
       end loop;
@@ -1075,8 +1181,12 @@
       if N < 0 or else N > Pb_Remaining_Bits (R) / 8 then
          Pb_Short (R, (if N < 0 or else N > Integer_64'Last / 8 then Integer_64'Last else N * 8), "the field");
       end if;
-      R.T.Pos := R.T.Pos + N * 8;
-      return Pb_Slice (R, Start, Start + N);
+      declare
+         A : constant Pb_Byte_Array := Pb_Slice (R, Start, Start + N);
+      begin
+         R.T.Pos := R.T.Pos + N * 8;
+         return A;
+      end;
    end Pb_Read_Bytes;
 
    function Pb_Read_Mac (R : not null access Pb_Reader) return Pb_Mac is
@@ -1095,15 +1205,48 @@
       R.T.Pos := R.T.Pos + Bits;
    end Pb_Skip_Bits;
 
+   --  Where Term first starts in input bytes Start .. Stop - 1, or -1. A
+   --  source is scanned page by page, so it is only read up to Term.
+   function Pb_Find (R : not null access Pb_Reader; Start, Stop : Integer_64; Term : Pb_Byte_Array)
+      return Integer_64
+   is
+      Len  : constant Integer_64 := Integer_64 (Term'Length);
+      From : Integer_64 := Start;
+      To   : Integer_64 := Stop;
+      I    : Integer_64;
+      Hit  : Boolean;
+   begin
+      while From < Stop loop
+         if R.Src /= null then
+            To := Integer_64'Min ((From / Integer_64 (R.Src.Page) + 1) * Integer_64 (R.Src.Page) + Len - 1, Stop);
+            Pb_Load (R, From, To - From);
+         end if;
+         I := From;
+         while I + Len <= To loop
+            Hit := True;
+            for K in Term'Range loop
+               if Pb_Byte (R, I + Integer_64 (K - Term'First)) /= Term (K) then
+                  Hit := False;
+                  exit;
+               end if;
+            end loop;
+            if Hit then
+               return I;
+            end if;
+            I := I + 1;
+         end loop;
+         exit when To = Stop;
+         From := To + 1 - Len;
+      end loop;
+      return -1;
+   end Pb_Find;
+
    function Pb_Read_CString (R : not null access Pb_Reader) return Pb_Byte_Array is
       Start : constant Integer_64 := R.T.Pos / 8;
       Stop  : constant Integer_64 := R.Limit / 8;
-      I     : Integer_64 := Start;
+      I     : constant Integer_64 := Pb_Find (R, Start, Stop, (0 => 0));
    begin
-      while I < Stop and then Pb_Byte (R, I) /= 0 loop
-         I := I + 1;
-      end loop;
-      if I >= Stop then
+      if I < 0 then
          Pb_Short (R, Pb_Remaining_Bits (R) + 8, "the NUL-terminated string");
       end if;
       R.T.Pos := (I + 1) * 8;
@@ -1115,28 +1258,25 @@
    is
       Start : constant Integer_64 := R.T.Pos / 8;
       Stop  : constant Integer_64 := R.Limit / 8;
-      I     : Integer_64 := Start;
-      Hit   : Boolean;
+      I     : constant Integer_64 := Pb_Find (R, Start, Stop, Term);
    begin
-      while I + Integer_64 (Term'Length) <= Stop loop
-         Hit := True;
-         for K in Term'Range loop
-            if Pb_Byte (R, I + Integer_64 (K - Term'First)) /= Term (K) then
-               Hit := False;
-               exit;
-            end if;
-         end loop;
-         if Hit then
+      if I >= 0 then
+         declare
+            A : constant Pb_Byte_Array := Pb_Slice (R, Start, I);
+         begin
             R.T.Pos := (I + Integer_64 (Term'Length)) * 8;
-            return Pb_Slice (R, Start, I);
-         end if;
-         I := I + 1;
-      end loop;
+            return A;
+         end;
+      end if;
       if not Optional then
          Pb_Short (R, Pb_Remaining_Bits (R) + 8, "the terminated field");
       end if;
-      R.T.Pos := R.Limit;
-      return Pb_Slice (R, Start, Stop);
+      declare
+         A : constant Pb_Byte_Array := Pb_Slice (R, Start, Stop);
+      begin
+         R.T.Pos := R.Limit;
+         return A;
+      end;
    end Pb_Read_Until;
 
    --  A length N of ElemBits-bit elements, checked against what is left.
@@ -1383,10 +1523,31 @@
       return A;
    end Pb_Checksum_Of;
 
+   --  From a source that cannot be read, the checksum of zeros (which then
+   --  fails to match).
    function Pb_Checksum
      (R : not null access Pb_Reader; Algo : Natural; From, To, Hole_From, Hole_To : Integer_64)
-      return Unsigned_64 is
-     (Pb_Checksum_Of (Algo, R.Data, From / 8, To / 8, Hole_From / 8, Hole_To / 8));
+      return Unsigned_64
+   is
+      Base : constant Integer_64 := From / 8;
+      N    : constant Integer_64 := Integer_64'Max (To / 8 - Base, 0);
+   begin
+      if R.Src = null then
+         return Pb_Checksum_Of (Algo, R.Data, From / 8, To / 8, Hole_From / 8, Hole_To / 8);
+      end if;
+      begin
+         Pb_Load_Pages (R.Src.all, Base, N);
+      exception
+         when others =>
+            declare
+               Zeros : constant Pb_Byte_Array (0 .. Natural (N) - 1) := (others => 0);
+            begin
+               return Pb_Checksum_Of (Algo, Zeros, 0, N, Integer_64'Max (Hole_From / 8 - Base, 0),
+                 Integer_64'Max (Hole_To / 8 - Base, 0));
+            end;
+      end;
+      return Pb_Checksum_Of (Algo, R.Src.Buf.all, From / 8, To / 8, Hole_From / 8, Hole_To / 8);
+   end Pb_Checksum;
 
    -- ---- writer -------------------------------------------------------------
 

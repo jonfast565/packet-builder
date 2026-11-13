@@ -29,8 +29,33 @@ impl Target for PythonTarget {
             let _ = writeln!(s, "def case_{}():", i);
             s.push_str("    try:\n");
             let ver = c.version.map(|v| format!(", version={}", v)).unwrap_or_default();
-            let _ =
-                writeln!(s, "        p = {}.decode(bytes.fromhex({}){}{})", p.name, quote(&c.hex), c.more_args(), ver);
+            if c.source {
+                let _ = writeln!(s, "        d = bytes.fromhex({})", quote(&c.hex));
+                s.push_str("        def fetch(at, buf):\n");
+                if let Some((from, to)) = c.unread {
+                    let _ = writeln!(
+                        s,
+                        "            if max(at, {}) < min(at + len(buf), {}):\n                raise OSError('fetched an unread byte')",
+                        from, to
+                    );
+                }
+                s.push_str("            buf[:] = d[at:at + len(buf)]\n");
+                let _ = writeln!(
+                    s,
+                    "        p = {}.decode_from(PbReader.from_source(PbSource(len(d), {}, fetch)))",
+                    p.name,
+                    super::SOURCE_PAGE
+                );
+            } else {
+                let _ = writeln!(
+                    s,
+                    "        p = {}.decode(bytes.fromhex({}){}{})",
+                    p.name,
+                    quote(&c.hex),
+                    c.more_args(),
+                    ver
+                );
+            }
             s.push_str(
                 "    except PbError as e:\n        print('{\"ok\":false' + pb_e(e, '') + '}')\n        return\n",
             );

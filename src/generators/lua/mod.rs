@@ -32,7 +32,7 @@ impl Backend for LuaGenerator {
         out.line("");
         out.buf.push_str(&crate::generators::common::lua::runtime(RUNTIME, module.versions.is_some()));
         out.line("");
-        out.line("local M = { PbError = PbErr }");
+        out.line("local M = { PbError = PbErr, PbSource = PbSource, PbReader = Reader }");
         self.emit_constants(&mut out, module);
         for u in &module.unions {
             out.line("");

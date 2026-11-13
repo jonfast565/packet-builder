@@ -38,3 +38,13 @@ packet List be {
   pairs Pair[q],
   rest uint16[]
 }
+
+// Setter views (`<Packet>_<field>_set`): decode, change the field, encode.
+// A checksum over the packet makes the view the whole packet, so encoding
+// recomputes it.
+packet Summed be {
+  ttl uint8,
+  proto uint8,
+  sum uint16 = internet(self),
+  id uint16
+}

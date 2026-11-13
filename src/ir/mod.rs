@@ -21,6 +21,7 @@ pub mod frame;
 pub mod interp;
 pub mod layout;
 pub mod model;
+pub mod setters;
 mod subset;
 pub mod views;
 pub mod wire;

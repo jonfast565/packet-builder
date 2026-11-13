@@ -55,6 +55,20 @@ func pbStream<T>(_ f: () throws -> PbStatus<T>) -> String {
     }
 }
 
+struct PbUnread: Error, CustomStringConvertible {
+    var description: String { return "fetched an unread byte" }
+}
+
+/// A source over `d` whose fetch fails on bytes `u[0]..<u[1]` (when given).
+func pbSource(_ d: [UInt8], _ u: [Int]) -> PbSource {
+    return PbSource(count: d.count, page: @PAGE@) { at, buf in
+        if u.count == 2 && max(at, u[0]) < min(at + buf.count, u[1]) {
+            throw PbUnread()
+        }
+        buf.copyBytes(from: d[at..<at + buf.count])
+    }
+}
+
 func pbFrame(_ f: () throws -> Int?) -> String {
     do {
         if let n = try f() { return ",\"frame\":\(n)" }
@@ -66,10 +80,12 @@ func pbFrame(_ f: () throws -> Int?) -> String {
 
 "#,
         );
+        s = s.replace("@PAGE@", &super::SOURCE_PAGE.to_string());
 
         // Per packet: the distinct `set` lists of its cases, numbered from 1.
         let mut sets: BTreeMap<&str, Vec<String>> = BTreeMap::new();
         let mut table = String::new();
+        let mut sourced: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
         for c in cases {
             let p = packet(module, &c.packet);
             let lists = sets.entry(&p.name).or_default();
@@ -90,7 +106,16 @@ func pbFrame(_ f: () throws -> Int?) -> String {
             }
             let ver = c.version.map(|v| v.to_string()).unwrap_or_else(|| "-".into());
             let args = if c.args.is_empty() { "-".to_string() } else { c.arg_list().replace(' ', "") };
-            let _ = writeln!(table, "{} {} {} {} {}", p.name, index, ver, args, c.hex);
+            // "-": a buffer; "*": a source; "from,to": a source that must not fetch those bytes.
+            let src = match (c.source, c.unread) {
+                (false, _) => "-".to_string(),
+                (true, None) => "*".to_string(),
+                (true, Some((from, to))) => format!("{},{}", from, to),
+            };
+            if c.source {
+                sourced.insert(p.name.as_str());
+            }
+            let _ = writeln!(table, "{} {} {} {} {} {}", p.name, index, ver, args, src, c.hex);
         }
 
         for (name, lists) in &sets {
@@ -102,7 +127,7 @@ func pbFrame(_ f: () throws -> Int?) -> String {
             // Arguments of a packet with parameters (after the version).
             let pargs: Vec<String> = (0..p.params.len()).map(|i| format!("numericCast(a[{}])", i)).collect();
             let more: String = pargs.iter().map(|a| format!(", {}", a)).collect();
-            let _ = writeln!(s, "func run_{}(_ d: [UInt8], _ ver: Int?, _ set: Int, _ a: [Int]) {{", name);
+            let _ = writeln!(s, "func run_{}(_ d: [UInt8], _ ver: Int?, _ set: Int, _ a: [Int], _ u: [Int]?) {{", name);
             if pargs.is_empty() {
                 s.push_str(
                     "    _ = a
@@ -110,12 +135,14 @@ func pbFrame(_ f: () throws -> Int?) -> String {
                 );
             }
             s.push_str("    var line: String\n    do {\n");
-            let _ = writeln!(
-                s,
-                "        {} p = try {}",
-                if lists.is_empty() { "let" } else { "var" },
-                call(&format!("{}.decode(d{})", name, more), &format!("{}.decode(d, version: ver!{})", name, more))
-            );
+            let mut decode =
+                call(&format!("{}.decode(d{})", name, more), &format!("{}.decode(d, version: ver!{})", name, more));
+            if sourced.contains(name) {
+                decode = format!("(u == nil ? {} : {}.decodeFrom(PbReader(source: pbSource(d, u!))))", decode, name);
+            } else {
+                s.push_str("        _ = u\n");
+            }
+            let _ = writeln!(s, "        {} p = try {}", if lists.is_empty() { "let" } else { "var" }, decode);
             if !lists.is_empty() {
                 s.push_str("        switch set {\n");
                 for (i, body) in lists.iter().enumerate() {
@@ -162,10 +189,11 @@ func pbFrame(_ f: () throws -> Int?) -> String {
         s.push_str("    let set = Int(f[1]) ?? 0\n");
         s.push_str("    let ver: Int? = f[2] == \"-\" ? nil : Int(f[2])\n");
         s.push_str("    let a = f[3] == \"-\" ? [] : f[3].split(separator: \",\").map { Int($0)! }\n");
-        s.push_str("    let d = pbUnhex(f.count > 4 ? f[4] : \"\")\n");
+        s.push_str("    let u: [Int]? = f[4] == \"-\" ? nil : f[4] == \"*\" ? [] : f[4].split(separator: \",\").map { Int($0)! }\n");
+        s.push_str("    let d = pbUnhex(f.count > 5 ? f[5] : \"\")\n");
         s.push_str("    switch f[0] {\n");
         for name in sets.keys() {
-            let _ = writeln!(s, "    case \"{}\": run_{}(d, ver, set, a)", name, name);
+            let _ = writeln!(s, "    case \"{}\": run_{}(d, ver, set, a, u)", name, name);
         }
         s.push_str("    default: print(\"unknown packet \\(f[0])\")\n    }\n}\n");
         s

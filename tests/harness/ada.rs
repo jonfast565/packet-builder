@@ -77,12 +77,26 @@ impl Target for AdaTarget {
         s.push_str(
             "   function Hx_E (Pre : String) return String is\n      X : constant Pb_Error_Info := Last_Error;\n   begin\n      return \",\"\"\" & Pre & \"error\"\":\" & Pb_Json_Str (X.Message) & \",\"\"\" & Pre & \"kind\"\":\"\"\" & Pb_Kind_Name (X.Kind) & \"\"\",\"\"\" & Pre & \"path\"\":\" & Pb_Json_Str (X.Path);\n   end Hx_E;\n\n",
         );
+        if cases.iter().any(|c| c.source) {
+            // A source over a case's bytes that refuses the range From .. To - 1.
+            s.push_str("   type Hx_Data is access constant Pb_Byte_Array;\n");
+            s.push_str(
+                "   type Hx_Source is new Pb_Source with record\n      D : Hx_Data;\n      From, To : Natural := 0;\n   end record;\n\n",
+            );
+            s.push_str(
+                "   overriding procedure Pb_Fetch (S : in out Hx_Source; Offset : Interfaces.Integer_64; Buf : out Pb_Byte_Array) is\n      At_B : constant Natural := Natural (Offset);\n   begin\n      if Natural'Max (At_B, S.From) < Natural'Min (At_B + Buf'Length, S.To) then\n         raise Program_Error with \"fetched an unread byte\";\n      end if;\n      Buf := S.D (At_B .. At_B + Buf'Length - 1);\n   end Pb_Fetch;\n\n",
+            );
+        }
         for (i, c) in cases.iter().enumerate() {
             let p = packet(module, &c.packet);
             let ty = type_name(&p.name);
             let ver = c.version.map(|v| format!(", Version => {}", v)).unwrap_or_default();
             let _ = writeln!(s, "   procedure Hx_Case_{} is", i);
-            let _ = writeln!(s, "      Hx_D : constant Pb_Byte_Array := Hx_Bytes ({});", ada_text(&c.hex));
+            let aliased = if c.source { "aliased " } else { "" };
+            let _ = writeln!(s, "      Hx_D : {}constant Pb_Byte_Array := Hx_Bytes ({});", aliased, ada_text(&c.hex));
+            if c.source {
+                s.push_str("      Hx_Src : Hx_Source;\n      Hx_Rd : aliased Pb_Reader (0);\n");
+            }
             let _ = writeln!(s, "      Hx_P : {};", ty);
             s.push_str("      Hx_Ok : Boolean := True;\n");
             s.push_str("      Hx_S : Ada.Strings.Unbounded.Unbounded_String;\n");
@@ -91,7 +105,18 @@ impl Target for AdaTarget {
             }
             s.push_str("   begin\n");
             let ver = format!("{}{}", c.more_args(), ver);
-            let _ = writeln!(s, "      begin\n         Hx_P := Decode (Hx_D{});", ver);
+            if c.source {
+                let (from, to) = c.unread.unwrap_or((0, 0));
+                let _ = writeln!(
+                    s,
+                    "      begin\n         Hx_Src.D := Hx_D'Unchecked_Access;\n         Hx_Src.From := {};\n         Hx_Src.To := {};\n         Pb_Open (Hx_Src, Hx_D'Length, {});\n         Pb_Init (Hx_Rd, Hx_Src);\n         Hx_P := Decode_From (Hx_Rd'Access);",
+                    from,
+                    to,
+                    super::SOURCE_PAGE
+                );
+            } else {
+                let _ = writeln!(s, "      begin\n         Hx_P := Decode (Hx_D{});", ver);
+            }
             s.push_str("      exception\n         when Pb_Error =>\n            Hx_Ok := False;\n");
             s.push_str("            Ada.Text_IO.Put_Line (\"{\"\"ok\"\":false\" & Hx_E (\"\") & \"}\");\n      end;\n");
             s.push_str("      if Hx_Ok then\n");

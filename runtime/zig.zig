@@ -106,9 +106,90 @@ pub const PbJump = struct { pos: usize, limit: usize, windows: usize };
 /// field for errors.
 pub const PbPlaced = struct { at: usize, data: []u8, trace: PbTrace };
 
+/// Input read on demand (a file, a stream that can seek): `buf.len` bytes,
+/// loaded a page at a time by a fetch function that fills a buffer with the
+/// bytes at an offset. Only the pages a decode touches are fetched: fields a
+/// view skips are never read. Pages stay loaded until `deinit`, so borrowed
+/// (zero-copy) slices remain valid.
+pub const PbSource = struct {
+    buf: []u8, // zero until its page is fetched
+    loaded: []bool,
+    page: usize,
+    allocator: std.mem.Allocator,
+    ctx: *anyopaque,
+    fetch: *const fn (ctx: *anyopaque, offset: u64, buf: []u8) anyerror!void,
+
+    /// A source of `len` bytes read in pages of `page` bytes by
+    /// `fetch(ctx, offset, buf)` (`ctx` is a pointer).
+    pub fn init(
+        allocator: std.mem.Allocator,
+        len: usize,
+        page: usize,
+        ctx: anytype,
+        comptime fetch: fn (@TypeOf(ctx), u64, []u8) anyerror!void,
+    ) PbError!PbSource {
+        const Ctx = @TypeOf(ctx);
+        const call = struct {
+            fn call(p: *anyopaque, offset: u64, buf: []u8) anyerror!void {
+                return fetch(@ptrCast(@alignCast(p)), offset, buf);
+            }
+        }.call;
+        const pg = @max(page, 1);
+        const buf = try allocator.alloc(u8, len);
+        errdefer allocator.free(buf);
+        @memset(buf, 0);
+        const loaded = try allocator.alloc(bool, (len + pg - 1) / pg);
+        @memset(loaded, false);
+        return .{
+            .buf = buf,
+            .loaded = loaded,
+            .page = pg,
+            .allocator = allocator,
+            .ctx = @ptrCast(@constCast(@as(Ctx, ctx))),
+            .fetch = call,
+        };
+    }
+
+    /// A source reading `file` (which must outlive it), in pages of 4096 bytes.
+    pub fn fromFile(allocator: std.mem.Allocator, file: *const std.fs.File) !PbSource {
+        const len = try file.getEndPos();
+        return PbSource.init(allocator, @intCast(len), 4096, file, struct {
+            fn read(f: *const std.fs.File, offset: u64, buf: []u8) anyerror!void {
+                if (try f.preadAll(buf, offset) != buf.len) return error.EndOfStream;
+            }
+        }.read);
+    }
+
+    pub fn deinit(self: *PbSource) void {
+        self.allocator.free(self.buf);
+        self.allocator.free(self.loaded);
+    }
+
+    /// Fetch the pages holding bytes `start..start + n` (inside the input),
+    /// one page per call of `fetch`. A page that fails stays unloaded.
+    fn load(self: *PbSource, start: usize, n: usize) anyerror!void {
+        if (n == 0) return;
+        var p = start / self.page;
+        while (p <= (start + n - 1) / self.page) : (p += 1) {
+            if (self.loaded[p]) continue;
+            const from = p * self.page;
+            const to = @min(from + self.page, self.buf.len);
+            self.fetch(self.ctx, from, self.buf[from..to]) catch |e| {
+                @memset(self.buf[from..to], 0);
+                return e;
+            };
+            self.loaded[p] = true;
+        }
+    }
+};
+
 /// Reads integers of any bit width (MSB-first) and byte-aligned values.
 pub const PbReader = struct {
     data: []const u8,
+    src: ?*PbSource = null, // where data comes from, or null for a buffer
+    /// After an Invalid error: why the source could not be read, if that
+    /// was the cause ("cannot read the input").
+    source_error: ?anyerror = null,
     pos: usize = 0, // in bits
     limit: usize, // end of the readable data in bits (a window inside data)
     windows: usize = 0, // windows open
@@ -116,6 +197,36 @@ pub const PbReader = struct {
 
     pub fn init(data: []const u8) PbReader {
         return .{ .data = data, .limit = data.len * 8 };
+    }
+
+    /// A reader that fetches its input from `src` as it goes.
+    pub fn fromSource(src: *PbSource) PbReader {
+        return .{ .data = src.buf, .src = src, .limit = src.buf.len * 8 };
+    }
+
+    /// Make input bytes `start..start + n` (which `need` has checked exist)
+    /// readable in `data`, fetching them from a source.
+    fn load(self: *PbReader, start: usize, n: usize) PbError!void {
+        const src = self.src orelse return;
+        src.load(start, n) catch |e| {
+            if (!self.trace.diag.failed) self.source_error = e;
+            return self.fail(PbError.Invalid);
+        };
+    }
+
+    /// Where `term` first starts in input bytes `start..end`. A source is
+    /// read page by page, only up to the terminator.
+    fn find(self: *PbReader, start: usize, end: usize, term: []const u8) PbError!?usize {
+        const src = self.src orelse return pbFind(self.data[0..end], start, term);
+        var from = start;
+        while (from < end) {
+            const to = @min((from / src.page + 1) * src.page + term.len - 1, end);
+            try self.load(from, to - from);
+            if (pbFind(self.data[0..to], from, term)) |hit| return hit;
+            if (to == end) break;
+            from = to + 1 - term.len;
+        }
+        return null;
     }
 
     pub fn remainingBits(self: *const PbReader) usize {
@@ -218,6 +329,7 @@ pub const PbReader = struct {
 
     pub fn readBits(self: *PbReader, width: u7) PbError!u64 {
         try self.need(width);
+        try self.load(self.pos >> 3, ((self.pos + width + 7) >> 3) - (self.pos >> 3));
         var v: u64 = 0;
         var left: u7 = width;
         while (left > 0) {
@@ -235,6 +347,7 @@ pub const PbReader = struct {
     pub fn readUint(self: *PbReader, nbytes: u4, little: bool) PbError!u64 {
         try self.need(@as(usize, nbytes) * 8);
         const start = self.pos >> 3;
+        try self.load(start, nbytes);
         var v: u64 = 0;
         var i: usize = 0;
         while (i < nbytes) : (i += 1) {
@@ -249,6 +362,7 @@ pub const PbReader = struct {
     pub fn readBytes(self: *PbReader, allocator: std.mem.Allocator, n: usize) PbError![]u8 {
         if (n > self.remainingBits() / 8) return self.short(n * 8);
         const start = self.pos >> 3;
+        try self.load(start, n);
         const out = try allocator.dupe(u8, self.data[start .. start + n]);
         self.pos += n * 8;
         return out;
@@ -257,6 +371,7 @@ pub const PbReader = struct {
     pub fn readMac(self: *PbReader) PbError![6]u8 {
         try self.need(48);
         const start = self.pos >> 3;
+        try self.load(start, 6);
         self.pos += 48;
         return self.data[start..][0..6].*;
     }
@@ -270,6 +385,7 @@ pub const PbReader = struct {
     pub fn readText(self: *PbReader, allocator: std.mem.Allocator, n: usize, until_nul: bool) PbError![]u8 {
         if (n > self.remainingBits() / 8) return self.short(n * 8);
         const start = self.pos >> 3;
+        try self.load(start, n);
         var raw = self.data[start .. start + n];
         if (until_nul) {
             if (std.mem.indexOfScalar(u8, raw, 0)) |end| raw = raw[0..end];
@@ -283,8 +399,7 @@ pub const PbReader = struct {
     /// UTF-8 text before a NUL terminator; the terminator is consumed.
     pub fn readCText(self: *PbReader, allocator: std.mem.Allocator) PbError![]u8 {
         const start = self.pos >> 3;
-        const window = self.data[0 .. self.limit >> 3];
-        const end = std.mem.indexOfScalarPos(u8, window, start, 0) orelse return self.short(self.remainingBits() + 8);
+        const end = try self.find(start, self.limit >> 3, &[_]u8{0}) orelse return self.short(self.remainingBits() + 8);
         const raw = self.data[start..end];
         if (!std.unicode.utf8ValidateSlice(raw)) return self.fail(PbError.InvalidText);
         const out = try allocator.dupe(u8, raw);
@@ -296,6 +411,7 @@ pub const PbReader = struct {
     pub fn bytesSlice(self: *PbReader, n: usize) PbError![]const u8 {
         if (n > self.remainingBits() / 8) return self.short(n * 8);
         const start = self.pos >> 3;
+        try self.load(start, n);
         self.pos += n * 8;
         return self.data[start .. start + n];
     }
@@ -304,14 +420,15 @@ pub const PbReader = struct {
     /// terminator: the rest of the input when `optional`, otherwise an error.
     pub fn untilSlice(self: *PbReader, term: []const u8, optional: bool) PbError![]const u8 {
         const start = self.pos >> 3;
-        const window = self.data[0 .. self.limit >> 3];
-        if (std.mem.indexOfPos(u8, window, start, term)) |end| {
+        const window_end = self.limit >> 3;
+        if (try self.find(start, window_end, term)) |end| {
             self.pos = (end + term.len) * 8;
             return self.data[start..end];
         }
         if (!optional) return self.short(self.remainingBits() + 8);
+        try self.load(start, window_end - start);
         self.pos = self.limit;
-        return self.data[start..window.len];
+        return self.data[start..window_end];
     }
 
     /// `raw` in encoding `enc` (0 UTF-8, 1 ASCII, 2 Latin-1, 3 UTF-16LE,
@@ -398,8 +515,14 @@ pub const PbReader = struct {
     }
 
     /// Checksum `algo` of the input between two bit positions (whole bytes);
-    /// the bytes between `hole_from` and `hole_to` count as zero.
+    /// the bytes between `hole_from` and `hole_to` count as zero. From a
+    /// source that cannot be read, the checksum of zeros (which then fails
+    /// to match).
     pub fn checksum(self: *const PbReader, algo: u32, from: usize, to: usize, hole_from: usize, hole_to: usize) u64 {
+        if (self.src) |src| {
+            // The whole range as a hole: zeros.
+            src.load(from / 8, to / 8 -| from / 8) catch return pbChecksum(algo, self.data, from / 8, to / 8, from / 8, to / 8);
+        }
         return pbChecksum(algo, self.data, from / 8, to / 8, hole_from / 8, hole_to / 8);
     }
 
@@ -414,6 +537,12 @@ pub const PbReader = struct {
         return @intCast(n);
     }
 };
+
+/// Where `term` first starts in `data` at or after `start`.
+fn pbFind(data: []const u8, start: usize, term: []const u8) ?usize {
+    if (term.len == 1) return std.mem.indexOfScalarPos(u8, data, start, term[0]);
+    return std.mem.indexOfPos(u8, data, start, term);
+}
 
 /// Builds a byte buffer; integers may be written at any bit position.
 pub const PbWriter = struct {

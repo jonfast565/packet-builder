@@ -33,6 +33,9 @@ impl Target for CTarget {
         s.push_str("static void hx(const uint8_t *b, size_t n) { printf(\"\\\"\"); for (size_t i = 0; i < n; i++) printf(\"%02x\", b[i]); printf(\"\\\"\"); }\n");
         s.push_str("static const char *kindname(int rc) { switch (rc) { case PB_ERR_INCOMPLETE: return \"incomplete\"; case PB_ERR_INVALID: return \"invalid\"; case PB_ERR_RANGE: return \"range\"; case PB_ERR_TEXT: return \"text\"; case PB_ERR_MISMATCH: return \"mismatch\"; case PB_ERR_CONSTRAINT: return \"constraint\"; default: return \"other\"; } }\n");
         s.push_str("static void err(const char *pre, int rc, const char *desc, const char *path) { printf(\"\\\"%serror\\\":\", pre); js(desc, strlen(desc)); printf(\",\\\"%skind\\\":\\\"%s\\\",\\\"%spath\\\":\", pre, kindname(rc), pre); js(path, strlen(path)); }\n");
+        // Sources over the case's bytes refuse to fetch bytes from..to.
+        s.push_str("typedef struct { const uint8_t *data; size_t from, to; } src_case;\n");
+        s.push_str("__attribute__((unused)) static int fetch(void *user, uint64_t at, uint8_t *buf, size_t n, const char **msg) { const src_case *c = user; size_t a = (size_t)at; if ((a > c->from ? a : c->from) < (a + n < c->to ? a + n : c->to)) { *msg = \"fetched an unread byte\"; return -1; } memcpy(buf, c->data + a, n); return 0; }\n");
         s.push_str("static size_t unhex(const char *h, uint8_t *out) { size_t n = strlen(h) / 2; for (size_t i = 0; i < n; i++) { unsigned v; sscanf(h + 2 * i, \"%2x\", &v); out[i] = (uint8_t)v; } return n; }\n\n");
         s.push_str("int main(void) {\n    static uint8_t data[65536];\n");
         for c in cases {
@@ -43,7 +46,18 @@ impl Target for CTarget {
             s.push_str("        int rc; pb_reader r; pb_writer w; char desc[512], path[256];\n");
             // Copy into an exact-size heap buffer so ASan catches over-reads.
             s.push_str("        uint8_t *in = malloc(n ? n : 1); memcpy(in, data, n);\n");
-            s.push_str("        pb_reader_init(&r, in, n);\n");
+            if c.source {
+                let (from, to) = c.unread.unwrap_or((0, 0));
+                let _ = writeln!(s, "        src_case sc = {{ in, {}, {} }}; pb_source src;", from, to);
+                let _ = writeln!(
+                    s,
+                    "        if (pb_source_init(&src, n, {}, fetch, &sc) != PB_OK) abort();",
+                    super::SOURCE_PAGE
+                );
+                s.push_str("        pb_reader_from_source(&r, &src);\n");
+            } else {
+                s.push_str("        pb_reader_init(&r, in, n);\n");
+            }
             if let Some((v, min, latest)) = c.versions(module) {
                 let _ = writeln!(s, "        pb_set_version(&r.tr, {}, {}, {});", v, min, latest);
             }
@@ -84,7 +98,11 @@ impl Target for CTarget {
             s.push_str("            pb_writer_free(&w);\n");
             let _ = writeln!(s, "            {}_free(&p);", p.name);
             // Last: zero-copy values point into the input.
-            s.push_str("        }\n        free(in);\n    }\n");
+            s.push_str("        }\n        free(in);\n");
+            if c.source {
+                s.push_str("        pb_source_free(&src);\n");
+            }
+            s.push_str("    }\n");
             if !c.args.is_empty() {
                 s.push_str("    printf(\"{}\\n\");\n");
                 continue;

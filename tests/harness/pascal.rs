@@ -52,15 +52,38 @@ impl Target for PascalTarget {
         s.push_str(
             "function E(Err: EPbError; const Pre: string): string;\nbegin\n  Result := ',\"' + Pre + 'error\":' + PbJsonStr(Err.Message) + ',\"' + Pre + 'kind\":\"' + PbKindName(Err.Kind) + '\",\"' + Pre + 'path\":' + PbJsonStr(Err.Path);\nend;\n\n",
         );
+        if cases.iter().any(|c| c.source) {
+            // The fetch callback of a source case: refuses the unread range.
+            s.push_str(
+                "type\n  TCaseSource = class\n    D: TBytes;\n    UFrom, UTo: Int64;\n    procedure Fetch(AOffset: Int64; var Buf: array of Byte);\n  end;\n\n",
+            );
+            s.push_str(
+                "procedure TCaseSource.Fetch(AOffset: Int64; var Buf: array of Byte);\nvar\n  A, B: Int64;\nbegin\n  A := AOffset;\n  if UFrom > A then\n    A := UFrom;\n  B := AOffset + Length(Buf);\n  if UTo < B then\n    B := UTo;\n  if A < B then\n    raise Exception.Create('fetched an unread byte');\n  if Length(Buf) > 0 then\n    Move(D[AOffset], Buf[0], Length(Buf));\nend;\n\n",
+            );
+        }
         for (i, c) in cases.iter().enumerate() {
             let p = packet(module, &c.packet);
             let class = type_name(&p.name);
             let ver = c.version.map(|v| format!(", {}", v)).unwrap_or_default();
             let _ = writeln!(s, "procedure Case{};", i);
-            let _ = writeln!(s, "var\n  p: {};\n  v, s: string;\n  b, d: TBytes;\n  n, f: Integer;\nbegin", class);
+            let _ = writeln!(s, "var\n  p: {};\n  v, s: string;\n  b, d: TBytes;\n  n, f: Integer;", class);
+            if c.source {
+                s.push_str("  cs: TCaseSource;\n  src: TPbSource;\n  r: TPbReader;\n");
+            }
+            s.push_str("begin\n");
             let _ = writeln!(s, "  d := HexBytes({});", pas_text(&c.hex));
             s.push_str("  p := nil;\n  try\n    try\n");
-            let _ = writeln!(s, "      p := {}.Decode(d{}{});", class, c.more_args(), ver);
+            if c.source {
+                let (from, to) = c.unread.unwrap_or((0, 0));
+                s.push_str("      cs := TCaseSource.Create;\n      cs.D := d;\n");
+                let _ = writeln!(s, "      cs.UFrom := {};\n      cs.UTo := {};", from, to);
+                let _ = writeln!(s, "      src := TPbSource.Create(Length(d), {}, cs.Fetch);", super::SOURCE_PAGE);
+                s.push_str("      r := TPbReader.CreateFromSource(src);\n      try\n");
+                let _ = writeln!(s, "        p := {}.DecodeFrom(r);", class);
+                s.push_str("      finally\n        r.Free;\n        src.Free;\n        cs.Free;\n      end;\n");
+            } else {
+                let _ = writeln!(s, "      p := {}.Decode(d{}{});", class, c.more_args(), ver);
+            }
             s.push_str("    except\n      on Err: EPbError do\n        WriteLn('{\"ok\":false' + E(Err, '') + '}');\n    end;\n");
             s.push_str("    if p <> nil then\n    begin\n");
             for (name, v) in &c.set {

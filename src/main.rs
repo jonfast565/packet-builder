@@ -63,7 +63,7 @@ struct DecodeArgs {
     packet: String,
 
     /// The bytes as hex (spaces and colons are ignored).
-    #[arg(long, required_unless_present_any = ["file", "pcap"], conflicts_with_all = ["file", "pcap"])]
+    #[arg(long, required_unless_present_any = ["file", "pcap", "seek"], conflicts_with_all = ["file", "pcap", "seek"])]
     hex: Option<String>,
 
     /// A file holding the raw bytes.
@@ -71,8 +71,13 @@ struct DecodeArgs {
     file: Option<PathBuf>,
 
     /// A pcap or pcapng capture; every frame is decoded.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "seek")]
     pcap: Option<PathBuf>,
+
+    /// A file read on demand, a page at a time: only the parts the packet
+    /// needs are read (with `--access`, a view skips the rest).
+    #[arg(long, conflicts_with = "file")]
+    seek: Option<PathBuf>,
 
     /// Skip this many bytes at the start of each input (54 skips Ethernet,
     /// IPv4 and TCP headers without options).
@@ -451,6 +456,23 @@ fn decode(args: DecodeArgs) -> Result<(), String> {
         return Err(format!("no packet named `{}` in {}", args.packet, args.input.display()));
     }
     check_version(&module, args.version)?;
+    if let Some(path) = &args.seek {
+        use std::io::{Read, Seek, SeekFrom};
+        let mut file = fs::File::open(path).map_err(|e| format!("cannot read {}: {}", path.display(), e))?;
+        let size = file.seek(SeekFrom::End(0)).map_err(|e| e.to_string())? as usize;
+        let skip = args.offset.min(size);
+        let fetched = std::cell::Cell::new(0usize);
+        let src = interp::Source::new(size - skip, 4096, |at, buf| {
+            fetched.set(fetched.get() + buf.len());
+            file.seek(SeekFrom::Start(at + skip as u64))?;
+            file.read_exact(buf)
+        });
+        let ok = decode_input(&module, &args, String::new(), interp::Reader::from_source(&src));
+        if !args.json {
+            println!("(read {} of {} byte(s))", fetched.get(), size - skip);
+        }
+        return if ok { Ok(()) } else { Err(String::new()) };
+    }
     let read = |path: &Path| fs::read(path).map_err(|e| format!("cannot read {}: {}", path.display(), e));
     let inputs: Vec<(String, Vec<u8>)> = if let Some(hex) = &args.hex {
         vec![(String::new(), parse_hex(hex)?)]
@@ -465,48 +487,62 @@ fn decode(args: DecodeArgs) -> Result<(), String> {
     let mut failed = false;
     for (label, data) in inputs {
         let data = data.get(args.offset..).unwrap_or(&[]);
-        let mut r = interp::Reader::new(data);
-        if let (Some(v), Some(vs)) = (args.version, module.versions) {
-            r.set_version(v as i64, vs.min, vs.latest).map_err(|e| e.to_string())?;
-        }
-        let mut n = 0;
-        let mut ok = true;
-        loop {
-            let at = r.position_bits() / 8;
-            let heading = match (label.is_empty(), args.all) {
-                (true, false) => String::new(),
-                (true, true) => format!("packet {} at byte {}", n + 1, at),
-                (false, false) => label.clone(),
-                (false, true) => format!("{}, packet {} at byte {}", label, n + 1, at),
-            };
-            match interp::decode_from_args(&module, &args.packet, &mut r, &args.args) {
-                Ok(v) if args.json => println!("{}", v.to_json()),
-                Ok(v) => {
-                    if !heading.is_empty() {
-                        println!("{}:", heading);
-                    }
-                    print!("{}", interp::render(&module, &v));
+        failed |= !decode_input(&module, &args, label, interp::Reader::new(data));
+    }
+    if failed { Err(String::new()) } else { Ok(()) }
+}
+
+/// Decode one input (back to back with `--all`); false on an error.
+fn decode_input(
+    module: &packet_builder::ir::Module,
+    args: &DecodeArgs,
+    label: String,
+    mut r: packet_builder::ir::interp::Reader,
+) -> bool {
+    use packet_builder::ir::interp;
+
+    if let (Some(v), Some(vs)) = (args.version, module.versions)
+        && let Err(e) = r.set_version(v as i64, vs.min, vs.latest)
+    {
+        eprintln!("error: {}", e);
+        return false;
+    }
+    let mut n = 0;
+    let mut ok = true;
+    loop {
+        let at = r.position_bits() / 8;
+        let heading = match (label.is_empty(), args.all) {
+            (true, false) => String::new(),
+            (true, true) => format!("packet {} at byte {}", n + 1, at),
+            (false, false) => label.clone(),
+            (false, true) => format!("{}, packet {} at byte {}", label, n + 1, at),
+        };
+        match interp::decode_from_args(module, &args.packet, &mut r, &args.args) {
+            Ok(v) if args.json => println!("{}", v.to_json()),
+            Ok(v) => {
+                if !heading.is_empty() {
+                    println!("{}:", heading);
                 }
-                Err(e) => {
-                    let prefix = if heading.is_empty() { String::new() } else { format!("{}: ", heading) };
-                    eprintln!("{}error: {}", prefix, e);
-                    ok = false;
-                    break;
-                }
+                print!("{}", interp::render(module, &v));
             }
-            n += 1;
-            if !args.all || r.remaining_bits() == 0 {
+            Err(e) => {
+                let prefix = if heading.is_empty() { String::new() } else { format!("{}: ", heading) };
+                eprintln!("{}error: {}", prefix, e);
+                ok = false;
                 break;
             }
         }
-        failed |= !ok;
-        let left = r.remaining_bits() / 8;
-        if ok && !args.all && left > 0 && !args.json {
-            println!("({} trailing byte(s) not decoded)", left);
-        }
-        if !args.json {
-            println!();
+        n += 1;
+        if !args.all || r.remaining_bits() == 0 {
+            break;
         }
     }
-    if failed { Err(String::new()) } else { Ok(()) }
+    let left = r.remaining_bits() / 8;
+    if ok && !args.all && left > 0 && !args.json {
+        println!("({} trailing byte(s) not decoded)", left);
+    }
+    if !args.json {
+        println!();
+    }
+    ok
 }

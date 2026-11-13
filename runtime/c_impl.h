@@ -1,5 +1,6 @@
 /* ---- packet-builder runtime: implementation ------------------------------ */
 
+#include <limits.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -95,7 +96,12 @@ static char *pb_describe(const pb_trace *t, const pb_error *e, char *buf, size_t
     pb_path(t, e, buf, n);
     at = strlen(buf);
     if (at) pb_append(buf, n, &at, ": ");
-    pb_append(buf, n, &at, pb_strerror(e->code));
+    if (e->code == PB_ERR_INVALID && e->msg) {
+        pb_append(buf, n, &at, "cannot read the input: ");
+        pb_append(buf, n, &at, e->msg);
+    } else {
+        pb_append(buf, n, &at, pb_strerror(e->code));
+    }
     snprintf(num, sizeof num, " (at bit %lu)", (unsigned long)e->bit_offset);
     pb_append(buf, n, &at, num);
     return buf;
@@ -114,6 +120,118 @@ void pb_reader_init(pb_reader *r, const uint8_t *data, size_t len) {
     r->data = data;
     r->len = len;
     r->limit = len * 8;
+}
+
+int pb_source_init(pb_source *s, size_t len, size_t page, pb_fetch_fn fetch, void *user) {
+    memset(s, 0, sizeof *s);
+    s->page = page ? page : 1;
+    /* Zeroed memory is mapped lazily: pages never fetched cost nothing. */
+    s->buf = (uint8_t *)calloc(len ? len : 1, 1);
+    s->loaded = (uint8_t *)calloc(len / s->page + 1, 1);
+    if (!s->buf || !s->loaded) {
+        pb_source_free(s);
+        return PB_ERR_NOMEM;
+    }
+    s->len = len;
+    s->fetch = fetch;
+    s->user = user;
+    return PB_OK;
+}
+
+static int pb_file_fetch(void *user, uint64_t offset, uint8_t *buf, size_t n, const char **msg) {
+    FILE *f = (FILE *)user;
+    if (offset > (uint64_t)LONG_MAX || fseek(f, (long)offset, SEEK_SET) != 0) {
+        *msg = "cannot seek";
+        return -1;
+    }
+    if (fread(buf, 1, n, f) != n) {
+        *msg = ferror(f) ? "read error" : "unexpected end of file";
+        return -1;
+    }
+    return 0;
+}
+
+int pb_source_open(pb_source *s, FILE *f) {
+    long len;
+    if (fseek(f, 0, SEEK_END) != 0 || (len = ftell(f)) < 0) return PB_ERR_INVALID;
+    return pb_source_init(s, (size_t)len, 4096, pb_file_fetch, f);
+}
+
+void pb_source_free(pb_source *s) {
+    free(s->buf);
+    free(s->loaded);
+    s->buf = s->loaded = NULL;
+    s->len = 0;
+}
+
+void pb_reader_from_source(pb_reader *r, pb_source *src) {
+    pb_reader_init(r, src->buf, src->len);
+    r->src = src;
+}
+
+/* Fetch the pages holding bytes start..start+n (inside the input), one
+ * page per call of fetch. A page that fails stays unloaded and zero. */
+PB_FN int pb_source_fetch(pb_source *s, size_t start, size_t n, const char **msg) {
+    size_t p, last;
+    if (!n) return PB_OK;
+    for (p = start / s->page, last = (start + n - 1) / s->page; p <= last; p++) {
+        size_t from = p * s->page;
+        size_t len = s->len - from < s->page ? s->len - from : s->page;
+        if (s->loaded[p]) continue;
+        *msg = "unknown error";
+        if (s->fetch(s->user, (uint64_t)from, s->buf + from, len, msg) != 0) {
+            memset(s->buf + from, 0, len);
+            return PB_ERR_INVALID;
+        }
+        s->loaded[p] = 1;
+    }
+    return PB_OK;
+}
+
+/* Input bytes start..start+n of a reader on a source, which pb_short checks
+ * exist: fetched if needed. */
+PB_FN int pb_source_load(pb_reader *r, size_t start, size_t n) {
+    const char *msg = NULL;
+    int rc = pb_source_fetch(r->src, start, n, &msg);
+    if (rc != PB_OK && r->err.code == PB_OK) r->err.msg = msg;
+    return rc;
+}
+
+/* Make input bytes start..start+n readable through r->data. */
+#define PB_LOAD(r, start, n) do { if ((r)->src) PB_PASS(pb_source_load((r), (start), (n))); } while (0)
+
+/* Where term (tlen bytes) first starts in data[from..to), or SIZE_MAX. */
+PB_FN size_t pb_scan(const uint8_t *data, size_t from, size_t to, const uint8_t *term, size_t tlen) {
+    size_t i;
+    if (tlen == 1) {
+        const uint8_t *hit = from < to ? (const uint8_t *)memchr(data + from, term[0], to - from) : NULL;
+        return hit ? (size_t)(hit - data) : SIZE_MAX;
+    }
+    for (i = from; i + tlen <= to; i++) {
+        if (memcmp(data + i, term, tlen) == 0) return i;
+    }
+    return SIZE_MAX;
+}
+
+/* Where term first starts in input bytes start..end (*at = SIZE_MAX if
+ * nowhere). A source is read page by page, only up to the terminator. */
+PB_FN int pb_find(pb_reader *r, size_t start, size_t end, const uint8_t *term, size_t tlen, size_t *at) {
+    size_t from = start, page;
+    if (!r->src) {
+        *at = pb_scan(r->data, start, end, term, tlen);
+        return PB_OK;
+    }
+    page = r->src->page;
+    *at = SIZE_MAX;
+    while (from < end) {
+        size_t to = (from / page + 1) * page + tlen - 1;
+        if (to > end) to = end;
+        PB_PASS(pb_source_load(r, from, to - from));
+        *at = pb_scan(r->data, from, to, term, tlen);
+        if (*at != SIZE_MAX || to == end) break;
+        from = to + 1 - tlen;
+    }
+    return PB_OK;
 }
 
 /* Record a failed decode (called at pb_fail). */
@@ -198,6 +316,7 @@ PB_FN int pb_read_bits(pb_reader *r, unsigned width, uint64_t *out) {
     uint64_t v = 0;
     unsigned left = width;
     PB_NEED(r, width);
+    PB_LOAD(r, r->pos >> 3, ((r->pos + width + 7) >> 3) - (r->pos >> 3));
     while (left > 0) {
         unsigned off = (unsigned)(r->pos & 7);
         unsigned take = 8 - off < left ? 8 - off : left;
@@ -215,6 +334,7 @@ PB_FN int pb_read_uint(pb_reader *r, unsigned nbytes, int little, uint64_t *out)
     size_t start = r->pos >> 3;
     unsigned i;
     PB_NEED(r, (size_t)nbytes * 8);
+    PB_LOAD(r, start, nbytes);
     for (i = 0; i < nbytes; i++) {
         uint8_t b = little ? r->data[start + nbytes - 1 - i] : r->data[start + i];
         v = (v << 8) | b;
@@ -226,6 +346,7 @@ PB_FN int pb_read_uint(pb_reader *r, unsigned nbytes, int little, uint64_t *out)
 
 PB_FN int pb_read_bytes(pb_reader *r, uint8_t *dst, size_t n) {
     if (n > pb_remaining_bits(r) / 8) return pb_short(r, n * 8);
+    PB_LOAD(r, r->pos >> 3, n);
     if (n) memcpy(dst, r->data + (r->pos >> 3), n);
     r->pos += n * 8;
     return PB_OK;
@@ -234,6 +355,7 @@ PB_FN int pb_read_bytes(pb_reader *r, uint8_t *dst, size_t n) {
 /* The next n bytes as a pointer into the input (zero-copy). */
 PB_FN int pb_read_ref(pb_reader *r, size_t n, const uint8_t **out) {
     if (n > pb_remaining_bits(r) / 8) return pb_short(r, n * 8);
+    PB_LOAD(r, r->pos >> 3, n);
     *out = r->data + (r->pos >> 3);
     r->pos += n * 8;
     return PB_OK;
@@ -296,6 +418,7 @@ PB_FN int pb_text(const uint8_t *src, size_t n, int until_nul, char **out, size_
 PB_FN int pb_read_text(pb_reader *r, size_t n, int until_nul, char **out, size_t *out_len) {
     int rc;
     if (n > pb_remaining_bits(r) / 8) return pb_short(r, n * 8);
+    PB_LOAD(r, r->pos >> 3, n);
     rc = pb_text(r->data + (r->pos >> 3), n, until_nul, out, out_len);
     if (rc == PB_OK) r->pos += n * 8;
     return rc;
@@ -303,13 +426,12 @@ PB_FN int pb_read_text(pb_reader *r, size_t n, int until_nul, char **out, size_t
 
 /* A NUL-terminated string; the terminator is consumed. */
 PB_FN int pb_read_ctext(pb_reader *r, char **out, size_t *out_len) {
-    size_t start = r->pos >> 3;
-    size_t end = r->limit >> 3;
-    const uint8_t *nul = start < end ? (const uint8_t *)memchr(r->data + start, 0, end - start) : NULL;
-    size_t n;
+    static const uint8_t nul = 0;
+    size_t start = r->pos >> 3, at, n;
     int rc;
-    if (!nul) return pb_short(r, pb_remaining_bits(r) + 8);
-    n = (size_t)(nul - (r->data + start));
+    PB_PASS(pb_find(r, start, r->limit >> 3, &nul, 1, &at));
+    if (at == SIZE_MAX) return pb_short(r, pb_remaining_bits(r) + 8);
+    n = at - start;
     rc = pb_text(r->data + start, n, 0, out, out_len);
     if (rc == PB_OK) r->pos += (n + 1) * 8;
     return rc;
@@ -370,18 +492,16 @@ PB_FN int pb_read_varint(pb_reader *r, unsigned kind, uint64_t *out) {
  * of the input when `optional`, otherwise an error. */
 /* pb_read_until without copying: *out points into the input (zero-copy). */
 PB_FN int pb_read_until_ref(pb_reader *r, const uint8_t *term, size_t tlen, int optional, const uint8_t **out, size_t *out_len) {
-    size_t start = r->pos >> 3, end = r->limit >> 3, i, n = 0;
-    int found = 0;
-    for (i = start; i + tlen <= end; i++) {
-        if (memcmp(r->data + i, term, tlen) == 0) {
-            found = 1;
-            n = i - start;
-            break;
-        }
-    }
-    if (!found) {
+    size_t start = r->pos >> 3, end = r->limit >> 3, at, n;
+    int found;
+    PB_PASS(pb_find(r, start, end, term, tlen, &at));
+    found = at != SIZE_MAX;
+    if (found) {
+        n = at - start;
+    } else {
         if (!optional) return pb_short(r, pb_remaining_bits(r) + 8);
         n = end - start;
+        PB_LOAD(r, start, n);
     }
     *out = r->data + start;
     *out_len = n;
@@ -460,6 +580,7 @@ PB_FN int pb_convert_text(const uint8_t *src, size_t n, unsigned enc, int padded
 PB_FN int pb_read_text_enc(pb_reader *r, size_t n, int padded, unsigned enc, char **out, size_t *out_len) {
     int rc;
     if (n > pb_remaining_bits(r) / 8) return pb_short(r, n * 8);
+    PB_LOAD(r, r->pos >> 3, n);
     rc = pb_convert_text(r->data + (r->pos >> 3), n, enc, padded, out, out_len);
     if (rc == PB_OK) r->pos += n * 8;
     return rc;
@@ -832,9 +953,17 @@ PB_FN uint64_t pb_checksum(unsigned algo, const uint8_t *buf, size_t from, size_
     }
 }
 
-/* Checksum of the input or output between two bit positions (whole bytes). */
+/* Checksum of the input or output between two bit positions (whole bytes).
+ * From a source that cannot be read, the checksum of zeros (which then
+ * fails to match). */
 PB_FN uint64_t pb_reader_checksum(const pb_reader *r, unsigned algo, size_t from, size_t to, size_t hole_from, size_t hole_to) {
-    return pb_checksum(algo, r->data, from / 8, to / 8, hole_from / 8, hole_to / 8);
+    const char *msg;
+    size_t base = from / 8, end = to / 8;
+    if (r->src && pb_source_fetch(r->src, base, end > base ? end - base : 0, &msg) != PB_OK) {
+        /* The whole range as a hole: zeros. */
+        return pb_checksum(algo, r->data, base, end, base, end);
+    }
+    return pb_checksum(algo, r->data, base, end, hole_from / 8, hole_to / 8);
 }
 
 PB_FN uint64_t pb_writer_checksum(const pb_writer *w, unsigned algo, size_t from, size_t to, size_t hole_from, size_t hole_to) {

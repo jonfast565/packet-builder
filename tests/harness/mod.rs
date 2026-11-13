@@ -29,6 +29,11 @@
 //! `args` (a list of integers) are the arguments of a packet with
 //! parameters, such as the index of an element view (`<Packet>_<field>_at`).
 //! Such packets have no stream helpers: drivers print `{}` as the second line.
+//! `"source": true` next to `"spec"` decodes every case through a seekable
+//! source instead of a buffer (`decode_from` on the runtime's source
+//! reader), fetched in pages of 4 bytes; such specs give no `version` or
+//! `args`. A case's `"unread": [from, to]` is a byte range the fetch
+//! callback refuses to load, so decoding fails if it touches it.
 //! `error_kind` / `error_path` (and `encode_error_kind` / `encode_error_path`)
 //! also check the error's kind (`incomplete`, `invalid`, `range`, `text`,
 //! `mismatch`, `constraint`) and where it happened (`Packet.field[1].field`).
@@ -88,7 +93,14 @@ pub struct Case {
     pub version: Option<u32>,
     /// Arguments of a packet with parameters, passed to decode and encode.
     pub args: Vec<i64>,
+    /// Decode through a seekable source (pages of `SOURCE_PAGE` bytes).
+    pub source: bool,
+    /// Bytes `from..to` the source must not fetch.
+    pub unread: Option<(usize, usize)>,
 }
+
+/// The page size of the sources test drivers build.
+pub const SOURCE_PAGE: usize = 4;
 
 impl Case {
     /// The arguments as a comma-separated list (empty without parameters).
@@ -146,6 +158,7 @@ fn load_spec(path: &Path) -> Spec {
         module.add_views().unwrap();
     }
 
+    let source = json.get("source").and_then(|a| a.as_bool()).unwrap_or(false);
     let mut cases = Vec::new();
     for c in json["cases"].as_array().expect("cases array") {
         let hex: String = c["hex"].as_str().expect("hex").chars().filter(|c| !c.is_whitespace()).collect();
@@ -184,7 +197,18 @@ fn load_spec(path: &Path) -> Spec {
                 .and_then(|a| a.as_array())
                 .map(|a| a.iter().map(|v| v.as_i64().expect("integer argument")).collect())
                 .unwrap_or_default(),
+            source,
+            unread: c.get("unread").and_then(|u| u.as_array()).map(|u| {
+                let at = |i: usize| u[i].as_u64().expect("byte offset") as usize;
+                (at(0), at(1))
+            }),
         };
+        assert!(
+            !source || (case.version.is_none() && case.args.is_empty()),
+            "{}: case {}: source specs take no version or arguments",
+            path.display(),
+            case.name
+        );
         assert!(
             module.packets.iter().any(|p| p.name == case.packet),
             "{}: case {} uses unknown packet {}",
@@ -238,6 +262,8 @@ fn derived_cases(cases: &[Case]) -> Vec<Case> {
                 any: true,
                 version: c.version,
                 args: c.args.clone(),
+                source: c.source,
+                unread: None,
             });
         }
     }
@@ -391,7 +417,13 @@ pub fn run_target(target: &dyn Target) {
         for (case, pair) in spec.cases.iter().zip(lines.chunks(2)) {
             let sequential = !uses_at(&spec.module, packet(&spec.module, &case.packet));
             let result = check_case(case, pair[0]).and_then(|_| {
-                if case.args.is_empty() { check_stream(case, sequential, pair[0], pair[1]) } else { Ok(()) }
+                // Stream helpers read a buffer: a source case's decode may
+                // fail where they do not.
+                if case.args.is_empty() && !case.source {
+                    check_stream(case, sequential, pair[0], pair[1])
+                } else {
+                    Ok(())
+                }
             });
             if let Err(e) = result {
                 failures.push(format!(

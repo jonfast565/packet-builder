@@ -62,6 +62,9 @@ impl Target for ZigTarget {
         }
         s.push_str("}\n\n");
         s.push_str("const Writer = std.ArrayList(u8).Writer;\n\n");
+        // Sources over a case's bytes refuse to fetch bytes from..to.
+        s.push_str("const Unread = struct { data: []const u8, from: usize, to: usize };\n\n");
+        s.push_str("fn fetchCase(u: *const Unread, at: u64, b: []u8) anyerror!void {\n    const a: usize = @intCast(at);\n    if (@max(a, u.from) < @min(a + b.len, u.to)) return error.@\"fetched an unread byte\";\n    @memcpy(b, u.data[a..][0..b.len]);\n}\n\n");
         s.push_str("fn encodeAll(p: anytype, pw: *pk.PbWriter) pk.PbError!void {\n    try p.encodeTo(pw);\n    try pw.finish();\n}\n\n");
         s.push_str(
             r#"fn pbErr(w: Writer, pre: []const u8, err: anyerror, trace: *const pk.PbTrace) !void {
@@ -86,7 +89,18 @@ impl Target for ZigTarget {
             let _ = writeln!(s, "fn case{}(allocator: std.mem.Allocator, w: Writer) anyerror!void {{", i);
             s.push_str("    var buf: [4096]u8 = undefined;\n");
             let _ = writeln!(s, "    const data = try std.fmt.hexToBytes(&buf, {});", quote(&c.hex));
-            s.push_str("    var r = pk.PbReader.init(data);\n");
+            if c.source {
+                let (from, to) = c.unread.unwrap_or((0, 0));
+                let _ = writeln!(s, "    const unread = Unread{{ .data = data, .from = {}, .to = {} }};", from, to);
+                let _ = writeln!(
+                    s,
+                    "    var src = try pk.PbSource.init(allocator, data.len, {}, &unread, fetchCase);",
+                    super::SOURCE_PAGE
+                );
+                s.push_str("    defer src.deinit();\n    var r = pk.PbReader.fromSource(&src);\n");
+            } else {
+                s.push_str("    var r = pk.PbReader.init(data);\n");
+            }
             if let Some((v, min, latest)) = c.versions(module) {
                 let _ = writeln!(s, "    try r.setVersion({}, {}, {});", v, min, latest);
             }

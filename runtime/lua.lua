@@ -41,6 +41,62 @@ function Reader:text(raw, enc, padded)
   return s
 end
 
+-- ---- sources ------------------------------------------------------------------
+
+-- Input read on demand (a file, a stream that can seek): `size` bytes,
+-- loaded a page at a time by fetch(offset, n), which returns the n bytes at
+-- `offset` as a string, or raises (or returns nil and a message). Only the
+-- pages a decode touches are fetched: fields a view skips are never read.
+-- Pages stay loaded while the source lives.
+local PbSource = {}
+PbSource.__index = PbSource
+
+-- A source of `size` bytes read in pages of `page` bytes.
+function PbSource.new(size, page, fetch)
+  return setmetatable({ size = size, page = math.max(page, 1), fetch = fetch, pages = {} }, PbSource)
+end
+
+-- A source reading the open file `f` (anything with seek and read).
+function PbSource.from_file(f)
+  local size = assert(f:seek("end"))
+  return PbSource.new(size, 4096, function(at, n)
+    assert(f:seek("set", at))
+    local s = f:read(n)
+    if not s or #s ~= n then return nil, "the file is shorter than " .. size .. " bytes" end
+    return s
+  end)
+end
+
+-- Bytes start..start + n - 1 (0-based, inside the input), fetched if needed;
+-- raises the fetch's message.
+function PbSource:bytes(start, n)
+  if n <= 0 then return "" end
+  local page, parts = self.page, {}
+  for p = start // page, (start + n - 1) // page do
+    local s = self.pages[p]
+    if not s then
+      local from = p * page
+      local want = math.min(page, self.size - from)
+      local msg
+      s, msg = self.fetch(from, want)
+      if type(s) ~= "string" then error(tostring(msg or "nothing was fetched"), 0) end
+      if #s ~= want then error(string.format("fetched %d byte(s) instead of %d", #s, want), 0) end
+      self.pages[p] = s
+    end
+    parts[#parts + 1] = s
+  end
+  local first = start % page
+  if #parts == 1 then return parts[1]:sub(first + 1, first + n) end
+  return table.concat(parts):sub(first + 1, first + n)
+end
+
+-- A reader that fetches its input from `src` (a PbSource) as it goes.
+function Reader.from_source(src)
+  local r = pb_reader("")
+  r.src, r.size, r.limit = src, src.size, src.size * 8
+  return r
+end
+
 -- Byte arrays are strings; a table of byte values is accepted too.
 local function pb_chars(v)
   if type(v) == "string" then return v end

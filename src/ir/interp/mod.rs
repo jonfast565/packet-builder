@@ -14,7 +14,7 @@ mod value;
 pub use decode::{decode, decode_args, decode_from, decode_from_args, decode_version};
 pub use encode::{encode, encode_args, encode_version};
 pub use frame::frame_length;
-pub use rt::{PbError as Error, PbErrorKind as ErrorKind, PbReader as Reader};
+pub use rt::{PbError as Error, PbErrorKind as ErrorKind, PbFetch as Fetch, PbReader as Reader, PbSource as Source};
 pub use show::render;
 pub use value::{Struct, Value};
 

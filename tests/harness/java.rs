@@ -78,13 +78,30 @@ impl Target for JavaTarget {
             let ver = c.version.map(|v| format!(", {}", v)).unwrap_or_default();
             let _ = writeln!(s, "\n    static void c{}() {{", i);
             let _ = writeln!(s, "        {} p;", class);
+            let decode = if c.source {
+                let check = match c.unread {
+                    Some((from, to)) => format!(
+                        "if (Math.max(at, {}L) < Math.min(at + buf.length, {}L)) throw new java.io.IOException(\"fetched an unread byte\"); ",
+                        from, to
+                    ),
+                    None => String::new(),
+                };
+                format!(
+                    "byte[] sd = hex({}); var src = new {}.PbSource(sd.length, {}, (at, buf) -> {{ {}System.arraycopy(sd, (int) at, buf, 0, buf.length); }}); p = {}.decodeFrom(new {}.PbReader(src));",
+                    quote(&c.hex),
+                    outer,
+                    super::SOURCE_PAGE,
+                    check,
+                    class,
+                    outer
+                )
+            } else {
+                format!("p = {}.decode(hex({}){});", class, quote(&c.hex), c.more_args() + &ver)
+            };
             let _ = writeln!(
                 s,
-                "        try {{ p = {}.decode(hex({}){}); }} catch ({}.PbException e) {{ OUT.println(\"{{\\\"ok\\\":false\" + e(e, \"\") + \"}}\"); return; }}",
-                class,
-                quote(&c.hex),
-                c.more_args() + &ver,
-                outer
+                "        try {{ {} }} catch ({}.PbException e) {{ OUT.println(\"{{\\\"ok\\\":false\" + e(e, \"\") + \"}}\"); return; }}",
+                decode, outer
             );
             for (name, v) in &c.set {
                 let path = resolve_path(module, p, name);

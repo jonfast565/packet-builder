@@ -120,9 +120,66 @@ export class PbTrace {
   }
 }
 
+/** The parts of Node's `fs` module `PbSource.fromFile` uses. */
+export interface PbFileSystem {
+  fstatSync(fd: number): { size: number };
+  readSync(fd: number, buf: Uint8Array, offset: number, length: number, position: number): number;
+}
+
+/**
+ * Input read on demand (a file, a stream that can seek): `length` bytes,
+ * loaded a page at a time by `fetch(offset, buf)`, which fills `buf` with
+ * the bytes at `offset` or throws. Only the pages a decode touches are
+ * fetched: fields a view skips are never read. Pages stay loaded while the
+ * source lives, so zero-copy views remain valid.
+ */
+export class PbSource {
+  /** The whole input; zeros until a page is loaded. */
+  readonly buf: Uint8Array;
+  readonly page: number;
+  readonly loaded: Uint8Array;
+  readonly fetch: (offset: number, buf: Uint8Array) => void;
+
+  constructor(length: number, page: number, fetch: (offset: number, buf: Uint8Array) => void) {
+    this.page = Math.max(page, 1);
+    this.buf = new Uint8Array(length);
+    this.loaded = new Uint8Array(Math.ceil(length / this.page));
+    this.fetch = fetch;
+  }
+
+  /** A source reading the open file `fd` with Node's `fs` module. */
+  static fromFile(fs: PbFileSystem, fd: number): PbSource {
+    const length = fs.fstatSync(fd).size;
+    return new PbSource(length, 4096, (at, buf) => {
+      if (fs.readSync(fd, buf, 0, buf.length, at) !== buf.length) {
+        throw new Error(`the file is shorter than ${length} bytes`);
+      }
+    });
+  }
+
+  get length(): number {
+    return this.buf.length;
+  }
+
+  /** Make bytes `start..start + n` (inside the input) loaded; throws what
+   * `fetch` throws. */
+  load(start: number, n: number): void {
+    if (n <= 0) return;
+    const page = this.page;
+    for (let p = Math.floor(start / page); p <= Math.floor((start + n - 1) / page); p++) {
+      if (this.loaded[p]) continue;
+      const at = p * page;
+      this.fetch(at, this.buf.subarray(at, Math.min(at + page, this.buf.length)));
+      this.loaded[p] = 1;
+    }
+  }
+}
+
 /** Reads integers of any bit width (MSB-first) and byte-aligned values. */
 export class PbReader extends PbTrace {
   data: Uint8Array;
+  /** A source that fills `data` on demand. */
+  src: PbSource | null = null;
   /** End of the readable data (a window inside data), in bits. */
   limit: number;
   /** Windows open. */
@@ -132,6 +189,39 @@ export class PbReader extends PbTrace {
     super();
     this.data = data;
     this.limit = data.length * 8;
+  }
+
+  /** A reader that fetches its input from `src` as it goes. */
+  static fromSource(src: PbSource): PbReader {
+    const r = new PbReader(src.buf);
+    r.src = src;
+    return r;
+  }
+
+  /** Fetch input bytes `start..start + n` from the source if needed. */
+  load(start: number, n: number): void {
+    if (!this.src) return;
+    try {
+      this.src.load(start, n);
+    } catch (e) {
+      throw this.error(PbError.INVALID, `cannot read the input: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  /** Where `term` first starts in input bytes `start..end`, or -1. */
+  find(term: Uint8Array, start: number, end: number): number {
+    if (!this.src) return pbFind(this.data, term, start, end);
+    // Page by page, so a long input is only read up to the terminator.
+    const page = this.src.page;
+    let at = start;
+    while (at < end) {
+      const to = Math.min((Math.floor(at / page) + 1) * page + term.length - 1, end);
+      this.load(at, to - at);
+      const found = pbFind(this.data, term, at, to);
+      if (found >= 0 || to === end) return found;
+      at = to + 1 - term.length;
+    }
+    return -1;
   }
 
   remainingBits(): number {
@@ -206,6 +296,7 @@ export class PbReader extends PbTrace {
   /** Up to 32 bits, MSB first, as an unsigned number. */
   readBits(width: number): number {
     this.need(width);
+    if (this.src) this.load(this.pos >> 3, ((this.pos + width + 7) >> 3) - (this.pos >> 3));
     let v = 0;
     let left = width;
     while (left > 0) {
@@ -231,6 +322,7 @@ export class PbReader extends PbTrace {
   readUint(nbytes: number, little: boolean): number {
     this.need(nbytes * 8);
     const start = this.pos >> 3;
+    if (this.src) this.load(start, nbytes);
     this.pos += nbytes * 8;
     let v = 0;
     for (let i = 0; i < nbytes; i++) {
@@ -244,6 +336,7 @@ export class PbReader extends PbTrace {
   readUintBig(nbytes: number, little: boolean): bigint {
     this.need(nbytes * 8);
     const start = this.pos >> 3;
+    if (this.src) this.load(start, nbytes);
     this.pos += nbytes * 8;
     let v = 0n;
     for (let i = 0; i < nbytes; i++) {
@@ -256,6 +349,7 @@ export class PbReader extends PbTrace {
   readF32(little: boolean): number {
     this.need(32);
     const start = this.pos >> 3;
+    if (this.src) this.load(start, 4);
     this.pos += 32;
     return new DataView(this.data.buffer, this.data.byteOffset + start, 4).getFloat32(0, little);
   }
@@ -263,6 +357,7 @@ export class PbReader extends PbTrace {
   readF64(little: boolean): number {
     this.need(64);
     const start = this.pos >> 3;
+    if (this.src) this.load(start, 8);
     this.pos += 64;
     return new DataView(this.data.buffer, this.data.byteOffset + start, 8).getFloat64(0, little);
   }
@@ -271,6 +366,7 @@ export class PbReader extends PbTrace {
   readBytes(n: number): Uint8Array {
     this.need(n * 8);
     const start = this.pos >> 3;
+    if (this.src) this.load(start, n);
     this.pos += n * 8;
     return this.data.slice(start, start + n);
   }
@@ -279,6 +375,7 @@ export class PbReader extends PbTrace {
   readView(n: number): Uint8Array {
     this.need(n * 8);
     const start = this.pos >> 3;
+    if (this.src) this.load(start, n);
     this.pos += n * 8;
     return this.data.subarray(start, start + n);
   }
@@ -290,7 +387,9 @@ export class PbReader extends PbTrace {
 
   readCstring(): Uint8Array {
     const start = this.pos >> 3;
-    const end = this.data.subarray(0, this.limit >> 3).indexOf(0, start);
+    const end = this.src
+      ? this.find(PB_NUL, start, this.limit >> 3)
+      : this.data.subarray(0, this.limit >> 3).indexOf(0, start);
     if (end < 0) throw this.short(this.remainingBits() + 8, "the NUL-terminated string");
     this.pos = (end + 1) * 8;
     return this.data.subarray(start, end);
@@ -398,9 +497,10 @@ export class PbReader extends PbTrace {
    * rest of the input when `optional`, otherwise an error. A view of the input. */
   readUntilView(term: Uint8Array, optional: boolean): Uint8Array {
     const start = this.pos >> 3;
-    const end = pbFind(this.data, term, start, this.limit >> 3);
+    const end = this.find(term, start, this.limit >> 3);
     if (end < 0) {
       if (!optional) throw this.short(this.remainingBits() + 8, "the terminated field");
+      this.load(start, (this.limit >> 3) - start);
       this.pos = this.limit;
       return this.data.subarray(start, this.limit >> 3);
     }
@@ -414,8 +514,19 @@ export class PbReader extends PbTrace {
   }
 
   /** Checksum `algo` of the input between two bit positions (whole bytes);
-   * the bytes between `holeStart` and `holeEnd` count as zero. */
+   * the bytes between `holeStart` and `holeEnd` count as zero. From a source
+   * that cannot be read, the checksum of zeros (which then fails to match). */
   checksum(algo: number, start: number, end: number, holeStart: number, holeEnd: number): number {
+    if (this.src) {
+      const base = start >> 3;
+      const n = Math.max((end >> 3) - base, 0);
+      try {
+        this.src.load(base, n);
+      } catch {
+        const hole = (h: number) => Math.max((h >> 3) - base, 0);
+        return pbChecksum(algo, new Uint8Array(n), 0, n, hole(holeStart), hole(holeEnd));
+      }
+    }
     return pbChecksum(algo, this.data, start >> 3, end >> 3, holeStart >> 3, holeEnd >> 3);
   }
 }
@@ -743,6 +854,8 @@ function pbPut(buf: Uint8Array, at: number, value: number | bigint, nbytes: numb
 }
 
 /** Index of `term` in `data[from:to]`, or -1. */
+const PB_NUL = new Uint8Array([0]);
+
 function pbFind(data: Uint8Array, term: Uint8Array, from: number, to: number): number {
   outer: for (let i = from; i + term.length <= to; i++) {
     for (let j = 0; j < term.length; j++) {

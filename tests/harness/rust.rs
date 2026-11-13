@@ -36,20 +36,39 @@ impl Target for RustTarget {
         s.push_str("fn main() {\n");
         for c in cases {
             let p = packet(module, &c.packet);
-            match c.version {
-                Some(v) => {
-                    let _ = writeln!(
-                        s,
-                        "    match {}::decode_v(&pb_unhex({}), {}{}) {{",
-                        p.name,
-                        quote(&c.hex),
-                        v,
-                        c.more_args()
-                    );
-                }
-                None => {
-                    let _ =
-                        writeln!(s, "    match {}::decode(&pb_unhex({}){}) {{", p.name, quote(&c.hex), c.more_args());
+            if c.source {
+                // A block keeps the source alive while `p` borrows it.
+                let (from, to) = c.unread.unwrap_or((0, 0));
+                let _ = writeln!(
+                    s,
+                    "    {{\n    let d = pb_unhex({});\n    let src = PbSource::new(d.len(), {}, |at, buf| {{\n        let at = at as usize;\n        if at.max({}) < (at + buf.len()).min({}) {{ return Err(std::io::Error::other(\"fetched an unread byte\")); }}\n        buf.copy_from_slice(&d[at..at + buf.len()]);\n        Ok(())\n    }});\n    let mut r = PbReader::from_source(&src);\n    match {}::decode_from(&mut r) {{",
+                    quote(&c.hex),
+                    super::SOURCE_PAGE,
+                    from,
+                    to,
+                    p.name
+                );
+            } else {
+                match c.version {
+                    Some(v) => {
+                        let _ = writeln!(
+                            s,
+                            "    match {}::decode_v(&pb_unhex({}), {}{}) {{",
+                            p.name,
+                            quote(&c.hex),
+                            v,
+                            c.more_args()
+                        );
+                    }
+                    None => {
+                        let _ = writeln!(
+                            s,
+                            "    match {}::decode(&pb_unhex({}){}) {{",
+                            p.name,
+                            quote(&c.hex),
+                            c.more_args()
+                        );
+                    }
                 }
             }
             s.push_str("        Err(e) => println!(\"{{\\\"ok\\\":false,{}}}\", pb_e(&e, \"\")),\n");
@@ -74,6 +93,9 @@ impl Target for RustTarget {
             s.push_str("                Ok(b) => println!(\"{{\\\"ok\\\":true,\\\"value\\\":{},\\\"encoded\\\":{}}}\", v, pb_hex(&b)),\n");
             s.push_str("                Err(e) => println!(\"{{\\\"ok\\\":true,\\\"value\\\":{},{}}}\", v, pb_e(&e, \"encode_\")),\n");
             s.push_str("            }\n        }\n    }\n");
+            if c.source {
+                s.push_str("    }\n");
+            }
             if !c.args.is_empty() {
                 s.push_str("    println!(\"{{}}\");\n");
                 continue;

@@ -67,9 +67,21 @@ local function call(f, x, args, version)
   return pcall(f, (table.unpack or unpack)(t, 1, #args + 2))
 end
 
-local function run(C, h, version, set, frame, args)
+-- Decode d, through a source when `source` is set: { from, to } is a byte
+-- range the fetch refuses to load ({} for none).
+local function decode(C, d, args, version, source)
+  if not source then return call(C.decode, d, args, version) end
+  local from, to = source[1], source[2]
+  local src = M.PbSource.new(#d, SOURCE_PAGE, function(at, n)
+    if from and math.max(at, from) < math.min(at + n, to) then error("fetched an unread byte", 0) end
+    return d:sub(at + 1, at + n)
+  end)
+  return pcall(C.decode_from, M.PbReader.from_source(src))
+end
+
+local function run(C, h, version, set, frame, args, source)
   local d = unhex(h)
-  local ok, p = call(C.decode, d, args, version)
+  local ok, p = decode(C, d, args, version, source)
   if not ok then
     print('{"ok":false' .. fields(caught(p), "") .. "}")
   else
@@ -117,6 +129,7 @@ impl Target for LuaTarget {
 
     fn harness(&self, module: &Module, cases: &[Case], _zero_copy: bool) -> String {
         let mut s = String::from(RUNNER);
+        let _ = writeln!(s, "SOURCE_PAGE = {}\n", super::SOURCE_PAGE);
         s.push_str("local cases = {\n");
         for c in cases {
             let p = packet(module, &c.packet);
@@ -135,18 +148,24 @@ impl Target for LuaTarget {
                     .collect();
                 format!("function(p){} end", body)
             };
+            let source = match (c.source, c.unread) {
+                (false, _) => "false".to_string(),
+                (true, None) => "{}".to_string(),
+                (true, Some((from, to))) => format!("{{ {}, {} }}", from, to),
+            };
             let _ = writeln!(
                 s,
-                "  {{ M{}, \"{}\", {}, {}, {}, {{ {} }} }},",
+                "  {{ M{}, \"{}\", {}, {}, {}, {{ {} }}, {} }},",
                 index(&p.name),
                 c.hex,
                 ver,
                 set,
                 super::has_frame(module, p),
-                c.arg_list()
+                c.arg_list(),
+                source
             );
         }
-        s.push_str("}\n\nfor _, c in ipairs(cases) do run(c[1], c[2], c[3], c[4], c[5], c[6]) end\n");
+        s.push_str("}\n\nfor _, c in ipairs(cases) do run(c[1], c[2], c[3], c[4], c[5], c[6], c[7]) end\n");
         s
     }
 

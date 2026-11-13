@@ -24,10 +24,11 @@ impl Module {
         let mut elements = Vec::new();
         for p in &self.packets {
             for m in 0..p.members.len() {
-                if let Some(v) = view(self, p, m) {
+                if let Some(v) = view(self, p, m, false) {
                     elements.extend(element_view(self, &p.members[m].name, &v));
                     views.push(v);
                 }
+                elements.extend(super::setters::setter_view(self, p, m));
             }
         }
         let taken = |packets: &[Packet], name: &str| packets.iter().any(|p| p.name.eq_ignore_ascii_case(name));
@@ -36,8 +37,8 @@ impl Module {
                 return Err(format!("cannot add view `{}`: a packet has that name", v.name));
             }
         }
-        // An element view whose name is taken (a member `<field>_at`) is
-        // left out: the field views come first.
+        // An element or setter view whose name is taken (a member
+        // `<field>_at` or `<field>_set`) is left out: field views come first.
         for e in elements {
             if !taken(&self.packets, &e.name) && !taken(&views, &e.name) {
                 views.push(e);
@@ -115,7 +116,7 @@ fn codec_deps(c: &Codec, needed: &mut HashSet<usize>) {
 }
 
 /// The steps that hold member `m`.
-fn target_steps(p: &Packet, m: usize) -> Vec<usize> {
+pub(super) fn target_steps(p: &Packet, m: usize) -> Vec<usize> {
     let holds = |s: &Step| match s {
         Step::Field { member: Some(x), .. } | Step::Switch { member: x, .. } | Step::At { member: x, .. } => *x == m,
         Step::Calc { member } => *member == m,
@@ -125,7 +126,9 @@ fn target_steps(p: &Packet, m: usize) -> Vec<usize> {
     p.steps.iter().enumerate().filter(|(_, s)| holds(s)).map(|(i, _)| i).collect()
 }
 
-fn view(module: &Module, p: &Packet, m: usize) -> Option<Packet> {
+/// `keep_parts`: keep every part of a bitfield the view reads (setter views
+/// write the container back whole).
+pub(super) fn view(module: &Module, p: &Packet, m: usize, keep_parts: bool) -> Option<Packet> {
     let targets = target_steps(p, m);
     let last = *targets.last()?;
     let mut needed: HashSet<usize> = HashSet::from([m]);
@@ -169,9 +172,11 @@ fn view(module: &Module, p: &Packet, m: usize) -> Option<Packet> {
                     }
                 }
             }
-            Step::Bitfield { container_width, .. } => {
+            Step::Bitfield { container_width, parts, .. } => {
                 if !target && !holds_needed(step, &needed) {
                     plan[at] = Plan::Skip(*container_width as u64, Vec::new());
+                } else if keep_parts {
+                    needed.extend(parts.iter().map(|b| b.member));
                 }
             }
             Step::Calc { member } => {

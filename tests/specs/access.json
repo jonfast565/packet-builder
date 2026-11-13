@@ -258,6 +258,67 @@
         3
       ],
       "error_kind": "incomplete"
+    },
+    {
+      "name": "setter after variable data",
+      "packet": "Header_tail_set",
+      "hex": "45 85 02 0001 0002 0a0b 01 04 00000007 686900 17 deadbeef 1234",
+      "set": {
+        "tail": 1
+      },
+      "encoded": "45 85 02 0001 0002 0a0b 01 04 00000007 686900 17 00000001 1234"
+    },
+    {
+      "name": "setter keeps reserved bits",
+      "packet": "Header_code_set",
+      "hex": "45 f5 02 0001 0002 0a0b 01 04 00000007 686900 17 deadbeef 1234",
+      "set": {
+        "code": 3
+      },
+      "encoded": "45 f3 02 0001 0002 0a0b 01 04 00000007 686900 17 deadbeef 1234"
+    },
+    {
+      "name": "setter of a nibble",
+      "packet": "Header_ihl_set",
+      "hex": "45 85 02 0001 0002 0a0b 01 04 00000007 686900 17 deadbeef 1234",
+      "set": {
+        "ihl": 6
+      },
+      "encoded": "46 85 02 0001 0002 0a0b 01 04 00000007 686900 17 deadbeef 1234"
+    },
+    {
+      "name": "setter out of range",
+      "packet": "Header_ihl_set",
+      "hex": "45 85 02 0001 0002 0a0b 01 04 00000007 686900 17 deadbeef 1234",
+      "set": {
+        "ihl": 16
+      },
+      "encode_error": true,
+      "encode_error_kind": "range"
+    },
+    {
+      "name": "setter keeps the member's check",
+      "packet": "Header_version_set",
+      "hex": "45 85 02 0001 0002 0a0b 01 04 00000007 686900 17 deadbeef 1234",
+      "set": {
+        "version": 5
+      },
+      "encode_error": true,
+      "encode_error_kind": "constraint"
+    },
+    {
+      "name": "setter unchanged",
+      "packet": "Header_pair_set",
+      "hex": "45 85 02 0001 0002 0a0b 01 04 00000007 686900 17 deadbeef 1234"
+    },
+    {
+      "name": "setter recomputes the checksum",
+      "packet": "Summed_ttl_set",
+      "hex": "4011adba1234ffee",
+      "set": {
+        "ttl": 1
+      },
+      "encoded": "0111ecba1234ffee"
     }
   ]
 }

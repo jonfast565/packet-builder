@@ -34,6 +34,23 @@ impl Target for GoTarget {
             s.push_str("\tfunc() {\n");
             let _ = writeln!(s, "\t\tdata, _ := hex.DecodeString({})", quote(&c.hex));
             match c.version {
+                _ if c.source => {
+                    let _ = writeln!(
+                        s,
+                        "\t\tsrc := NewPbSource(len(data), {}, func(at int64, buf []byte) error {{",
+                        super::SOURCE_PAGE
+                    );
+                    if let Some((from, to)) = c.unread {
+                        let _ = writeln!(
+                            s,
+                            "\t\t\tif int(at) < {} && int(at)+len(buf) > {} {{\n\t\t\t\treturn fmt.Errorf(\"fetched an unread byte\")\n\t\t\t}}",
+                            to, from
+                        );
+                    }
+                    s.push_str("\t\t\tcopy(buf, data[at:])\n\t\t\treturn nil\n\t\t})\n");
+                    let _ = writeln!(s, "\t\tp := &{}{{}}", p.name);
+                    s.push_str("\t\terr := p.DecodeFrom(NewPbReaderFromSource(src))\n");
+                }
                 Some(v) => {
                     let _ = writeln!(s, "\t\tp, err := Decode{}V(data, {}{})", p.name, v, c.more_args());
                 }

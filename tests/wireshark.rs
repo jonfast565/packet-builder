@@ -129,8 +129,9 @@ fn expect_packet(
 fn run_spec(tshark: &str, spec: &Spec) -> Vec<String> {
     let dir = work_dir("wireshark", &spec.name);
     // A dissector cannot pass arguments: packets with parameters (element
-    // views) are left out.
-    let cases: Vec<&Case> = spec.cases.iter().filter(|c| c.args.is_empty()).collect();
+    // views) are left out. It reads a buffer, so cases that need a source
+    // to refuse some bytes are too.
+    let cases: Vec<&Case> = spec.cases.iter().filter(|c| c.args.is_empty() && c.unread.is_none()).collect();
     let names: Vec<&str> = {
         let mut n: Vec<&str> = cases.iter().map(|c| c.packet.as_str()).collect();
         n.sort();

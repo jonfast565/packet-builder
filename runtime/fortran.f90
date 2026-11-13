@@ -49,12 +49,40 @@
     type(pb_error) :: e
   end type pb_trace
 
+  abstract interface
+    !> Fills BUF with the input bytes at OFFSET (from 0). On failure it
+    !> allocates ERR to the reason; on success it leaves ERR unallocated.
+    !> CTX is the source's user data.
+    subroutine pb_fetch(ctx, offset, buf, err)
+      import :: int8, int64
+      class(*), pointer, intent(in) :: ctx
+      integer(int64), intent(in) :: offset
+      integer(int8), intent(out) :: buf(:)
+      character(len=:), allocatable, intent(out) :: err
+    end subroutine pb_fetch
+  end interface
+
+  !> Input read on demand (a file, a stream that can seek): LEN bytes,
+  !> loaded a page of PAGE bytes at a time by FETCH, which gets CTX. A reader
+  !> made from it (pb_reader_from_source) fetches only the pages a decode
+  !> touches: fields a view skips are never read.
+  type :: pb_source
+    integer(int64) :: len = 0
+    integer(int64) :: page = 4096
+    procedure(pb_fetch), pointer, nopass :: fetch => null()
+    class(*), pointer :: ctx => null()
+  end type pb_source
+
   !> Reads integers of any bit width (MSB-first) and byte-aligned values.
   type, extends(pb_trace) :: pb_reader
     integer(int8), allocatable :: data(:)
     !> End of the readable data in bits (a window inside the data).
     integer(int64) :: limit = 0
     integer :: windows = 0
+    !> A reader from a source: where pages come from, and which are loaded
+    !> (not allocated for a reader of a buffer).
+    type(pb_source) :: src
+    logical, allocatable :: loaded(:)
   end type pb_reader
 
   !> Where a reader was before pb_jump.
@@ -338,6 +366,126 @@
     r%limit = 8_int64 * size(data, kind=int64)
   end subroutine pb_reader_init
 
+  !> A reader that fetches its input from SRC as it goes.
+  subroutine pb_reader_from_source(r, src)
+    type(pb_reader), intent(out) :: r
+    type(pb_source), intent(in) :: src
+    r%src = src
+    r%src%page = max(src%page, 1_int64)
+    allocate(r%data(0:src%len - 1))
+    r%data = 0_int8
+    allocate(r%loaded(0:(src%len + r%src%page - 1) / r%src%page - 1))
+    r%loaded = .false.
+    r%limit = 8 * src%len
+  end subroutine pb_reader_from_source
+
+  !> A source reading the file PATH (pages of 4096 bytes); IOSTAT is
+  !> nonzero when it cannot be opened. Close it with pb_source_close.
+  subroutine pb_source_open(src, path, iostat)
+    type(pb_source), intent(out) :: src
+    character(len=*), intent(in) :: path
+    integer, intent(out) :: iostat
+    integer :: u
+    integer(int64) :: n
+    open(newunit=u, file=path, access='stream', form='unformatted', action='read', status='old', iostat=iostat)
+    if (iostat /= 0) return
+    inquire(unit=u, size=n)
+    src%len = max(n, 0_int64)
+    src%fetch => pb_file_fetch
+    allocate(src%ctx, source=u)
+  end subroutine pb_source_open
+
+  !> Close a source from pb_source_open.
+  subroutine pb_source_close(src)
+    type(pb_source), intent(inout) :: src
+    if (.not. associated(src%ctx)) return
+    select type (u => src%ctx)
+    type is (integer)
+      close(u)
+    end select
+    deallocate(src%ctx)
+  end subroutine pb_source_close
+
+  subroutine pb_file_fetch(ctx, offset, buf, err)
+    class(*), pointer, intent(in) :: ctx
+    integer(int64), intent(in) :: offset
+    integer(int8), intent(out) :: buf(:)
+    character(len=:), allocatable, intent(out) :: err
+    integer :: ios
+    buf = 0_int8
+    select type (ctx)
+    type is (integer)
+      read(ctx, pos=offset + 1, iostat=ios) buf
+      if (ios /= 0) err = 'cannot read the file at byte ' // pb_itoa(offset)
+    end select
+  end subroutine pb_file_fetch
+
+  !> Fetch the pages of a source reader holding bytes START..START + N - 1
+  !> that are not loaded yet; false (with the fetch's message in WHY) when
+  !> one fails. Nothing to do for a reader of a buffer.
+  function pb_source_load(r, start, n, why) result(ok)
+    type(pb_reader), intent(inout) :: r
+    integer(int64), intent(in) :: start, n
+    character(len=:), allocatable, intent(out) :: why
+    logical :: ok
+    integer(int64) :: p, from, to
+    ok = .true.
+    if (.not. allocated(r%loaded) .or. n <= 0) return
+    do p = start / r%src%page, (start + n - 1) / r%src%page
+      if (r%loaded(p)) cycle
+      from = p * r%src%page
+      to = min(from + r%src%page, r%src%len)
+      call r%src%fetch(r%src%ctx, from, r%data(from:to - 1), why)
+      if (allocated(why)) then
+        ok = .false.
+        return
+      end if
+      r%loaded(p) = .true.
+    end do
+  end function pb_source_load
+
+  !> Make input bytes START..START + N - 1 (which exist) readable; false
+  !> (with the error recorded) when the source cannot be read.
+  function pb_load(r, start, n) result(ok)
+    type(pb_reader), intent(inout) :: r
+    integer(int64), intent(in) :: start, n
+    logical :: ok
+    character(len=:), allocatable :: why
+    ok = .true.
+    if (.not. allocated(r%loaded)) return
+    ok = pb_source_load(r, start, n, why)
+    if (.not. ok) call pb_fail(r, PB_INVALID, 'cannot read the input: ' // why)
+  end function pb_load
+
+  !> Where TERM first starts in input bytes START..STOP - 1, or -1 (also
+  !> when the source cannot be read, with the error recorded).
+  function pb_find(r, start, stop, term) result(at)
+    type(pb_reader), intent(inout) :: r
+    integer(int64), intent(in) :: start, stop
+    integer(int8), intent(in) :: term(:)
+    integer(int64) :: at
+    integer(int64) :: from, to, i, nt
+    at = -1
+    nt = size(term, kind=int64)
+    from = start
+    do while (from < stop)
+      to = stop
+      if (allocated(r%loaded)) then
+        ! Page by page, so a long input is only read up to the terminator.
+        to = min((from / r%src%page + 1) * r%src%page + nt - 1, stop)
+        if (.not. pb_load(r, from, to - from)) return
+      end if
+      do i = from, to - nt
+        if (all(r%data(i:i + nt - 1) == term)) then
+          at = i
+          return
+        end if
+      end do
+      if (to == stop) exit
+      from = to + 1 - nt
+    end do
+  end function pb_find
+
   pure function pb_remaining_bits(r) result(v)
     type(pb_reader), intent(in) :: r
     integer(int64) :: v
@@ -462,6 +610,7 @@
     integer(int64) :: b
     v = 0
     if (.not. pb_need(r, int(width, int64))) return
+    if (.not. pb_load(r, shiftr(r%pos, 3), shiftr(r%pos + width + 7, 3) - shiftr(r%pos, 3))) return
     left = width
     do while (left > 0)
       b = pb_u8(r%data(shiftr(r%pos, 3)))
@@ -484,6 +633,7 @@
     v = 0
     if (.not. pb_need(r, 8_int64 * nbytes)) return
     start = shiftr(r%pos, 3)
+    if (.not. pb_load(r, start, int(nbytes, int64))) return
     do i = 0, nbytes - 1
       if (little) then
         v = ior(ishft(v, 8), pb_u8(r%data(start + nbytes - 1 - i)))
@@ -504,6 +654,7 @@
     end if
     if (.not. pb_need(r, n * 8)) return
     start = shiftr(r%pos, 3)
+    if (.not. pb_load(r, start, n)) return
     allocate(out(n))
     if (n > 0) out(1:n) = r%data(start:start + n - 1)
     r%pos = r%pos + n * 8
@@ -516,6 +667,7 @@
     out = 0_int8
     if (.not. pb_need(r, 48_int64)) return
     start = shiftr(r%pos, 3)
+    if (.not. pb_load(r, start, 6_int64)) return
     out = r%data(start:start + 5)
     r%pos = r%pos + 48
   end subroutine pb_read_mac
@@ -528,22 +680,19 @@
   end subroutine pb_skip_bits
 
   !> Bytes before a NUL terminator; the terminator is consumed.
-  pure subroutine pb_read_cstring(r, out)
+  subroutine pb_read_cstring(r, out)
     type(pb_reader), intent(inout) :: r
     integer(int8), allocatable, intent(out) :: out(:)
-    integer(int64) :: start, i, stop
+    integer(int64) :: start, i
     if (r%e%kind /= PB_OK) return
     start = shiftr(r%pos, 3)
-    stop = shiftr(r%limit, 3)
-    i = start
-    do while (i < stop)
-      if (r%data(i) == 0) exit
-      i = i + 1
-    end do
-    if (i >= stop) then
+    i = pb_find(r, start, shiftr(r%limit, 3), [0_int8])
+    if (r%e%kind /= PB_OK) return
+    if (i < 0) then
       call pb_short(r, pb_remaining_bits(r) + 8, 'the NUL-terminated string')
       return
     end if
+    if (.not. pb_load(r, start, i - start)) return
     allocate(out(i - start))
     if (i > start) out(1:i - start) = r%data(start:i - 1)
     r%pos = (i + 1) * 8
@@ -576,30 +725,29 @@
 
   !> The bytes before TERM, consuming both. Without the terminator: the
   !> rest of the input when OPTIONAL, otherwise an error.
-  pure subroutine pb_read_until(r, term, optional, out)
+  subroutine pb_read_until(r, term, optional, out)
     type(pb_reader), intent(inout) :: r
     integer(int8), intent(in) :: term(:)
     logical, intent(in) :: optional
     integer(int8), allocatable, intent(out) :: out(:)
-    integer(int64) :: start, stop, i, nt
+    integer(int64) :: start, stop, i
     if (r%e%kind /= PB_OK) return
     start = shiftr(r%pos, 3)
     stop = shiftr(r%limit, 3)
-    nt = size(term, kind=int64)
-    i = start
-    do while (i + nt <= stop)
-      if (all(r%data(i:i + nt - 1) == term)) then
-        allocate(out(i - start))
-        if (i > start) out(1:i - start) = r%data(start:i - 1)
-        r%pos = (i + nt) * 8
-        return
-      end if
-      i = i + 1
-    end do
+    i = pb_find(r, start, stop, term)
+    if (r%e%kind /= PB_OK) return
+    if (i >= 0) then
+      if (.not. pb_load(r, start, i - start)) return
+      allocate(out(i - start))
+      if (i > start) out(1:i - start) = r%data(start:i - 1)
+      r%pos = (i + size(term, kind=int64)) * 8
+      return
+    end if
     if (.not. optional) then
       call pb_short(r, pb_remaining_bits(r) + 8, 'the terminated field')
       return
     end if
+    if (.not. pb_load(r, start, stop - start)) return
     allocate(out(max(stop - start, 0_int64)))
     if (stop > start) out(1:stop - start) = r%data(start:stop - 1)
     r%pos = r%limit
@@ -676,13 +824,25 @@
   end function pb_read_varint
 
   !> Checksum ALGO of the input between two bit positions (whole bytes);
-  !> the bytes between HOLE_FROM and HOLE_TO count as zero.
-  pure function pb_reader_checksum(r, algo, from, to, hole_from, hole_to) result(v)
-    type(pb_reader), intent(in) :: r
+  !> the bytes between HOLE_FROM and HOLE_TO count as zero. From a source
+  !> that cannot be read, the checksum of zeros (which then fails to match).
+  function pb_reader_checksum(r, algo, from, to, hole_from, hole_to) result(v)
+    type(pb_reader), intent(inout) :: r
     integer, intent(in) :: algo
     integer(int64), intent(in) :: from, to, hole_from, hole_to
     integer(int64) :: v
-    v = pb_checksum(algo, r%data, from / 8, to / 8, hole_from / 8, hole_to / 8)
+    integer(int64) :: base, n
+    integer(int8), allocatable :: zeros(:)
+    character(len=:), allocatable :: why
+    base = from / 8
+    n = max(to / 8 - base, 0_int64)
+    if (pb_source_load(r, base, n, why)) then
+      v = pb_checksum(algo, r%data, base, to / 8, hole_from / 8, hole_to / 8)
+      return
+    end if
+    allocate(zeros(n))
+    zeros = 0_int8
+    v = pb_checksum(algo, zeros, 0_int64, n, max(hole_from / 8 - base, 0_int64), max(hole_to / 8 - base, 0_int64))
   end function pb_reader_checksum
 
   ! -- text

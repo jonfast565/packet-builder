@@ -8,11 +8,16 @@ end
 local PB_MAX_DEPTH = 64
 
 -- A reader over the frame's bytes (a Lua string); positions are in bits.
+-- A reader with `src` set fetches its input from that source as it goes:
+-- src:bytes(start, n) returns input bytes start..start + n - 1 (0-based) as a
+-- string or raises, and src.page is how much a terminator scan reads at a
+-- time. `size` is the input size in bytes.
 local Reader = {}
 Reader.__index = Reader
 
 local function pb_reader(data)
-  return setmetatable({ data = data, pos = 0, limit = #data * 8, windows = 0, frames = {}, version = 0 }, Reader)
+  return setmetatable(
+    { data = data, size = #data, pos = 0, limit = #data * 8, windows = 0, frames = {}, version = 0 }, Reader)
 end
 
 -- @versions{
@@ -47,6 +52,35 @@ function Reader:fail(kind, msg)
 end
 
 function Reader:remaining() return self.limit - self.pos end
+
+-- Input bytes start..start + n - 1 (0-based), which `need` has checked exist.
+function Reader:bytes(start, n)
+  local src = self.src
+  if not src then return self.data:sub(start + 1, start + n) end
+  local ok, s = pcall(src.bytes, src, start, n)
+  if not ok then self:fail("invalid", "cannot read the input: " .. tostring(s)) end
+  return s
+end
+
+-- Where `term` first starts (0-based) in input bytes start..stop - 1, or nil.
+function Reader:find(term, start, stop)
+  local src = self.src
+  if not src then
+    local at = self.data:find(term, start + 1, true)
+    if at and at - 1 + #term <= stop then return at - 1 end
+    return nil
+  end
+  -- Page by page, so a long input is only read up to the terminator.
+  local at = start
+  while at < stop do
+    local to = math.min((at // src.page + 1) * src.page + #term - 1, stop)
+    local found = self:bytes(at, to - at):find(term, 1, true)
+    if found then return at + found - 1 end
+    if to == stop then break end
+    at = to + 1 - #term
+  end
+  return nil
+end
 -- Whole bytes left before the end of the window or input (`remaining`).
 function Reader:remaining_bytes() return (self.limit - self.pos) // 8 end
 
@@ -100,9 +134,14 @@ end
 
 function Reader:read_bits(width)
   self:need(width)
+  local data, base = self.data, 0
+  if self.src then
+    base = self.pos >> 3
+    data = self:bytes(base, ((self.pos + width + 7) >> 3) - base)
+  end
   local v, left = 0, width
   while left > 0 do
-    local byte = self.data:byte((self.pos >> 3) + 1)
+    local byte = data:byte((self.pos >> 3) - base + 1)
     local off = self.pos & 7
     local take = math.min(8 - off, left)
     v = (v << take) | ((byte >> (8 - off - take)) & ((1 << take) - 1))
@@ -122,10 +161,11 @@ function Reader:read_uint(n, little)
     end
     return v
   end
-  local start = (self.pos >> 3) + 1
+  local data, start = self.data, (self.pos >> 3) + 1
+  if self.src then data, start = self:bytes(start - 1, n), 1 end
   local v = 0
   for i = 0, n - 1 do
-    local b = self.data:byte(start + i)
+    local b = data:byte(start + i)
     if little then v = v | (b << (8 * i)) else v = (v << 8) | b end
   end
   self.pos = self.pos + n * 8
@@ -134,9 +174,9 @@ end
 
 function Reader:read_bytes(n)
   self:need(n * 8)
-  local start = (self.pos >> 3) + 1
+  local s = self:bytes(self.pos >> 3, n)
   self.pos = self.pos + n * 8
-  return self.data:sub(start, start + n - 1)
+  return s
 end
 
 function Reader:read_float(width, little)
@@ -157,24 +197,27 @@ function Reader:count(n, elem_bits)
 end
 
 function Reader:read_cstring()
-  local start = (self.pos >> 3) + 1
-  local stop = self.data:find("\0", start, true)
-  if not stop or stop > self.limit >> 3 then self:short(self:remaining() + 8, "the NUL-terminated string") end
-  self.pos = stop * 8
-  return self.data:sub(start, stop - 1)
+  local start = self.pos >> 3
+  local at = self:find("\0", start, self.limit >> 3)
+  if not at then self:short(self:remaining() + 8, "the NUL-terminated string") end
+  local s = self:bytes(start, at - start)
+  self.pos = (at + 1) * 8
+  return s
 end
 
 function Reader:read_until(term, optional)
-  local start = (self.pos >> 3) + 1
+  local start = self.pos >> 3
   local last = self.limit >> 3
-  local stop = self.data:find(term, start, true)
-  if stop and stop + #term - 1 <= last then
-    self.pos = (stop - 1 + #term) * 8
-    return self.data:sub(start, stop - 1)
+  local at = self:find(term, start, last)
+  if at then
+    local s = self:bytes(start, at - start)
+    self.pos = (at + #term) * 8
+    return s
   end
   if not optional then self:short(self:remaining() + 8, "the terminated field") end
+  local s = self:bytes(start, last - start)
   self.pos = self.limit
-  return self.data:sub(start, last)
+  return s
 end
 
 -- kind: 0 uleb128, 1 sleb128, 2 zigzag, 3 vlq, 4 quic, 5 varint15
@@ -262,11 +305,11 @@ end
 -- Read `offset` bytes after bit `from` (the packet start, or 0 for the start
 -- of the input) until jump_back; windows do not apply there.
 function Reader:jump(from, offset)
-  if offset < 0 or from % 8 ~= 0 or offset > #self.data or from + offset * 8 > #self.data * 8 then
+  if offset < 0 or from % 8 ~= 0 or offset > self.size or from + offset * 8 > self.size * 8 then
     self:fail("invalid", "offset " .. offset .. " is past the end of the input")
   end
   local saved = { self.pos, self.limit, self.windows }
-  self.pos, self.limit, self.windows = from + offset * 8, #self.data * 8, 0
+  self.pos, self.limit, self.windows = from + offset * 8, self.size * 8, 0
   return saved
 end
 
@@ -288,12 +331,18 @@ local PB_CRC = {
 }
 
 -- Checksum `algo` of the input between two bit positions (whole bytes); the
--- bytes between hole_from and hole_to count as zero.
+-- bytes between hole_from and hole_to count as zero. From a source that
+-- cannot be read, the checksum of zeros (which then fails to match).
 function Reader:checksum(algo, from, to, hole_from, hole_to)
   local s, e, hs, he = from // 8, to // 8, hole_from // 8, hole_to // 8
+  local data, base = self.data, 0
+  if self.src then
+    local ok, chunk = pcall(self.src.bytes, self.src, s, math.max(e - s, 0))
+    data, base = ok and chunk or "", s
+  end
   local function byte(i)
     if i >= hs and i < he then return 0 end
-    return self.data:byte(i + 1) or 0
+    return data:byte(i - base + 1) or 0
   end
   if algo < 8 then
     local width, poly, crc, reflected, xorout = table.unpack(PB_CRC[algo])

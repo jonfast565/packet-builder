@@ -86,16 +86,100 @@ class _PbTrace:
         return PbError(kind, message, self.path(), self.pos)
 
 
+class PbSource:
+    """Input read on demand (a file, a stream that can seek): `length` bytes,
+    loaded a page at a time by `fetch(offset, buf)`, which fills the
+    memoryview `buf` with the bytes at `offset` or raises. Only the pages a
+    decode touches are fetched: fields a view skips are never read. Pages
+    stay loaded while the source lives, so zero-copy views remain valid."""
+
+    __slots__ = ("buf", "page", "loaded", "fetch")
+
+    def __init__(self, length, page, fetch):
+        self.page = max(page, 1)
+        self.buf = bytearray(length)  # zeros until a page is loaded
+        self.loaded = bytearray(-(-length // self.page))
+        self.fetch = fetch
+
+    @classmethod
+    def from_file(cls, f):
+        """A source reading the binary file `f` (anything with seek and readinto)."""
+        length = f.seek(0, 2)
+
+        def fetch(at, buf):
+            f.seek(at)
+            if f.readinto(buf) != len(buf):
+                raise EOFError("the file is shorter than %d bytes" % length)
+
+        return cls(length, 4096, fetch)
+
+    def __len__(self):
+        return len(self.buf)
+
+    def load(self, start, n):
+        """Make bytes `start..start + n` (inside the input) loaded; raises what
+        `fetch` raises."""
+        if n <= 0:
+            return
+        page = self.page
+        for p in range(start // page, (start + n - 1) // page + 1):
+            if self.loaded[p]:
+                continue
+            at = p * page
+            self.fetch(at, memoryview(self.buf)[at:min(at + page, len(self.buf))])
+            self.loaded[p] = 1
+
+
 class PbReader(_PbTrace):
     """Reads integers of any bit width (MSB-first) and byte-aligned values."""
 
-    __slots__ = ("data", "limit", "windows")
+    __slots__ = ("data", "src", "limit", "windows")
 
     def __init__(self, data):
         super().__init__()
         self.data = data if isinstance(data, bytes) else bytes(data)
+        self.src = None  # a PbSource that fills data on demand
         self.limit = len(self.data) * 8  # end of the readable data (a window inside data)
         self.windows = 0  # windows open
+
+    @classmethod
+    def from_source(cls, src):
+        """A reader that fetches its input from `src` (a PbSource) as it goes."""
+        r = cls(b"")
+        r.data = src.buf
+        r.src = src
+        r.limit = len(src.buf) * 8
+        return r
+
+    def _load(self, start, n):
+        """Fetch input bytes `start..start + n` from the source if needed."""
+        try:
+            self.src.load(start, n)
+        except Exception as e:
+            raise self.error(PbError.INVALID, "cannot read the input: %s" % e) from e
+
+    def _slice(self, start, end):
+        """Input bytes `start..end` as bytes, loaded first from a source."""
+        if self.src is None:
+            return self.data[start:end]
+        self._load(start, end - start)
+        return bytes(self.data[start:end])
+
+    def _find(self, term, start, end):
+        """Where `term` first starts in input bytes `start..end`, or -1."""
+        if self.src is None:
+            return self.data.find(term, start, end)
+        # Page by page, so a long input is only read up to the terminator.
+        page = self.src.page
+        at = start
+        while at < end:
+            to = min((at // page + 1) * page + len(term) - 1, end)
+            self._load(at, to - at)
+            found = self.data.find(term, at, to)
+            if found >= 0 or to == end:
+                return found
+            at = to + 1 - len(term)
+        return -1
 
     def remaining_bits(self):
         return self.limit - self.pos
@@ -160,6 +244,8 @@ class PbReader(_PbTrace):
 
     def read_bits(self, width):
         self._need(width)
+        if self.src is not None:
+            self._load(self.pos >> 3, ((self.pos + width + 7) >> 3) - (self.pos >> 3))
         v = 0
         left = width
         while left > 0:
@@ -174,14 +260,17 @@ class PbReader(_PbTrace):
     def read_uint(self, nbytes, little):
         self._need(nbytes * 8)
         start = self.pos >> 3
+        if self.src is not None:
+            self._load(start, nbytes)
         self.pos += nbytes * 8
         return int.from_bytes(self.data[start:start + nbytes], "little" if little else "big")
 
     def read_bytes(self, n):
         self._need(n * 8)
         start = self.pos >> 3
+        data = self._slice(start, start + n)
         self.pos += n * 8
-        return self.data[start:start + n]
+        return data
 
     def skip_bits(self, bits):
         self._need(bits)
@@ -189,11 +278,12 @@ class PbReader(_PbTrace):
 
     def read_cstring(self):
         start = self.pos >> 3
-        end = self.data.find(b"\0", start, self.limit >> 3)
+        end = self._find(b"\0", start, self.limit >> 3)
         if end < 0:
             raise self._short(self.remaining_bits() + 8, "the NUL-terminated string")
+        data = self._slice(start, end)
         self.pos = (end + 1) * 8
-        return self.data[start:end]
+        return data
 
     def count(self, n, elem_bits):
         """Validate a decoded element count against the data that is left."""
@@ -271,6 +361,8 @@ class PbReader(_PbTrace):
         """The next n bytes as a memoryview of the input (zero-copy)."""
         self._need(n * 8)
         start = self.pos >> 3
+        if self.src is not None:
+            self._load(start, n)
         self.pos += n * 8
         return memoryview(self.data)[start:start + n]
 
@@ -284,18 +376,31 @@ class PbReader(_PbTrace):
         """The bytes before `term`, consuming both. Without the terminator: the
         rest of the input when `optional`, otherwise an error."""
         start = self.pos >> 3
-        end = self.data.find(term, start, self.limit >> 3)
+        end = self._find(term, start, self.limit >> 3)
         if end < 0:
             if not optional:
                 raise self._short(self.remaining_bits() + 8, "the terminated field")
+            data = self._slice(start, self.limit >> 3)
             self.pos = self.limit
-            return self.data[start:self.limit >> 3]
+            return data
+        data = self._slice(start, end)
         self.pos = (end + len(term)) * 8
-        return self.data[start:end]
+        return data
 
     def checksum(self, algo, start, end, hole_start, hole_end):
         """Checksum `algo` of the input between two bit positions (whole
-        bytes); the bytes between `hole_start` and `hole_end` count as zero."""
+        bytes); the bytes between `hole_start` and `hole_end` count as zero.
+        From a source that cannot be read, the checksum of zeros (which then
+        fails to match)."""
+        if self.src is not None:
+            base, top = start // 8, end // 8
+            try:
+                self.src.load(base, top - base)
+            except Exception:
+                n = max(top - base, 0)
+                return _pb_checksum(
+                    algo, bytes(n), 0, n, max(hole_start // 8 - base, 0), max(hole_end // 8 - base, 0)
+                )
         return _pb_checksum(algo, self.data, start // 8, end // 8, hole_start // 8, hole_end // 8)
 
 

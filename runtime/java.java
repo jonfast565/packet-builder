@@ -170,15 +170,132 @@
         }
     }
 
+    /** Fills buf with the input bytes at offset, or throws when they cannot be read. */
+    @FunctionalInterface
+    public interface PbFetch {
+        void fetch(long offset, byte[] buf) throws java.io.IOException;
+    }
+
+    /**
+     * Input read on demand (a file, a channel that can seek): length() bytes,
+     * loaded a page at a time by a PbFetch. Only the pages a decode touches
+     * are fetched: fields a view skips are never read. Pages stay loaded while
+     * the source lives, so zero-copy views into it remain valid.
+     */
+    public static final class PbSource {
+        final byte[] buf;
+        final int page;
+        private final boolean[] loaded;
+        private final PbFetch fetch;
+
+        /** A source of len bytes read in pages of page bytes. */
+        public PbSource(long len, int page, PbFetch fetch) {
+            this.page = Math.max(page, 1);
+            buf = new byte[Math.toIntExact(len)];
+            loaded = new boolean[(int) ((len + this.page - 1) / this.page)];
+            this.fetch = fetch;
+        }
+
+        /** A source reading channel (a {@code FileChannel}, or anything that can seek). */
+        public static PbSource fromChannel(java.nio.channels.SeekableByteChannel channel) throws java.io.IOException {
+            return new PbSource(channel.size(), 4096, (at, buf) -> {
+                channel.position(at);
+                java.nio.ByteBuffer bb = java.nio.ByteBuffer.wrap(buf);
+                while (bb.hasRemaining()) {
+                    if (channel.read(bb) < 0) {
+                        throw new java.io.EOFException("the channel ended early");
+                    }
+                }
+            });
+        }
+
+        public long length() {
+            return buf.length;
+        }
+
+        /** Fetch the pages holding bytes start..start + n that are not loaded yet. */
+        void load(long start, long n) throws Exception {
+            if (n <= 0) {
+                return;
+            }
+            for (long p = start / page; p <= (start + n - 1) / page; p++) {
+                if (loaded[(int) p]) {
+                    continue;
+                }
+                int from = (int) (p * page);
+                byte[] tmp = new byte[Math.min(page, buf.length - from)];
+                fetch.fetch(from, tmp);
+                System.arraycopy(tmp, 0, buf, from, tmp.length);
+                loaded[(int) p] = true;
+            }
+        }
+    }
+
     /** Reads integers of any bit width (MSB-first) and byte-aligned values. */
     public static final class PbReader extends PbTrace {
+        private static final byte[] NUL = {0};
         private final byte[] data;
+        private final PbSource src; // null when reading a buffer
         private long limit; // end of the readable data in bits (a window inside data)
         private int windows; // windows open
 
         public PbReader(byte[] data) {
             this.data = data;
+            src = null;
             limit = (long) data.length * 8;
+        }
+
+        /** A reader that fetches its input from src as it goes. */
+        public PbReader(PbSource src) {
+            this.src = src;
+            data = src.buf;
+            limit = (long) data.length * 8;
+        }
+
+        /** Make input bytes start..start + n (which need has checked exist) available. */
+        private void load(long start, long n) {
+            if (src == null) {
+                return;
+            }
+            try {
+                src.load(start, n);
+            } catch (Exception e) {
+                throw error(PbErrorKind.INVALID, "cannot read the input: " + e.getMessage());
+            }
+        }
+
+        /** Where term first starts in input bytes start..end, or -1. */
+        private int find(int start, int end, byte[] term) {
+            if (src == null) {
+                return scan(start, end, term);
+            }
+            // Page by page, so a long input is only read up to the terminator.
+            for (int from = start; from < end;) {
+                int to = (int) Math.min((long) (from / src.page + 1) * src.page + term.length - 1, end);
+                load(from, to - from);
+                int at = scan(from, to, term);
+                if (at >= 0) {
+                    return at;
+                }
+                if (to == end) {
+                    break;
+                }
+                from = to + 1 - term.length;
+            }
+            return -1;
+        }
+
+        private int scan(int start, int end, byte[] term) {
+            for (int i = start; i + term.length <= end; i++) {
+                boolean hit = true;
+                for (int k = 0; k < term.length && hit; k++) {
+                    hit = data[i + k] == term[k];
+                }
+                if (hit) {
+                    return i;
+                }
+            }
+            return -1;
         }
 
         public long remainingBits() {
@@ -258,6 +375,7 @@
         /** The next width bits (MSB first) as the low bits of a long. */
         public long readBits(int width) {
             need(width);
+            load(pos >> 3, ((pos + width + 7) >> 3) - (pos >> 3));
             long v = 0;
             for (int left = width; left > 0;) {
                 int b = data[(int) (pos >> 3)] & 0xff;
@@ -274,6 +392,7 @@
         public long readUint(int nbytes, boolean little) {
             need(nbytes * 8L);
             int start = (int) (pos >> 3);
+            load(start, nbytes);
             long v = 0;
             for (int i = 0; i < nbytes; i++) {
                 v = (v << 8) | (data[little ? start + nbytes - 1 - i : start + i] & 0xff);
@@ -285,6 +404,7 @@
         public byte[] readBytes(long n) {
             need(n * 8);
             int start = (int) (pos >> 3);
+            load(start, n);
             byte[] out = java.util.Arrays.copyOfRange(data, start, start + (int) n);
             pos += n * 8;
             return out;
@@ -293,6 +413,7 @@
         /** The next n bytes as a read-only view of the input (zero-copy). */
         public java.nio.ByteBuffer readBuffer(long n) {
             need(n * 8);
+            load(pos >> 3, n);
             java.nio.ByteBuffer view = Pb.view(data, (int) (pos >> 3), (int) n);
             pos += n * 8;
             return view;
@@ -313,13 +434,11 @@
         /** Bytes before a NUL terminator; the terminator is consumed. */
         public byte[] readCString() {
             int start = (int) (pos >> 3);
-            int end = (int) (limit >> 3);
-            for (int i = start; i < end; i++) {
-                if (data[i] == 0) {
-                    byte[] out = java.util.Arrays.copyOfRange(data, start, i);
-                    pos = (i + 1) * 8L;
-                    return out;
-                }
+            int i = find(start, (int) (limit >> 3), NUL);
+            if (i >= 0) {
+                byte[] out = java.util.Arrays.copyOfRange(data, start, i);
+                pos = (i + 1) * 8L;
+                return out;
             }
             throw shortOf(remainingBits() + 8, "the NUL-terminated string");
         }
@@ -431,14 +550,8 @@
         public byte[] readUntil(byte[] term, boolean optional) {
             int start = (int) (pos >> 3);
             int end = (int) (limit >> 3);
-            for (int i = start; i + term.length <= end; i++) {
-                boolean hit = true;
-                for (int k = 0; k < term.length && hit; k++) {
-                    hit = data[i + k] == term[k];
-                }
-                if (!hit) {
-                    continue;
-                }
+            int i = find(start, end, term);
+            if (i >= 0) {
                 byte[] found = java.util.Arrays.copyOfRange(data, start, i);
                 pos = (long) (i + term.length) * 8;
                 return found;
@@ -446,6 +559,7 @@
             if (!optional) {
                 throw shortOf(remainingBits() + 8, "the terminated field");
             }
+            load(start, end - start);
             byte[] rest = java.util.Arrays.copyOfRange(data, start, end);
             pos = limit;
             return rest;
@@ -453,9 +567,20 @@
 
         /**
          * Checksum algo of the input between two bit positions (whole bytes);
-         * the bytes between holeFrom and holeTo count as zero.
+         * the bytes between holeFrom and holeTo count as zero. From a source
+         * that cannot be read, the checksum of zeros (which then fails to match).
          */
         public long checksum(int algo, long from, long to, long holeFrom, long holeTo) {
+            if (src != null) {
+                long b = from / 8;
+                long n = Math.max(to / 8 - b, 0);
+                try {
+                    src.load(b, n);
+                } catch (Exception e) {
+                    return Pb.checksum(algo, new byte[(int) n], 0, n, Math.max(holeFrom / 8 - b, 0),
+                            Math.max(holeTo / 8 - b, 0));
+                }
+            }
             return Pb.checksum(algo, data, from / 8, to / 8, holeFrom / 8, holeTo / 8);
         }
     }

@@ -81,9 +81,16 @@ impl Target for FortranTarget {
         let _ = writeln!(s, "  use {}", module_name(&GenOptions::default()));
         s.push_str("  use, intrinsic :: iso_fortran_env, only: int8, int16, int32, int64, real32, real64\n");
         s.push_str("  implicit none\n");
+        let any_source = cases.iter().any(|c| c.source);
+        if any_source {
+            // What the fetch callback of a source case gets: the case's
+            // bytes and the range it refuses to read.
+            s.push_str("  type :: pbh_ctx\n    integer(int8), allocatable :: d(:)\n    integer(int64) :: from = 0, to = 0\n  end type pbh_ctx\n");
+        }
         s.push_str("  character(len=:), allocatable :: pbh_line\n");
         s.push_str("  integer(int8), allocatable :: pbh_d(:)\n");
-        s.push_str("  integer :: pbh_u, pbh_ios, pbh_pk, pbh_ver, pbh_case, pbh_k, pbh_na, pbh_i\n");
+        s.push_str("  integer :: pbh_u, pbh_ios, pbh_pk, pbh_ver, pbh_case, pbh_k, pbh_na, pbh_i, pbh_src\n");
+        s.push_str("  integer(int64) :: pbh_uf, pbh_ut\n");
         s.push_str("  integer(int64) :: pbh_a(16)\n");
         s.push_str("  open(newunit=pbh_u, file='cases.txt', status='old', action='read')\n");
         s.push_str("  do\n");
@@ -92,7 +99,7 @@ impl Target for FortranTarget {
         s.push_str("    pbh_k = index(pbh_line, ':')\n");
         s.push_str("    if (pbh_k == 0) cycle\n");
         s.push_str(
-            "    read(pbh_line(1:pbh_k - 1), *) pbh_pk, pbh_ver, pbh_case, pbh_na, (pbh_a(pbh_i), pbh_i = 1, pbh_na)\n",
+            "    read(pbh_line(1:pbh_k - 1), *) pbh_pk, pbh_ver, pbh_case, pbh_src, pbh_uf, pbh_ut, pbh_na, &\n      (pbh_a(pbh_i), pbh_i = 1, pbh_na)\n",
         );
         s.push_str("    call pbh_unhex(pbh_line(pbh_k + 1:), pbh_d)\n");
         s.push_str("    select case (pbh_pk)\n");
@@ -156,6 +163,27 @@ impl Target for FortranTarget {
   end function pbh_hex
 ",
         );
+        if any_source {
+            s.push_str(
+                "
+  subroutine pbh_fetch(ctx, offset, buf, err)
+    class(*), pointer, intent(in) :: ctx
+    integer(int64), intent(in) :: offset
+    integer(int8), intent(out) :: buf(:)
+    character(len=:), allocatable, intent(out) :: err
+    buf = 0_int8
+    select type (ctx)
+    type is (pbh_ctx)
+      if (max(offset, ctx%from) < min(offset + size(buf, kind=int64), ctx%to)) then
+        err = 'fetched an unread byte'
+        return
+      end if
+      buf = ctx%d(offset + 1:offset + size(buf, kind=int64))
+    end select
+  end subroutine pbh_fetch
+",
+            );
+        }
 
         let mut sets: Vec<Vec<(usize, &Case)>> = vec![Vec::new(); module.packets.len()];
         let mut data = String::new();
@@ -165,7 +193,20 @@ impl Target for FortranTarget {
                 sets[pi].push((ci, c));
             }
             let args: String = c.args.iter().map(|a| format!(" {}", a)).collect();
-            let _ = writeln!(data, "{} {} {} {}{} :{}", pi, c.version.unwrap_or(0), ci, c.args.len(), args, c.hex);
+            let (from, to) = c.unread.unwrap_or((0, 0));
+            let _ = writeln!(
+                data,
+                "{} {} {} {} {} {} {}{} :{}",
+                pi,
+                c.version.unwrap_or(0),
+                ci,
+                u8::from(c.source),
+                from,
+                to,
+                c.args.len(),
+                args,
+                c.hex
+            );
         }
 
         for (pi, p) in module.packets.iter().enumerate() {
@@ -190,7 +231,27 @@ impl Target for FortranTarget {
             let _ = writeln!(s, "    type({}) :: pbh_p", t);
             s.push_str("    type(pb_error) :: pbh_e\n    integer(int8), allocatable :: pbh_b(:)\n");
             s.push_str("    character(len=:), allocatable :: pbh_v, pbh_s\n    integer(int64) :: pbh_n\n");
+            let source = cases.iter().any(|c| c.source && c.packet == p.name);
+            if source {
+                s.push_str(
+                    "    type(pbh_ctx), target :: pbh_c\n    type(pb_source) :: pbh_so\n    type(pb_reader) :: pbh_r\n",
+                );
+                s.push_str("    if (pbh_src /= 0) then\n");
+                s.push_str("      pbh_c%d = pbh_d\n      pbh_c%from = pbh_uf\n      pbh_c%to = pbh_ut\n");
+                let _ = writeln!(
+                    s,
+                    "      pbh_so%len = size(pbh_d, kind=int64)\n      pbh_so%page = {}",
+                    super::SOURCE_PAGE
+                );
+                s.push_str("      pbh_so%fetch => pbh_fetch\n      pbh_so%ctx => pbh_c\n");
+                s.push_str("      call pb_reader_from_source(pbh_r, pbh_so)\n");
+                let _ = writeln!(s, "      call {}_decode_from(pbh_p, pbh_r)", t);
+                s.push_str("      pbh_e = pbh_r%e\n    else\n  ");
+            }
             let _ = writeln!(s, "    call {}_decode(pbh_p, pbh_d, pbh_e{})", t, ver);
+            if source {
+                s.push_str("    end if\n");
+            }
             s.push_str("    if (pbh_e%kind /= PB_OK) then\n");
             s.push_str("      write(*, '(a)') '{\"ok\":false' // pbh_err(pbh_e, '') // '}'\n");
             s.push_str("    else\n");
