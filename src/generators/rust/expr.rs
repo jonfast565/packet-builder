@@ -2,6 +2,7 @@
 
 use super::naming::{Rust, scalar_type};
 use crate::generators::common::Mode;
+use crate::generators::common::union::{held_arm, variant_name};
 use crate::generators::common::{ExprLang, Scope};
 use crate::ir::{AggOp, ArithOp, Checksum, Func, Ty, UnaryOp, ValueType, storage_for};
 
@@ -108,6 +109,12 @@ impl ExprLang for Scope<'_, Rust> {
 
     fn stored(&self, member: usize) -> String {
         format!("({} as i64)", self.field(self.member(member)))
+    }
+
+    fn holds(&self, member: usize, arm: &str) -> String {
+        let ValueType::Union(u) = &self.member(member).ty else { unreachable!("holds needs a union") };
+        let (_, a) = held_arm(self.packet, member, arm);
+        format!("matches!({}, {}::{} {{ .. }})", self.field(self.member(member)), u, variant_name(a))
     }
 
     fn version(&self) -> String {

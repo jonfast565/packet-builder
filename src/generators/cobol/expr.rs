@@ -13,6 +13,7 @@ use std::cell::RefCell;
 
 use super::locals::Locals;
 use super::naming::{Cobol, calc_local, call, cob_literal, elem_kind, mark_local, member_offset, param_local};
+use crate::generators::common::union::held_arm;
 use crate::generators::common::{ExprLang, Mode, Out, Scope, emit_expr};
 use crate::ir::{
     AggOp, ArithOp, Arm, Checksum, CmpOp, Func, LogicOp, Module, Packet, PacketRef, TExpr, Ty, UnaryOp, ValueType,
@@ -259,6 +260,11 @@ impl ExprLang for Ev<'_> {
 
     fn stored(&self, member: usize) -> String {
         self.field(member)
+    }
+
+    fn holds(&self, member: usize, arm: &str) -> String {
+        let (k, _) = held_arm(self.scope.packet, member, arm);
+        self.flag(format!("{}-K = {}", self.field(member), k))
     }
 
     fn size(&self, from: &str, to: &str) -> String {

@@ -1,6 +1,7 @@
 //! C spelling of expressions.
 
 use super::naming::{C, helper_suffix, len_ident, scalar_type};
+use crate::generators::common::union::held_arm;
 use crate::generators::common::{Dialect, ExprLang, Mode, Scope};
 use crate::ir::{AggOp, ArithOp, Checksum, Func, Ty, UnaryOp, ValueType, storage_for};
 
@@ -110,6 +111,12 @@ impl ExprLang for Scope<'_, C> {
 
     fn stored(&self, member: usize) -> String {
         format!("((int64_t){})", self.field(self.member(member)))
+    }
+
+    fn holds(&self, member: usize, arm: &str) -> String {
+        let ValueType::Union(u) = &self.member(member).ty else { unreachable!("holds needs a union") };
+        let (_, a) = held_arm(self.packet, member, arm);
+        format!("({}.kind == {})", self.field(self.member(member)), super::packet::arm_kind(u, a))
     }
 
     fn version(&self) -> String {

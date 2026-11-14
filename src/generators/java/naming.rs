@@ -121,6 +121,20 @@ pub fn outer_class(opts: &GenOptions) -> String {
     pascal_case(&opts.package)
 }
 
+thread_local! {
+    /// The outer class of the file being generated, which arm classes
+    /// avoid; set by [`set_outer`] for expressions (`ExprLang::holds`).
+    static OUTER: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
+pub fn set_outer(outer: &str) {
+    OUTER.with(|o| *o.borrow_mut() = outer.to_string());
+}
+
+pub fn current_outer() -> String {
+    OUTER.with(|o| o.borrow().clone())
+}
+
 /// The nested class of a packet, union or category.
 pub fn class_name(name: &str) -> String {
     if KEYWORDS.contains(&name) || TAKEN.contains(&name) { format!("{}_", name) } else { name.to_string() }

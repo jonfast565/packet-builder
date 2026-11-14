@@ -110,3 +110,13 @@ packet Framed be {
   @3 len uint16 = sizeof(data),
   data bytes[len],
 }
+
+// A family across versions: `Motd` exists from v2 and grows in v3, and
+// `Hello`'s tag comes from `Op.hello`, which changes in v3. Encoding
+// derives `op` for the version it writes.
+switch Sess be {
+  header { ver uint8 = version, op uint8 }
+  otherwise other bytes[]
+  packet Hello when op = Op.hello { n uint8 }
+  @2.. packet Motd when op = 2 { text uint8, @3 more uint8 }
+}

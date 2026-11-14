@@ -54,6 +54,9 @@ pub trait ExprLang {
     /// The struct's own value of derived `member` as i64, even while
     /// encoding (where `member_ref` reads the encode-time local).
     fn stored(&self, member: usize) -> String;
+    /// Whether union `member` holds the arm named `arm` (`Arm::name`), as
+    /// a bool. Reads the struct, even while encoding.
+    fn holds(&self, member: usize, arm: &str) -> String;
     /// Whole bytes between two recorded bit positions (variables), as i64.
     fn size(&self, from: &str, to: &str) -> String;
     /// A checksum of the bytes between two recorded bit positions; `hole`
@@ -104,6 +107,7 @@ pub fn emit_expr<L: ExprLang + ?Sized>(l: &L, e: &TExpr) -> String {
         TExpr::Remaining => l.remaining(),
         TExpr::Version => l.version(),
         TExpr::Stored { member } => l.stored(*member),
+        TExpr::Holds { member, arm } => l.holds(*member, arm),
         TExpr::Last { field, ty } => l.last(field.as_ref().map(|(p, f)| (p.as_str(), f.as_str())), *ty),
         TExpr::Size { from, to } => l.size(&mark_var(*from), &mark_var(*to)),
         TExpr::Checksum { algo, from, to, hole } => {

@@ -247,8 +247,13 @@ fn parse_accessor(parser_rule: Pair<Rule>) -> ExprNode {
             Rule::qualified_accessor => {
                 let mut ids =
                     p.into_inner().filter(|x| x.as_rule() == Rule::identifier).map(|x| x.as_str().to_string());
-                match (ids.next(), ids.next()) {
-                    (Some(group), Some(name)) => ExprNode::QualifiedReference(group, name),
+                // `Family.Category.member` keeps `Family.Category` as the
+                // group; analysis resolves the family.
+                match (ids.next(), ids.next(), ids.next()) {
+                    (Some(family), Some(group), Some(name)) => {
+                        ExprNode::QualifiedReference(format!("{}.{}", family, group), name)
+                    }
+                    (Some(group), Some(name), None) => ExprNode::QualifiedReference(group, name),
                     _ => ExprNode::NoExpr,
                 }
             }

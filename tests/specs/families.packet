@@ -1,0 +1,41 @@
+// Families: packets that share a header, picked by the header's fields.
+
+const Proto uint8 { ctl = 1, data = 2 }
+
+switch Msg be {
+  header {
+    group uint8 : Proto,
+    kind uint8,
+    length uint16 = sizeof(body),
+  }
+  body size length
+  otherwise other bytes[]
+
+  const Code uint8 { ok = 0, fail = 1 }
+  const PING_KIND uint8 = 3
+
+  packet Ping when group = Proto.ctl, kind = PING_KIND { token uint32 }
+  packet Reply when kind = 4, group = Proto.ctl { code uint8 : Code, token uint32 }
+  packet Data when group = Proto.data, kind in {0, 1} { payload bytes[] }
+  packet Request when group = Proto.data, kind = 7 { id uint16, item Item }
+  // Untagged: only scoped.
+  packet Item { value uint8 }
+}
+
+// Another family with a member of the same name.
+switch Other le {
+  header { tag uint8 }
+  packet Request when tag = 1 { id uint32 }
+}
+
+packet Frame be {
+  channel uint8,
+  payload switch channel { 1 => msg Msg, 2 => other Other, _ => raw bytes[] },
+}
+
+packet Outside be {
+  code uint8 : Msg.Code,
+  ok uint8 == Msg.Code.ok,
+  ping uint8 == Msg.PING_KIND,
+  req Msg.Request,
+}

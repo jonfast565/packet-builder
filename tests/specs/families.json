@@ -1,0 +1,123 @@
+{
+  "spec": "families.packet",
+  "cases": [
+    {
+      "name": "a member picked by two tag fields",
+      "packet": "Msg",
+      "hex": "01 03 0004 0000002a",
+      "expect": { "group": 1, "kind": 3, "length": 4, "body": { "kind": "ping", "value": { "token": 42 } } }
+    },
+    {
+      "name": "tags written in another order",
+      "packet": "Msg",
+      "hex": "01 04 0005 01 00000001",
+      "expect": { "body": { "kind": "reply", "value": { "code": 1, "token": 1 } } }
+    },
+    {
+      "name": "a member with several tag values",
+      "packet": "Msg",
+      "hex": "02 01 0003 aabbcc",
+      "expect": { "kind": 1, "body": { "kind": "data", "value": { "payload": "aabbcc" } } }
+    },
+    {
+      "name": "the other value of an `in` tag",
+      "packet": "Msg",
+      "hex": "02 00 0001 aa",
+      "expect": { "kind": 0, "body": { "kind": "data", "value": { "payload": "aa" } } }
+    },
+    {
+      "name": "unknown tags take `otherwise`",
+      "packet": "Msg",
+      "hex": "05 09 0002 beef",
+      "expect": { "group": 5, "kind": 9, "body": { "kind": "other", "value": "beef" } }
+    },
+    {
+      "name": "a member holding a scoped packet",
+      "packet": "Msg",
+      "hex": "02 07 0003 0005 09",
+      "expect": { "body": { "kind": "request", "value": { "id": 5, "item": { "value": 9 } } } }
+    },
+    {
+      "name": "the body window skips what the member leaves",
+      "packet": "Msg",
+      "hex": "01 03 0006 0000002a ffff",
+      "expect": { "length": 6, "body": { "kind": "ping", "value": { "token": 42 } } },
+      "encoded": "01 03 0004 0000002a"
+    },
+    {
+      "name": "encoding sets the tags of the member held",
+      "packet": "Msg",
+      "hex": "01 03 0004 0000002a",
+      "set": { "group": 2, "kind": 9 },
+      "encoded": "01 03 0004 0000002a"
+    },
+    {
+      "name": "encoding sets tags for every member",
+      "packet": "Msg",
+      "hex": "02 07 0003 0005 09",
+      "set": { "group": 0, "kind": 0, "length": 0 },
+      "encoded": "02 07 0003 0005 09"
+    },
+    {
+      "name": "an `in` tag keeps its value",
+      "packet": "Msg",
+      "hex": "02 01 0003 aabbcc",
+      "set": { "group": 7 },
+      "encoded": "02 01 0003 aabbcc"
+    },
+    {
+      "name": "an `in` tag must still pick the member",
+      "packet": "Msg",
+      "hex": "02 01 0003 aabbcc",
+      "set": { "kind": 5 },
+      "encode_error": true,
+      "encode_error_kind": "mismatch",
+      "encode_error_path": "Msg.body"
+    },
+    {
+      "name": "`otherwise` keeps the stored tags",
+      "packet": "Msg",
+      "hex": "05 09 0002 beef",
+      "encoded": "05 09 0002 beef"
+    },
+    {
+      "name": "a truncated header",
+      "packet": "Msg",
+      "hex": "01 03 00",
+      "error": true,
+      "error_kind": "incomplete",
+      "error_path": "Msg.length"
+    },
+    {
+      "name": "a truncated member",
+      "packet": "Msg",
+      "hex": "01 03 0004 0000",
+      "error": true,
+      "error_kind": "incomplete"
+    },
+    {
+      "name": "a family inside another packet",
+      "packet": "Frame",
+      "hex": "01 01 03 0004 0000002a",
+      "expect": { "channel": 1, "payload": { "kind": "msg", "value": { "kind": 3, "body": { "kind": "ping", "value": { "token": 42 } } } } }
+    },
+    {
+      "name": "a second family with a member of the same name",
+      "packet": "Frame",
+      "hex": "02 01 2a000000",
+      "expect": { "payload": { "kind": "other", "value": { "tag": 1, "body": { "kind": "request", "value": { "id": 42 } } } } }
+    },
+    {
+      "name": "a member decoded alone",
+      "packet": "Msg_Ping",
+      "hex": "0000002a",
+      "expect": { "token": 42 }
+    },
+    {
+      "name": "family constants and members used outside",
+      "packet": "Outside",
+      "hex": "01 00 03 0005 09",
+      "expect": { "code": 1, "ok": 0, "ping": 3, "req": { "id": 5, "item": { "value": 9 } } }
+    }
+  ]
+}

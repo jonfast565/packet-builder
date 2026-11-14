@@ -12,7 +12,7 @@ use crate::ast::{
     TypeExpr, TypeNode, WindowExpr,
 };
 
-fn parse_alignment(pair: Pair<Rule>) -> u64 {
+pub(super) fn parse_alignment(pair: Pair<Rule>) -> u64 {
     pair.into_inner().find(|p| p.as_rule() == Rule::numeric_constant).map(|n| int_literal(n.as_str())).unwrap_or(1)
 }
 
@@ -21,7 +21,7 @@ fn category_tag(pair: Pair<Rule>, rules: &mut FieldRules) -> Option<(String, Spa
     let mut name = None;
     for p in pair.into_inner() {
         match p.as_rule() {
-            Rule::identifier => name = Some((p.as_str().to_string(), span_of(&p))),
+            Rule::category_name => name = Some((p.as_str().to_string(), span_of(&p))),
             Rule::strict_kw => rules.strict = true,
             _ => {}
         }
@@ -81,36 +81,7 @@ impl TreeBuilder {
                 }
                 Rule::endianness => packet_endianness = to_endianness(detail.as_str()),
                 Rule::alignment => packet_align = Some(parse_alignment(detail)),
-                Rule::rule_list => {
-                    for rule in detail.into_inner() {
-                        if rule.as_rule() != Rule::rule {
-                            continue;
-                        }
-                        let mut range = None;
-                        for elem in rule.into_inner() {
-                            let before = items.len();
-                            match elem.as_rule() {
-                                Rule::version_range => range = Some(version_range(elem)),
-                                Rule::override_decl => items.push(PacketItem::Override(override_decl(elem))),
-                                Rule::declaration => items.push(PacketItem::Field(self.declaration(elem))),
-                                Rule::bitfield_declaration => items.push(PacketItem::Bitfield(self.bitfield(elem))),
-                                Rule::calculated_field => {
-                                    items.push(PacketItem::Calculated(self.calculated_field(elem)))
-                                }
-                                Rule::align_directive => {
-                                    let span = span_of(&elem);
-                                    items.push(PacketItem::Align(parse_alignment(elem), span))
-                                }
-                                Rule::assert_directive => items.push(PacketItem::Assert(assert_directive(elem))),
-                                Rule::switch_field => items.push(PacketItem::Switch(self.switch_field(elem))),
-                                _ => {}
-                            }
-                            if items.len() > before {
-                                versions.push(range);
-                            }
-                        }
-                    }
-                }
+                Rule::rule_list => self.rule_list(detail, &mut items, &mut versions),
                 _ => {}
             }
         }
@@ -123,6 +94,41 @@ impl TreeBuilder {
             align: packet_align,
             versions,
             span,
+        }
+    }
+
+    /// The items of a `rule_list`, and the `@range` of each.
+    pub(super) fn rule_list(
+        &self,
+        list: Pair<Rule>,
+        items: &mut Vec<PacketItem>,
+        versions: &mut Vec<Option<crate::ast::VersionRange>>,
+    ) {
+        for rule in list.into_inner() {
+            if rule.as_rule() != Rule::rule {
+                continue;
+            }
+            let mut range = None;
+            for elem in rule.into_inner() {
+                let before = items.len();
+                match elem.as_rule() {
+                    Rule::version_range => range = Some(version_range(elem)),
+                    Rule::override_decl => items.push(PacketItem::Override(override_decl(elem))),
+                    Rule::declaration => items.push(PacketItem::Field(self.declaration(elem))),
+                    Rule::bitfield_declaration => items.push(PacketItem::Bitfield(self.bitfield(elem))),
+                    Rule::calculated_field => items.push(PacketItem::Calculated(self.calculated_field(elem))),
+                    Rule::align_directive => {
+                        let span = span_of(&elem);
+                        items.push(PacketItem::Align(parse_alignment(elem), span))
+                    }
+                    Rule::assert_directive => items.push(PacketItem::Assert(assert_directive(elem))),
+                    Rule::switch_field => items.push(PacketItem::Switch(self.switch_field(elem))),
+                    _ => {}
+                }
+                if items.len() > before {
+                    versions.push(range);
+                }
+            }
         }
     }
 
@@ -210,7 +216,7 @@ impl TreeBuilder {
     }
 
     /// The type, and the arguments of a packet type.
-    fn field_type(&self, field: Pair<Rule>) -> (TypeNode, Vec<ExprNode>) {
+    pub(super) fn field_type(&self, field: Pair<Rule>) -> (TypeNode, Vec<ExprNode>) {
         let inner = field.into_inner().next().expect("field_type has one child");
         let ty = match inner.as_rule() {
             Rule::packet_ref => {
@@ -411,7 +417,7 @@ fn assert_directive(pair: Pair<Rule>) -> AssertExpr {
 }
 
 /// `[expr]` or `[]`.
-fn array_specifier(pair: Pair<Rule>) -> ArrayLength {
+pub(super) fn array_specifier(pair: Pair<Rule>) -> ArrayLength {
     pair.into_inner()
         .find(|p| p.as_rule() == Rule::expr)
         .map(|e| ArrayLength::Expr(parse_expr(e)))
@@ -419,7 +425,7 @@ fn array_specifier(pair: Pair<Rule>) -> ArrayLength {
 }
 
 /// `size n [exact]`.
-fn window_clause(pair: Pair<Rule>) -> WindowExpr {
+pub(super) fn window_clause(pair: Pair<Rule>) -> WindowExpr {
     let exact = pair.clone().into_inner().any(|p| p.as_rule() == Rule::exact_kw);
     let size = pair.into_inner().find(|p| p.as_rule() == Rule::expr).map(parse_expr).unwrap_or(ExprNode::NoExpr);
     WindowExpr { size, exact }

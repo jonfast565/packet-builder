@@ -3,6 +3,7 @@
 //! so integer arithmetic wraps.
 
 use super::naming::{Pascal, ident, scalar_type};
+use crate::generators::common::union::held_arm;
 use crate::generators::common::{ExprLang, Mode, Scope};
 use crate::ir::{AggOp, ArithOp, Checksum, CmpOp, Func, LogicOp, Ty, UnaryOp, ValueType, storage_for};
 
@@ -101,6 +102,12 @@ impl ExprLang for Scope<'_, Pascal> {
 
     fn stored(&self, member: usize) -> String {
         format!("Int64({})", self.field(self.member(member)))
+    }
+
+    fn holds(&self, member: usize, arm: &str) -> String {
+        let ValueType::Union(u) = &self.member(member).ty else { unreachable!("holds needs a union") };
+        let (_, a) = held_arm(self.packet, member, arm);
+        format!("({} is {})", self.field(self.member(member)), super::naming::arm_class(u, a))
     }
 
     fn version(&self) -> String {

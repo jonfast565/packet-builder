@@ -4,6 +4,7 @@
 
 use super::naming::{Swift, ident, scalar_type};
 use crate::generators::common::Mode;
+use crate::generators::common::union::held_arm;
 use crate::generators::common::{ExprLang, Scope};
 use crate::ir::{AggOp, ArithOp, Checksum, Func, Ty, UnaryOp, ValueType, storage_for};
 
@@ -115,6 +116,12 @@ impl ExprLang for Scope<'_, Swift> {
 
     fn stored(&self, member: usize) -> String {
         format!("pbI({})", self.field(self.member(member)))
+    }
+
+    fn holds(&self, member: usize, arm: &str) -> String {
+        let (_, a) = held_arm(self.packet, member, arm);
+        let case = super::naming::case_name(a);
+        format!("{{ if case .{} = {} {{ return true }}; return false }}()", case, self.field(self.member(member)))
     }
 
     fn version(&self) -> String {

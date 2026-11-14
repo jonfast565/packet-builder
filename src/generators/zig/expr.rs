@@ -93,6 +93,10 @@ impl ExprLang for Scope<'_, Zig> {
         format!("pbI64({})", self.field(self.member(member)))
     }
 
+    fn holds(&self, member: usize, arm: &str) -> String {
+        format!("({} == .{})", self.field(self.member(member)), super::naming::ident(arm))
+    }
+
     fn version(&self) -> String {
         let latest = self.packet.version_bounds().1;
         match self.mode {

@@ -3,6 +3,7 @@
 //! overflow; float expressions are IEEE_Float_64.
 
 use super::naming::{Ada, calc_var, ident, param_var, type_name};
+use crate::generators::common::union::held_arm;
 use crate::generators::common::{Dialect, ExprLang, Mode, Scope};
 use crate::ir::{AggOp, ArithOp, Checksum, CmpOp, Func, LogicOp, Ty, UnaryOp, ValueType, storage_for};
 
@@ -140,6 +141,12 @@ impl ExprLang for Scope<'_, Ada> {
 
     fn stored(&self, member: usize) -> String {
         format!("Pb_I ({})", self.field(self.member(member)))
+    }
+
+    fn holds(&self, member: usize, arm: &str) -> String {
+        let ValueType::Union(u) = &self.member(member).ty else { unreachable!("holds needs a union") };
+        let (_, a) = held_arm(self.packet, member, arm);
+        format!("({}.Kind = {})", self.field(self.member(member)), super::naming::arm_literal(u, a))
     }
 
     fn version(&self) -> String {

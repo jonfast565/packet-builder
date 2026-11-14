@@ -62,6 +62,12 @@ pub enum ExprNode {
     // boolean
     And(Box<ExprNode>, Box<ExprNode>),
     Or(Box<ExprNode>, Box<ExprNode>),
+
+    // Built by analysis for families (no surface syntax):
+    /// Whether union member `.0` holds arm `.1`.
+    Holds(String, String),
+    /// The value derived member `.0` holds in the struct.
+    Stored(String),
 }
 
 /// The argument of a function over fields.
@@ -457,9 +463,47 @@ pub struct ConstDecl {
     pub span: Span,
 }
 
+/// A family of packets that share a header (`switch Name { ... }` at the top
+/// level). Analysis turns it into ordinary packets: one per member
+/// (`Name_Member`) and `Name` itself, the header and a union of the members.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FamilyDecl {
+    /// The header's items, under the family's name, endianness and alignment.
+    pub header: PacketExpr,
+    /// `body size n [exact]`: the window the member is read in.
+    pub body: Option<WindowExpr>,
+    /// `otherwise name Type`: the arm for tags no member has.
+    pub other: Option<ArmExpr>,
+    /// `const` declarations inside the block (`Name_X` outside it).
+    pub constants: Vec<ConstDecl>,
+    pub members: Vec<FamilyMember>,
+}
+
+/// `[@range] packet Member when tag = v, tag in {a, b} { ... }`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FamilyMember {
+    pub packet: PacketExpr,
+    /// The versions in which the family's header can select it.
+    pub versions: Option<VersionRange>,
+    /// Empty for a member that is only scoped (no tags).
+    pub tags: Vec<FamilyTag>,
+}
+
+/// `field = v` (encoding sets the header field to v) or `field in {a, b}`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FamilyTag {
+    pub field: String,
+    pub values: Vec<ExprNode>,
+    /// `=`: the member determines the field's value.
+    pub sets: bool,
+    pub span: Span,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct PacketExprList {
     pub packets: Vec<PacketExpr>,
+    /// `switch Name { ... }` families, desugared by analysis.
+    pub families: Vec<FamilyDecl>,
     /// Named constants, in source order.
     pub constants: Vec<ConstDecl>,
     /// Bits in a `word` (16 unless the file says `wordsize 32`).

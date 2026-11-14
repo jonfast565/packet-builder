@@ -84,6 +84,14 @@ impl<'a> Ctx<'a> {
                 self.consts.value_expr(self.consts.single(name).expect("checked"))
             }
             QualifiedReference(group, name) => self.consts.value_expr(self.consts.member(group, name)?),
+            Holds(name, arm) => {
+                let member = self.lookup(name)?;
+                if !matches!(self.members[member].ty, ValueType::Union(_)) {
+                    return Err(format!("`{}` is not a union", name));
+                }
+                TExpr::Holds { member, arm: arm.clone() }
+            }
+            Stored(name) => TExpr::Stored { member: self.lookup(name)? },
             ValueReference(name, None) if name == "remaining" && !self.names.contains_key(name) => {
                 if !self.allow_remaining {
                     return Err(

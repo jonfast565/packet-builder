@@ -4,6 +4,7 @@
 //! folding (and rejecting) constant expressions that overflow.
 
 use super::naming::{Fortran, component, int_kind, real_kind};
+use crate::generators::common::union::held_arm;
 use crate::generators::common::{ExprLang, Mode, Scope};
 use crate::ir::{AggOp, ArithOp, Checksum, CmpOp, Func, LogicOp, Ty, UnaryOp, ValueType};
 
@@ -137,6 +138,11 @@ impl ExprLang for Scope<'_, Fortran> {
 
     fn stored(&self, member: usize) -> String {
         format!("int({}, int64)", self.field(self.member(member)))
+    }
+
+    fn holds(&self, member: usize, arm: &str) -> String {
+        let (k, _) = held_arm(self.packet, member, arm);
+        format!("({}%pb_arm == {})", self.field(self.member(member)), k + 1)
     }
 
     fn version(&self) -> String {

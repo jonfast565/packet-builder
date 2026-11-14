@@ -27,6 +27,7 @@ impl Loader {
             sources: SourceMap::default(),
             merged: PacketExprList {
                 packets: Vec::new(),
+                families: Vec::new(),
                 constants: Vec::new(),
                 word_size: 16,
                 imports: Vec::new(),
@@ -83,6 +84,7 @@ impl Loader {
         self.stack.pop();
         self.done.insert(key);
         self.merged.packets.extend(list.packets);
+        self.merged.families.extend(list.families);
         self.merged.constants.extend(list.constants);
         self.merged.dissectors.extend(list.dissectors);
         if let Some((n, span)) = list.version {

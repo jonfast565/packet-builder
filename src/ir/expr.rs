@@ -314,6 +314,12 @@ pub enum TExpr {
     Stored {
         member: usize,
     },
+    /// Whether union `member` holds the arm named `arm` (a bool). Encoders
+    /// read the struct, never the wire.
+    Holds {
+        member: usize,
+        arm: String,
+    },
     /// Parameter `index` of the packet (`Packet::params`), as i64.
     Param {
         index: usize,
@@ -348,7 +354,7 @@ impl TExpr {
             | TExpr::Call { ty, .. }
             | TExpr::Unary { ty, .. }
             | TExpr::Last { ty, .. } => *ty,
-            TExpr::Cmp { .. } | TExpr::Logic { .. } => Ty::Bool,
+            TExpr::Cmp { .. } | TExpr::Logic { .. } | TExpr::Holds { .. } => Ty::Bool,
             TExpr::Convert { to, .. } => *to,
         }
     }
@@ -365,7 +371,10 @@ impl TExpr {
             | TExpr::Version
             | TExpr::Stored { .. }
             | TExpr::Param { .. } => {}
-            TExpr::Ref { member, .. } | TExpr::Aggregate { member, .. } | TExpr::Len { member } => out.push(*member),
+            TExpr::Ref { member, .. }
+            | TExpr::Aggregate { member, .. }
+            | TExpr::Len { member }
+            | TExpr::Holds { member, .. } => out.push(*member),
             TExpr::Index { member, index, .. } => {
                 out.push(*member);
                 index.deps(out);

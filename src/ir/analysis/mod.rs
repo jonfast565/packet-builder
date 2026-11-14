@@ -15,6 +15,8 @@
 //! - `typecheck`, `codec`: expression and wire-format resolution.
 //! - `cursor`: what is known about the bit offset while laying out fields.
 //! - `types`: facts about source type names.
+//! - `family`: `switch Name { ... }` families, rewritten into packets
+//!   before anything else runs.
 //! - `versions`: protocol versions; resolves `@range`s and merges
 //!   re-declarations before the other passes run.
 
@@ -26,6 +28,7 @@ mod context;
 mod cursor;
 mod derive;
 mod dissector;
+mod family;
 mod packet;
 mod params;
 mod repeat;
@@ -74,6 +77,7 @@ const BUILTIN: &[&str] = &[
 
 pub fn analyze(list: &PacketExprList) -> Result<Module, Vec<Diagnostic>> {
     let mut diags = Vec::new();
+    let list = &*family::desugar(list, &mut diags);
     let list = &*versions::normalize(list, &mut diags);
 
     // Packet names

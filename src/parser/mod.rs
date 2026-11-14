@@ -5,11 +5,13 @@
 //!   so the tree walk can assume well-formed values;
 //! - `items`: packets, fields, bitfields and calculated fields;
 //! - `consts`: file-level named constants and categories;
+//! - `family`: `switch Name { ... }` families;
 //! - `expr`: expressions;
 //! - `types`: type names (including the word-size dependent aliases).
 
 mod consts;
 mod expr;
+mod family;
 mod items;
 mod literals;
 mod types;
@@ -75,8 +77,9 @@ fn parse_inner(input: &str) -> Result<PacketExprList, Error<Rule>> {
         let n = d.into_inner().find(|p| p.as_rule() == Rule::numeric_constant).map(|n| int_literal(n.as_str()));
         (n.unwrap_or(0).min(u32::MAX as u64) as u32, span)
     });
+    let families = builder.families(root.clone());
     let packets = builder.packets(root);
-    Ok(PacketExprList { packets, constants, word_size, imports, dissectors, version })
+    Ok(PacketExprList { packets, families, constants, word_size, imports, dissectors, version })
 }
 
 fn dissector(pair: Pair<Rule>) -> crate::ast::DissectorExpr {

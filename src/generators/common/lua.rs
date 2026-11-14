@@ -221,6 +221,10 @@ impl<D: LuaDialect> ExprLang for Scope<'_, D> {
         self.field(self.member(member))
     }
 
+    fn holds(&self, member: usize, arm: &str) -> String {
+        format!("({}.kind == \"{}\")", self.field(self.member(member)), arm)
+    }
+
     fn version(&self) -> String {
         format!("{}:version_or({})", self.coder(), self.packet.version_bounds().1)
     }

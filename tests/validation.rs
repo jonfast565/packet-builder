@@ -684,3 +684,58 @@ fn a_subset_of_the_versions_leaves_the_others_out() {
     let value = interp::decode(&v3, "Sized", &sized).unwrap();
     assert_eq!(interp::encode(&v3, "Sized", &value).unwrap(), sized);
 }
+
+const FAMILY: &str = "switch F { header { a uint8, b uint8 } packet X when a = 1, b = 2 { v uint8 } }\n";
+
+#[test]
+fn families_check_qualified_names() {
+    assert_error(&format!("{}packet P {{ x F.Y }}", FAMILY), "family `F` has no packet `Y`");
+    assert_error(&format!("{}packet P {{ x G.X }}", FAMILY), "unknown family `G`");
+    assert!(compile(&format!("{}packet P {{ x F.X, y F }}", FAMILY)).is_ok());
+}
+
+#[test]
+fn family_members_tag_the_same_fields() {
+    assert_error(
+        "switch F { header { a uint8, b uint8 } packet X when a = 1, b = 2 {} packet Y when a = 2 {} }",
+        "must tag the same fields",
+    );
+}
+
+#[test]
+fn family_tags_are_header_integers() {
+    assert_error("switch F { header { a uint8 } packet X when z = 1 {} }", "the header of `F` has no field `z`");
+    assert_error("switch F { header { a uint8[2] } packet X when a = 1 {} }", "must be an integer field of the header");
+}
+
+#[test]
+fn family_selectors_fit_in_63_bits() {
+    assert_error(
+        "switch F { header { a uint64, b uint8 } packet X when a = 1, b = 2 {} }",
+        "together they must fit in 63",
+    );
+}
+
+#[test]
+fn family_names_cannot_clash_with_mangled_names() {
+    assert_error(&format!("{}packet F_X {{ v uint8 }}", FAMILY), "takes outside its family");
+}
+
+#[test]
+fn family_needs_tagged_members() {
+    assert_error("switch F { header { a uint8 } packet X {} }", "has no tagged members");
+}
+
+#[test]
+fn family_is_still_a_field_name() {
+    assert!(compile("packet P { family uint8, header uint8, body uint8 }").is_ok());
+}
+
+#[test]
+fn packed_family_tags_are_unsigned() {
+    assert_error(
+        "switch F { header { a int8, b uint8 } packet X when a = 1, b = 2 {} }",
+        "tags packed together must be unsigned",
+    );
+    assert!(compile("switch F { header { a int8 } packet X when a = -1 {} }").is_ok());
+}

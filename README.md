@@ -423,6 +423,66 @@ Each union becomes a type named after the packet and field (`MessageBody`):
 | Ada | variant record `MessageBody (Kind : MessageBody_Kind := MessageBody_Text)` with a component per arm | `if M.Body_F.Kind = MessageBody_Pair then ... M.Body_F.Pair.A`; build with `MessageBody'(Kind => MessageBody_Pair, Pair => X)` |
 | COBOL | group with `-K` (the arm's index) and one item per arm (`-A0`, `-A1`, ...) | `IF F3-BODY-K = 2 ... F3-BODY-A2`; bytes arms are `-A1-P` (pointer) and `-A1-N` (length) |
 
+### Packet families
+
+A protocol often carries a subprotocol: a shared header whose fields pick
+one of many messages. A top-level `switch` block declares such a family:
+
+```
+switch Snac be {
+  header {                                  // ordinary packet rules
+    family uint16 : SnacFamily,
+    subtype uint16,
+    length uint16 = sizeof(body),
+  }
+  body size length                          // optional window for the member
+  otherwise other bytes[]                   // optional: tags no member claims
+
+  const Status uint8 { ok = 0, busy = 1 }   // scoped to the family
+
+  packet Ready when family = SnacFamily.service, subtype = 3 {
+    versions uint16[],
+  }
+  packet Versions when family = SnacFamily.service, subtype in {17, 24} {
+    status uint8 : Status,                  // unqualified inside the family
+  }
+  packet Request when family = 1, subtype = 1 { id uint32 }
+  packet Item { value uint8 }               // untagged: scoped only
+  @2.. packet Motd when family = 1, subtype = 9 { text bytes[] }   // versioned member
+}
+
+packet Flap be {
+  channel uint8,
+  length uint16 = sizeof(payload),
+  payload switch channel { 2 => snac Snac, _ => other bytes[] } size length,
+}
+```
+
+* The family name is a packet: it decodes the header, then the member its
+  tags pick (into the union field `body`). Without `otherwise`, an unknown
+  tag is an `invalid` error.
+* Every tagged member tags the same header fields, which must be plain
+  integers. With several, the selector packs them, the first in the
+  highest bits; together they must fit in 63 bits.
+* Encoding derives each `field = value` tag from the member held, so a
+  value never needs its tags set by hand. A member tagged `field in {...}`
+  (and the `otherwise` arm) keeps the stored value, which encoding checks
+  (`mismatch`).
+* Members inherit the family's byte order and alignment, take no
+  parameters, and can also be decoded alone (body only). Inside the family
+  its members and constants are named plainly; outside, they are
+  `Snac.Request`, `Snac.Status` and `Snac.Status.ok`. Two families may both
+  have a `Request`.
+* Versions work as in any packet: `@range` items in the header and member
+  bodies, tags from versioned constants (encoding derives the tag for the
+  version it writes), and `@range packet` members that exist only in some
+  versions.
+
+In generated code, `Snac.Request` is the packet `Snac_Request`, the
+constant `Snac.Status` is `Snac_Status`, and the family packet `Snac` holds
+the union `SnacBody` (arms named after the members in snake case:
+`ready`, `versions`, `request`, ...).
+
 ### Parameters
 
 A packet can take integer parameters from the packet that contains it.

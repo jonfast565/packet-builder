@@ -385,6 +385,90 @@
       "packet": "Framed",
       "hex": "03 00",
       "error_kind": "incomplete"
+    },
+    {
+      "name": "a family member in v1",
+      "packet": "Sess",
+      "hex": "01 01 05",
+      "expect": {
+        "ver": 1,
+        "op": 1,
+        "body": {
+          "kind": "hello",
+          "value": {
+            "n": 5
+          }
+        }
+      }
+    },
+    {
+      "name": "a family tag from a constant changed in v3",
+      "packet": "Sess",
+      "hex": "03 07 05",
+      "expect": {
+        "body": {
+          "kind": "hello",
+          "value": {
+            "n": 5
+          }
+        }
+      }
+    },
+    {
+      "name": "the old tag is unknown in v3",
+      "packet": "Sess",
+      "hex": "03 01 05",
+      "expect": {
+        "body": {
+          "kind": "other",
+          "value": "05"
+        }
+      }
+    },
+    {
+      "name": "a member added in v2 is unknown in v1",
+      "packet": "Sess",
+      "hex": "01 02 05",
+      "expect": {
+        "body": {
+          "kind": "other",
+          "value": "05"
+        }
+      }
+    },
+    {
+      "name": "a member added in v2",
+      "packet": "Sess",
+      "hex": "02 02 05",
+      "expect": {
+        "body": {
+          "kind": "motd",
+          "value": {
+            "text": 5
+          }
+        }
+      }
+    },
+    {
+      "name": "a member that grows in v3",
+      "packet": "Sess",
+      "hex": "03 02 05 06",
+      "expect": {
+        "body": {
+          "kind": "motd",
+          "value": {
+            "text": 5,
+            "more": 6
+          }
+        }
+      }
+    },
+    {
+      "name": "encoding derives the tag for the version written",
+      "packet": "Sess",
+      "hex": "01 01 05",
+      "version": 3,
+      "encoded": "03 07 05"
     }
   ]
 }

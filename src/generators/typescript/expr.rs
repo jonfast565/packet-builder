@@ -152,6 +152,10 @@ impl ExprLang for Scope<'_, TypeScript> {
         to_i64(self.field(m), &m.ty)
     }
 
+    fn holds(&self, member: usize, arm: &str) -> String {
+        format!("({}.kind === \"{}\")", self.field(self.member(member)), arm)
+    }
+
     fn version(&self) -> String {
         let latest = self.packet.version_bounds().1;
         match self.mode {

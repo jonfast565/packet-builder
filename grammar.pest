@@ -203,7 +203,8 @@ bit_type = @{ ("u" | "i") ~ digit+ ~ !(alnum | underscore) }
 
 // A reference to another packet declared in the same file, with arguments
 // for its parameters: `Body(version, length - 4)`.
-packet_type = @{ identifier }
+// `Family.Member` names a member of a `switch` family.
+packet_type = @{ identifier ~ ("." ~ identifier)? }
 packet_ref  = { packet_type ~ arg_list? }
 arg_list    = { lparen ~ expr ~ (comma ~ expr)* ~ comma? ~ rparen }
 
@@ -299,7 +300,8 @@ derivation = { assign ~ expr ~ (placeholder_kw ~ expr)? }
 
 // `: Category` notes which named constants a field's values come from;
 // `strict` rejects any other value.
-category_tag = { colon ~ identifier ~ strict_kw? }
+category_tag = { colon ~ category_name ~ strict_kw? }
+category_name = @{ identifier ~ ("." ~ identifier)? }
 
 // `== MAGIC` (the field always holds this value) or `in 1..255` (inclusive).
 constraint = { (eq ~ expr) | (in_kw ~ expr ~ dotdot ~ expr) }
@@ -314,8 +316,9 @@ bitfield_declaration = {
 bitfield_member = { identifier ~ bit_type ~ category_tag? ~ constraint? ~ lenient_kw? }
 accessor    = { aggregate_accessor | qualified_accessor | direct_value_accessor }
 
-// `Category.member`: a named constant from a category.
-qualified_accessor = { identifier ~ dot ~ identifier }
+// `Category.member`: a named constant from a category (`Family.Category.member`
+// or `Family.NAME` for a family's constants).
+qualified_accessor = { identifier ~ dot ~ identifier ~ (dot ~ identifier)? }
 
 direct_value_accessor = { identifier ~ array_specifier? }
 aggregate_accessor    = { (sumof_kw | productof_kw) ~ identifier ~ !larray }
@@ -342,7 +345,30 @@ const_member = { version_range? ~ identifier ~ assign ~ expr ~ string? }
 // ===============================
 // Packets
 // ===============================
-packets = { SOI ~ wordsize_directive? ~ version_directive? ~ import_decl* ~ (const_decl | packet | dissector_decl)* ~ EOI }
+packets = { SOI ~ wordsize_directive? ~ version_directive? ~ import_decl* ~ (const_decl | packet | family_decl | dissector_decl)* ~ EOI }
+
+// A family of packets sharing a header (a subprotocol):
+//   switch Snac be {
+//     header { family uint16, subtype uint16, length uint16 = sizeof(body) }
+//     body size length
+//     otherwise other bytes[]
+//     const Kind uint8 { a = 1 }
+//     packet Ready when family = 1, subtype = 3 { ... }
+//     packet Versions when family = 1, subtype in {17, 24} { ... }
+//   }
+// `Snac` is a packet that reads the header and then the member its tags
+// pick; members are `Snac.Ready` outside the block. `header`, `body` and
+// the tags are not reserved words.
+family_decl   = { switch_kw ~ identifier ~ endianness? ~ alignment? ~ lbracket ~ family_item* ~ rbracket }
+family_item   = _{ family_header | family_body | family_other | const_decl | family_member }
+header_kw     = @{ "header" ~ !(alnum | underscore) }
+body_kw       = @{ "body" ~ !(alnum | underscore) }
+family_header = { header_kw ~ lbracket ~ rule_list? ~ rbracket }
+family_body   = { body_kw ~ window }
+family_other  = { otherwise_kw ~ identifier ~ field_type ~ array_specifier? ~ endianness? }
+family_member = { version_range? ~ packet_kw ~ identifier ~ endianness? ~ alignment? ~ family_tags? ~ lbracket ~ rule_list? ~ rbracket }
+family_tags   = { when_kw ~ family_tag ~ (comma ~ family_tag)* }
+family_tag    = { identifier ~ ((assign ~ expr) | (in_kw ~ lbracket ~ expr ~ (comma ~ expr)* ~ comma? ~ rbracket)) }
 
 // A Wireshark dissector for a packet (`packet_builder dissector`):
 //   dissector Flap { name "AIM OSCAR", abbrev "oscar", tcp.port 5190, heuristic }

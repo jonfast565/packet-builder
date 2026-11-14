@@ -1,7 +1,7 @@
 //! Pieces of tagged unions shared by the backends.
 
 use super::naming::pascal_case;
-use crate::ir::Arm;
+use crate::ir::{Arm, Packet, Step};
 
 /// How a language spells "or" and "not" in conditions.
 pub struct Logic {
@@ -43,4 +43,18 @@ pub fn variant_name(arm: &Arm) -> String {
 /// The error message when a union holds an arm its selector does not pick.
 pub fn mismatch_message(member: &str, arm: &Arm) -> String {
     format!("`{}` holds arm `{}`, but its selector picks another arm", member, arm.name)
+}
+
+/// The arms of union `member` of `packet`, and the index of the one named
+/// `name` (for `ExprLang::holds`).
+pub fn held_arm<'a>(packet: &'a Packet, member: usize, name: &str) -> (usize, &'a Arm) {
+    let arms = packet
+        .steps
+        .iter()
+        .find_map(|s| match s {
+            Step::Switch { member: m, arms, .. } if *m == member => Some(arms),
+            _ => None,
+        })
+        .expect("a union member has a switch step");
+    arms.iter().enumerate().find(|(_, a)| a.name == name).expect("the arm exists")
 }

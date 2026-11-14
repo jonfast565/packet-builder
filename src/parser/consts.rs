@@ -12,7 +12,7 @@ impl TreeBuilder {
         packets.into_inner().filter(|p| p.as_rule() == Rule::const_decl).map(|p| self.const_decl(p)).collect()
     }
 
-    fn const_decl(&self, decl: Pair<Rule>) -> ConstDecl {
+    pub(super) fn const_decl(&self, decl: Pair<Rule>) -> ConstDecl {
         let span = span_of(&decl);
         let mut name = String::new();
         let mut ty = TypeNode::UnsignedInteger8;

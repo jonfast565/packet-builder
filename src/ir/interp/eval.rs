@@ -100,6 +100,9 @@ pub fn eval(e: &TExpr, env: &Env) -> Ev {
         TExpr::Version => Ev::I(env.version),
         TExpr::Ref { member, ty } => scalar(&env.values[*member], *ty),
         TExpr::Stored { member } => scalar(&env.values[*member], Ty::Int),
+        TExpr::Holds { member, arm } => {
+            Ev::B(matches!(&env.values[*member], Value::Variant { arm: held, .. } if held == arm))
+        }
         TExpr::Index { member, index, ty } => {
             let i = eval(index, env).int();
             let items = elements(&env.values[*member]);

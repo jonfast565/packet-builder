@@ -1,6 +1,7 @@
 //! Go spelling of expressions.
 
 use super::naming::{Go, scalar_type};
+use crate::generators::common::union::held_arm;
 use crate::generators::common::{ExprLang, Mode, Scope};
 use crate::ir::{AggOp, ArithOp, Checksum, Func, TExpr, Ty, UnaryOp, ValueType, storage_for};
 
@@ -81,6 +82,12 @@ impl ExprLang for Scope<'_, Go> {
 
     fn stored(&self, member: usize) -> String {
         format!("int64({})", self.field(self.member(member)))
+    }
+
+    fn holds(&self, member: usize, arm: &str) -> String {
+        let ValueType::Union(u) = &self.member(member).ty else { unreachable!("holds needs a union") };
+        let (_, a) = held_arm(self.packet, member, arm);
+        format!("({}.Kind == {})", self.field(self.member(member)), super::packet::arm_kind(u, a))
     }
 
     fn version(&self) -> String {

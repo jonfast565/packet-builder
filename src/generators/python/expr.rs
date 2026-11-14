@@ -115,6 +115,10 @@ impl ExprLang for Scope<'_, Python> {
         if needs_wrap(&self.member(member).ty) { format!("_pb_wrap({})", f) } else { f }
     }
 
+    fn holds(&self, member: usize, arm: &str) -> String {
+        format!("({}.kind == \"{}\")", self.field(self.member(member)), arm)
+    }
+
     fn version(&self) -> String {
         let latest = self.packet.version_bounds().1;
         match self.mode {
