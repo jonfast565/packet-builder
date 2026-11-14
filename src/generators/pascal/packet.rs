@@ -224,6 +224,10 @@ pub fn implement_packet(out: &mut Out, module: &Module, p: &Packet) {
     locals.var("p", &name);
     let mut b = body();
     b.line(format!("pbR.Enter('{}');", p.name));
+    if let Some(scope) = p.version_scope {
+        locals.var("pb_scope", "Boolean");
+        b.line(format!("pb_scope := pbR.EnterScope({});", scope));
+    }
     b.line(format!("p := {}.Create;", name));
     b.open("try");
     if p.needs_start(false) {
@@ -236,6 +240,9 @@ pub fn implement_packet(out: &mut Out, module: &Module, p: &Packet) {
     b.line("p.Free;");
     b.line("raise;");
     b.close("end;");
+    if p.version_scope.is_some() {
+        b.line("pbR.LeaveScope(pb_scope);");
+    }
     b.line("pbR.Leave;");
     b.line("Result := p;");
     locals.routine(out, b);
@@ -265,6 +272,10 @@ pub fn implement_packet(out: &mut Out, module: &Module, p: &Packet) {
     locals.var("p", &name);
     let mut b = body();
     b.line(format!("pbW.Enter('{}');", p.name));
+    if let Some(scope) = p.version_scope {
+        locals.var("pb_scope", "Boolean");
+        b.line(format!("pb_scope := pbW.EnterScope({});", scope));
+    }
     b.line("p := Self;");
     if p.needs_start(true) {
         locals.var("pb_start", "Int64");
@@ -273,6 +284,9 @@ pub fn implement_packet(out: &mut Out, module: &Module, p: &Packet) {
     let encoder = Encoder::new(p, &locals);
     encoder.emit_locals(&mut b);
     encoder.emit_steps(&mut b);
+    if p.version_scope.is_some() {
+        b.line("pbW.LeaveScope(pb_scope);");
+    }
     b.line("pbW.Leave;");
     locals.routine(out, b);
 

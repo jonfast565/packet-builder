@@ -34,7 +34,7 @@ impl Backend for CGenerator {
         out.line(format!("#ifndef {}_H", guard));
         out.line(format!("#define {}_H", guard));
         out.line("");
-        out.buf.push_str(&crate::generators::common::runtime_source(RUNTIME_DECL, module.versions.is_some()));
+        out.buf.push_str(&crate::generators::common::runtime_source(RUNTIME_DECL, module.has_versions()));
         self.emit_constants(&mut out, module);
         out.line("");
         out.line("#ifdef __cplusplus");
@@ -78,7 +78,7 @@ impl Backend for CGenerator {
         out.line(format!("#ifndef {}_IMPLEMENTED", guard));
         out.line(format!("#define {}_IMPLEMENTED", guard));
         out.line("");
-        out.buf.push_str(&crate::generators::common::runtime_source(RUNTIME_IMPL, module.versions.is_some()));
+        out.buf.push_str(&crate::generators::common::runtime_source(RUNTIME_IMPL, module.has_versions()));
         json::emit_json_prototypes(&mut out, module);
         for u in &module.unions {
             out.line("");

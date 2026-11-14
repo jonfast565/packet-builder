@@ -49,9 +49,38 @@ pub const PB_MAX_DEPTH: usize = 64;
 #[derive(Debug, Clone, Default)]
 struct PbTrace {
     frames: Vec<(&'static str, &'static str, Option<usize>)>,
+    scope: u32, // version scope being coded, plus 1 (0 before any)
+    scopes: Vec<(u32, u32)>, // the scopes left for it, and their versions
 }
 
 impl PbTrace {
+    // @versions{
+    /// Enter version scope `s` while at `version`: whether a scope was
+    /// entered (for `leave_scope`), and the version to code at in it. A
+    /// scope entered from another starts without a version, unless it
+    /// encloses this one already.
+    fn enter_scope(&mut self, s: u32, version: u32) -> (bool, u32) {
+        let s = s + 1;
+        if self.scope == s {
+            return (false, version);
+        }
+        let v = if self.scope == 0 { version } else { self.scopes.iter().rev().find(|e| e.0 == s).map_or(0, |e| e.1) };
+        self.scopes.push((self.scope, version));
+        self.scope = s;
+        (true, v)
+    }
+
+    /// Back to the scope `enter_scope` left: its version.
+    fn leave_scope(&mut self, entered: bool, version: u32) -> u32 {
+        if !entered {
+            return version;
+        }
+        let (s, v) = self.scopes.pop().unwrap_or((0, version));
+        self.scope = s;
+        v
+    }
+    // @versions}
+
     fn enter(&mut self, packet: &'static str) -> bool {
         self.frames.push((packet, "", None));
         self.frames.len() <= PB_MAX_DEPTH
@@ -292,6 +321,18 @@ impl<'a> PbReader<'a> {
     pub fn set_version(&mut self, v: i64, min: u32, latest: u32) -> Result<(), PbError> {
         self.version = pb_check_version(v, min, latest).map_err(|m| self.error(PbErrorKind::Constraint, m))?;
         Ok(())
+    }
+
+    /// Code a packet of version scope `s` (`Packet::version_scope`).
+    pub fn enter_scope(&mut self, s: u32) -> bool {
+        let (entered, v) = self.trace.enter_scope(s, self.version);
+        self.version = v;
+        entered
+    }
+
+    /// After that packet: back to the outer scope and its version.
+    pub fn leave_scope(&mut self, entered: bool) {
+        self.version = self.trace.leave_scope(entered, self.version);
     }
     // @versions}
 
@@ -661,6 +702,18 @@ impl PbWriter {
     /// The version a value carries in-band: used unless one is set already.
     pub fn adopt_version(&mut self, v: i64, min: u32, latest: u32) -> Result<(), PbError> {
         if self.version == 0 { self.set_version(v, min, latest) } else { Ok(()) }
+    }
+
+    /// Code a packet of version scope `s` (`Packet::version_scope`).
+    pub fn enter_scope(&mut self, s: u32) -> bool {
+        let (entered, v) = self.trace.enter_scope(s, self.version);
+        self.version = v;
+        entered
+    }
+
+    /// After that packet: back to the outer scope and its version.
+    pub fn leave_scope(&mut self, entered: bool) {
+        self.version = self.trace.leave_scope(entered, self.version);
     }
     // @versions}
 

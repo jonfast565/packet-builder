@@ -34,6 +34,44 @@ function Reader:set_version(v, min, latest)
   end
   self.version = v
 end
+
+-- Code a packet of version scope `s`: whether a scope was entered (for
+-- leave_scope). A scope entered from another starts without a version,
+-- unless it is the one an enclosing packet left (then its version again).
+-- `scope` is the scope being coded plus 1 (0 before any); `scopes` the
+-- stack of { scope left, its version }.
+function Reader:enter_scope(s)
+  s = s + 1
+  local cur = self.scope or 0
+  if cur == s then return false end
+  local stack = self.scopes
+  if not stack then stack = {}; self.scopes = stack end
+  local v = self.version
+  if cur ~= 0 then
+    v = 0
+    for i = #stack, 1, -1 do
+      if stack[i][1] == s then v = stack[i][2]; break end
+    end
+  end
+  stack[#stack + 1] = { cur, self.version }
+  self.scope = s
+  self.version = v
+  return true
+end
+
+-- After that packet: back to the outer scope and its version.
+function Reader:leave_scope(entered)
+  if not entered then return end
+  local stack = self.scopes
+  local e = stack and stack[#stack]
+  if e then
+    stack[#stack] = nil
+    self.scope = e[1]
+    self.version = e[2]
+  else
+    self.scope = 0
+  end
+end
 -- @versions}
 
 function Reader:path()

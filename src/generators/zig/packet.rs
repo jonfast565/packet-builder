@@ -159,9 +159,15 @@ pub fn emit_packet(out: &mut Out, module: &Module, p: &Packet, zero_copy: bool) 
         out.line(format!("const p: {} = .{{}};", name));
     }
     out.line(format!("try pb_r.enter(\"{}\");", name));
+    if let Some(scope) = p.version_scope {
+        out.line(format!("const pb_scope = pb_r.enterScope({});", scope));
+    }
     out.pop();
     out.buf.push_str(&body.buf);
     out.push();
+    if p.version_scope.is_some() {
+        out.line("pb_r.leaveScope(pb_scope);");
+    }
     out.line("pb_r.leave();");
     out.line("return p;");
     out.close("}");
@@ -210,9 +216,15 @@ pub fn emit_packet(out: &mut Out, module: &Module, p: &Packet, zero_copy: bool) 
         out.line("const pb_start = pb_w.positionBits();");
     }
     out.line(format!("try pb_w.enter(\"{}\");", name));
+    if let Some(scope) = p.version_scope {
+        out.line(format!("const pb_scope = pb_w.enterScope({});", scope));
+    }
     out.pop();
     out.buf.push_str(&body.buf);
     out.push();
+    if p.version_scope.is_some() {
+        out.line("pb_w.leaveScope(pb_scope);");
+    }
     out.line("pb_w.leave();");
     out.close("}");
     super::json::emit_packet_json(out, p);

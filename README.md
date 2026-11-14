@@ -483,6 +483,44 @@ constant `Snac.Status` is `Snac_Status`, and the family packet `Snac` holds
 the union `SnacBody` (arms named after the members in snake case:
 `ready`, `versions`, `request`, ...).
 
+#### Family versions
+
+A subprotocol often has versions of its own, apart from the protocol that
+carries it (SNAC family versions inside FLAP). `version N` as the first item
+of a family gives it versions 1..N, whatever the file's are (the file need
+not have any):
+
+```
+version 2                                    // the file's (Frame's) versions
+
+switch Snac be {
+  version 4                                  // the family's: 1..4
+  header { ver uint8 = version, kind uint8 }
+  const Kind uint8 { hello = 1, @3 hello = 7 }   // family constants follow its versions
+  packet Hello when kind = Kind.hello { n uint8, @2.. extra uint8 }
+  @3.. packet Motd when kind = 2 { text bytes[] }
+}
+
+packet Frame be { ver uint8 = version, @2 flags uint8, snac Snac }
+```
+
+* Inside the family's packets (the family packet and its members), `@range`,
+  `version` and versioned constants mean the family's versions. Unversioned
+  file constants are shared; a versioned one belongs to the file's versions
+  and is unknown inside the family (and the family's to the file).
+* Each family keeps its own version while coding. Entering a family's packet
+  starts it unset (the latest, unless an in-band field like `ver` above
+  gives it), and leaving it restores the outer packet's version. A file
+  packet nested inside a family member uses the file's version again, and a
+  family nested in itself (through a file packet) keeps the version it had.
+* The version a caller gives (`decode_v`, `--version`, ...) is the version of
+  the packet decoded or encoded: `Frame.decode_v(data, 2)` codes Frame at 2
+  and Snac at its own; `Snac.decode_v(data, 3)` codes Snac at 3.
+  `generate --versions` restricts the file's versions only.
+* Files without a versioned family generate the same code as before;
+  otherwise each packet's decoder and encoder calls `enter_scope` /
+  `leave_scope` on the reader or writer.
+
 ### Parameters
 
 A packet can take integer parameters from the packet that contains it.

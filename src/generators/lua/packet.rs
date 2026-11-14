@@ -94,12 +94,18 @@ pub fn emit_packet(out: &mut Out, module: &Module, p: &Packet) {
     out.line("");
     out.open(format!("function C.decode_from(r{})", pass));
     out.line(format!("r:enter({})", string_literal(&p.name)));
+    if let Some(scope) = p.version_scope {
+        out.line(format!("local pb_scope = r:enter_scope({})", scope));
+    }
     out.line("local p = C.new()");
     if p.needs_start(false) {
         out.line("local pb_start = r.pos");
     }
     out.line("local pb_c, pb_sel, pb_n, pb_j, pb_last");
     Decoder::new(p).emit_steps(out);
+    if p.version_scope.is_some() {
+        out.line("r:leave_scope(pb_scope)");
+    }
     out.line("r:leave()");
     out.line("return p");
     out.close("end");
@@ -117,6 +123,9 @@ pub fn emit_packet(out: &mut Out, module: &Module, p: &Packet) {
     out.line("");
     out.open(format!("function C.encode_to(p, w{})", pass));
     out.line(format!("w:enter({})", string_literal(&p.name)));
+    if let Some(scope) = p.version_scope {
+        out.line(format!("local pb_scope = w:enter_scope({})", scope));
+    }
     if p.needs_start(true) {
         out.line("local pb_start = w.pos");
     }
@@ -127,6 +136,9 @@ pub fn emit_packet(out: &mut Out, module: &Module, p: &Packet) {
     let encoder = Encoder::new(p);
     encoder.emit_locals(out);
     encoder.emit_steps(out);
+    if p.version_scope.is_some() {
+        out.line("w:leave_scope(pb_scope)");
+    }
     out.line("w:leave()");
     out.close("end");
     out.line("");

@@ -28,7 +28,7 @@ pub fn decode_args(
 ) -> Result<Value, PbError> {
     let mut r = PbReader::new(data);
     if let Some(v) = version {
-        let (min, latest) = versions(module);
+        let (min, latest) = versions(module, name);
         r.set_version(v as i64, min, latest)?;
     }
     decode_from_args(module, name, &mut r, args)
@@ -48,7 +48,7 @@ pub fn decode_from_args(module: &Module, name: &str, r: &mut PbReader, args: &[i
         let msg = format!("packet `{}` takes {} argument(s), not {}", name, p.params.len(), args.len());
         return Err(r.error(PbErrorKind::Invalid, msg));
     }
-    Ok(Value::Struct(Decoder { module, r, params: Vec::new() }.packet(p, args.to_vec())?))
+    Ok(Value::Struct(Decoder { module, r, params: Vec::new(), latest: 1 }.packet(p, args.to_vec())?))
 }
 
 fn find<'m>(module: &'m Module, name: &str, r: &PbReader) -> Result<&'m Packet, PbError> {
@@ -64,22 +64,27 @@ struct Decoder<'m, 'r, 'd> {
     r: &'r mut PbReader<'d>,
     /// The arguments of the packet being decoded.
     params: Vec<i64>,
+    /// The latest version of the packet being decoded.
+    latest: u32,
 }
 
 impl Decoder<'_, '_, '_> {
     fn env<'v>(&self, values: &'v [Value]) -> Env<'v> {
-        Env { version: self.r.version_or(versions(self.module).1), ..Env::new(values, &self.params) }
+        Env { version: self.r.version_or(self.latest), ..Env::new(values, &self.params) }
     }
 
     fn packet(&mut self, p: &Packet, args: Vec<i64>) -> Result<Struct, PbError> {
         let outer = std::mem::replace(&mut self.params, args);
+        let latest = std::mem::replace(&mut self.latest, p.version_bounds().1);
         let s = self.packet_body(p)?;
         self.params = outer;
+        self.latest = latest;
         Ok(s)
     }
 
     fn packet_body(&mut self, p: &Packet) -> Result<Struct, PbError> {
         self.r.enter(intern(&p.name))?;
+        let scope = p.version_scope.map(|s| self.r.enter_scope(s));
         let mut values: Vec<Value> = p.members.iter().map(|m| Value::default_for(self.module, m)).collect();
         let start = self.r.position_bits();
         let mut marks = HashMap::from([(Mark::PacketStart, start)]);
@@ -122,7 +127,7 @@ impl Decoder<'_, '_, '_> {
             if let Step::Field { member: Some(mi), .. } = step
                 && p.version_member == Some(*mi)
             {
-                let (min, latest) = versions(self.module);
+                let (min, latest) = p.version_bounds();
                 let v = match values[*mi] {
                     Value::Int(v) => v as i64,
                     _ => 0,
@@ -160,6 +165,9 @@ impl Decoder<'_, '_, '_> {
                 let msg = format!("`{}` is {} but the data gives {}", m.name, got, want);
                 return Err(self.r.error(PbErrorKind::Mismatch, msg));
             }
+        }
+        if let Some(entered) = scope {
+            self.r.leave_scope(entered);
         }
         self.r.leave();
         Ok(Struct { packet: p.name.clone(), fields: p.members.iter().map(|m| m.name.clone()).zip(values).collect() })

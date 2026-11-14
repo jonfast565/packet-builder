@@ -120,8 +120,10 @@ impl Case {
     }
 
     /// `(version, min, latest)` when the case gives a version.
+    /// The case's version with its packet's bounds (a family with versions
+    /// of its own has its own).
     pub fn versions(&self, module: &Module) -> Option<(u32, u32, u32)> {
-        let vs = module.versions?;
+        let vs = module.packets.iter().find(|p| p.name == self.packet).and_then(|p| p.versions).or(module.versions)?;
         self.version.map(|v| (v, vs.min, vs.latest))
     }
 }

@@ -72,14 +72,17 @@ fn parse_inner(input: &str) -> Result<PacketExprList, Error<Rule>> {
         })
         .collect();
     let dissectors = root.clone().into_inner().filter(|p| p.as_rule() == Rule::dissector_decl).map(dissector).collect();
-    let version = root.clone().into_inner().find(|p| p.as_rule() == Rule::version_directive).map(|d| {
-        let span = span_of(&d);
-        let n = d.into_inner().find(|p| p.as_rule() == Rule::numeric_constant).map(|n| int_literal(n.as_str()));
-        (n.unwrap_or(0).min(u32::MAX as u64) as u32, span)
-    });
+    let version = root.clone().into_inner().find(|p| p.as_rule() == Rule::version_directive).map(version_directive);
     let families = builder.families(root.clone());
     let packets = builder.packets(root);
     Ok(PacketExprList { packets, families, constants, word_size, imports, dissectors, version })
+}
+
+/// `version N`.
+pub(crate) fn version_directive(d: Pair<Rule>) -> (u32, Span) {
+    let span = span_of(&d);
+    let n = d.into_inner().find(|p| p.as_rule() == Rule::numeric_constant).map(|n| int_literal(n.as_str()));
+    (n.unwrap_or(0).min(u32::MAX as u64) as u32, span)
 }
 
 fn dissector(pair: Pair<Rule>) -> crate::ast::DissectorExpr {

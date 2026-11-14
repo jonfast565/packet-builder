@@ -78,11 +78,17 @@ pub fn emit_packet(out: &mut Out, module: &Module, p: &Packet, types: &Types) {
     }
     out.open(format!("public static func decodeFrom(_ pbR: PbReader{}) throws -> {} {{", decl, name));
     out.line(format!("try pbR.enter(\"{}\")", name));
+    if let Some(scope) = p.version_scope {
+        out.line(format!("let pbScope = pbR.enterScope({})", scope));
+    }
     out.line(format!("var p = {}()", name));
     if p.needs_start(false) {
         out.line("let pb_start = pbR.positionBits()");
     }
     Decoder::new(p, types.zero_copy).emit_steps(out);
+    if p.version_scope.is_some() {
+        out.line("pbR.leaveScope(pbScope)");
+    }
     out.line("pbR.leave()");
     out.line("return p");
     out.close("}");
@@ -107,6 +113,9 @@ pub fn emit_packet(out: &mut Out, module: &Module, p: &Packet, types: &Types) {
     }
     out.open(format!("public func encodeTo(_ pbW: PbWriter{}) throws {{", decl));
     out.line(format!("try pbW.enter(\"{}\")", name));
+    if let Some(scope) = p.version_scope {
+        out.line(format!("let pbScope = pbW.enterScope({})", scope));
+    }
     out.line("let p = self");
     if p.needs_start(true) {
         out.line("let pb_start = pbW.positionBits()");
@@ -115,6 +124,9 @@ pub fn emit_packet(out: &mut Out, module: &Module, p: &Packet, types: &Types) {
     encoder.emit_locals(out);
     encoder.emit_steps(out);
     out.line("_ = p");
+    if p.version_scope.is_some() {
+        out.line("pbW.leaveScope(pbScope)");
+    }
     out.line("pbW.leave()");
     out.close("}");
 

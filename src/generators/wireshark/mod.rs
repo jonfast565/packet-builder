@@ -34,7 +34,7 @@ pub fn generate(module: &Module, dissectors: &[Dissector], package: &str) -> Str
     out.line("--   wireshark -X lua_script:<this file>");
     out.line("-- or copy it into Wireshark's personal Lua plugins folder.");
     out.line("");
-    out.buf.push_str(&crate::generators::common::lua::runtime(RUNTIME, module.versions.is_some()));
+    out.buf.push_str(&crate::generators::common::lua::runtime(RUNTIME, module.has_versions()));
     fields::emit_fields(&mut out, module);
     out.line("");
     out.line("local D = {}");
@@ -57,7 +57,7 @@ pub fn generate(module: &Module, dissectors: &[Dissector], package: &str) -> Str
         };
         let tables: Vec<String> = d.tables.iter().map(|(t, v)| format!("{{ {}, {} }}", string_literal(t), v)).collect();
         // Files with versions: a preference for the version to dissect as.
-        let latest = module.versions.map(|v| format!(", {}", v.latest)).unwrap_or_default();
+        let latest = p.versions.map(|v| format!(", {}", v.latest)).unwrap_or_default();
         out.line("");
         out.line(format!(
             "pb_register(D, make_fields, {}, {}, {}, {{ {} }}, {}, {}{})",
@@ -114,7 +114,13 @@ fn emit_packet(out: &mut Out, p: &Packet) {
         string_literal(&format!(": {}", p.name))
     ));
     out.line(format!("r:enter({})", string_literal(&p.name)));
+    if let Some(scope) = p.version_scope {
+        out.line(format!("local pb_scope = r:enter_scope({})", scope));
+    }
     Emitter::new(p).emit_steps(out);
+    if p.version_scope.is_some() {
+        out.line("r:leave_scope(pb_scope)");
+    }
     out.line("r:leave()");
     out.line("if label then pb_close(c, t, pb_start) end");
     out.line("return p");

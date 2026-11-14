@@ -89,6 +89,8 @@
         private final java.util.ArrayList<Frame> frames = new java.util.ArrayList<>();
         protected long pos; // in bits
         private int version; // protocol version; 0 until set
+        private int scope; // version scope being coded, plus 1 (0 before any)
+        private final java.util.ArrayList<int[]> scopes = new java.util.ArrayList<>(); // the scopes left for it ({scope, version})
 
         public long positionBits() {
             return pos;
@@ -109,6 +111,8 @@
         protected void copyFrames(PbTrace other) {
             frames.addAll(other.frames);
             version = other.version;
+            scope = other.scope;
+            scopes.addAll(other.scopes);
         }
 
         // @versions{
@@ -130,6 +134,46 @@
             if (version == 0) {
                 setVersion(v, min, latest);
             }
+        }
+
+        /**
+         * Code a packet of version scope s ({@code Packet::version_scope}): whether a scope was entered
+         * (for leaveScope). A scope entered from another starts without a version, unless it encloses
+         * this one already.
+         */
+        public boolean enterScope(int s) {
+            s += 1;
+            if (scope == s) {
+                return false;
+            }
+            int v = version;
+            if (scope != 0) {
+                v = 0;
+                for (int i = scopes.size() - 1; i >= 0; i--) {
+                    if (scopes.get(i)[0] == s) {
+                        v = scopes.get(i)[1];
+                        break;
+                    }
+                }
+            }
+            scopes.add(new int[] {scope, version});
+            scope = s;
+            version = v;
+            return true;
+        }
+
+        /** After that packet: back to the outer scope and its version. */
+        public void leaveScope(boolean entered) {
+            if (!entered) {
+                return;
+            }
+            if (scopes.isEmpty()) {
+                scope = 0;
+                return;
+            }
+            int[] e = scopes.remove(scopes.size() - 1);
+            scope = e[0];
+            version = e[1];
         }
         // @versions}
 

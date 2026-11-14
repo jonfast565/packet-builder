@@ -46,6 +46,14 @@
     integer :: depth = 0
     integer(int64) :: pos = 0
     integer(int64) :: version = 0
+    ! @versions{
+    !> The version scope being coded plus 1 (0 before any), and the scopes
+    !> left for it with their versions.
+    integer :: scope = 0
+    integer :: nscopes = 0
+    integer :: scopes(PB_MAX_DEPTH + 1) = 0
+    integer(int64) :: scope_versions(PB_MAX_DEPTH + 1) = 0
+    ! @versions}
     type(pb_error) :: e
   end type pb_trace
 
@@ -325,6 +333,51 @@
     integer, intent(in) :: vmin, latest
     if (t%version == 0) call pb_set_version(t, v, vmin, latest)
   end subroutine pb_adopt_version
+
+  !> Code a packet of version scope S (`Packet::version_scope`): ENTERED is
+  !> whether a scope was entered (for pb_leave_scope). A scope entered from
+  !> another starts without a version, unless it encloses this one already.
+  pure subroutine pb_enter_scope(t, s, entered)
+    class(pb_trace), intent(inout) :: t
+    integer, intent(in) :: s
+    logical, intent(out) :: entered
+    integer(int64) :: v
+    integer :: i
+    entered = .false.
+    if (t%scope == s + 1) return
+    if (t%nscopes >= PB_MAX_DEPTH + 1) return
+    if (t%scope == 0) then
+      v = t%version
+    else
+      v = 0
+      do i = t%nscopes, 1, -1
+        if (t%scopes(i) == s + 1) then
+          v = t%scope_versions(i)
+          exit
+        end if
+      end do
+    end if
+    t%nscopes = t%nscopes + 1
+    t%scopes(t%nscopes) = t%scope
+    t%scope_versions(t%nscopes) = t%version
+    t%scope = s + 1
+    t%version = v
+    entered = .true.
+  end subroutine pb_enter_scope
+
+  !> After that packet: back to the outer scope and its version.
+  pure subroutine pb_leave_scope(t, entered)
+    class(pb_trace), intent(inout) :: t
+    logical, intent(in) :: entered
+    if (.not. entered) return
+    if (t%nscopes < 1) then
+      t%scope = 0
+      return
+    end if
+    t%scope = t%scopes(t%nscopes)
+    t%version = t%scope_versions(t%nscopes)
+    t%nscopes = t%nscopes - 1
+  end subroutine pb_leave_scope
   ! @versions}
 
   !> Fail with KIND and REASON unless COND holds.
@@ -1093,6 +1146,12 @@
     end do
     s%depth = w%depth
     s%version = w%version
+    ! @versions{
+    s%scope = w%scope
+    s%nscopes = w%nscopes
+    s%scopes = w%scopes
+    s%scope_versions = w%scope_versions
+    ! @versions}
   end subroutine pb_sub_writer
 
   !> Keep what S wrote (and the packets it placed), for pb_finish; passes

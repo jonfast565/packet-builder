@@ -16,7 +16,8 @@ impl Module {
         }
         let versions = Some(Versions { min, latest });
         self.versions = versions;
-        for p in &mut self.packets {
+        // Families with versions of their own keep all of theirs.
+        for p in self.packets.iter_mut().filter(|p| p.version_scope.unwrap_or(0) == 0) {
             restrict(p, min, latest);
             p.versions = versions;
         }

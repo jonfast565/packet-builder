@@ -13,6 +13,7 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 
+use super::family::Domain;
 use crate::ast::{
     Constraint, ExprNode, FieldRules, PacketExpr, PacketExprList, PacketItem, Span, TypeExpr, VersionRange,
 };
@@ -166,9 +167,11 @@ pub(super) fn latest(list: &PacketExprList) -> Option<u32> {
 }
 
 /// Every `@range` written in a file without `version`.
-fn stray_ranges(list: &PacketExprList, diags: &mut Vec<Diagnostic>) {
+/// `versioned` says which declarations have versions (those of families
+/// with versions of their own).
+fn stray_ranges(list: &PacketExprList, versioned: &dyn Fn(&str) -> bool, diags: &mut Vec<Diagnostic>) {
     let mut spans = Vec::new();
-    for p in &list.packets {
+    for p in list.packets.iter().filter(|p| !versioned(&p.name)) {
         spans.extend(p.versions.iter().flatten().map(|r| r.span));
         for it in &p.items {
             if let PacketItem::Switch(sw) = it {
@@ -176,13 +179,13 @@ fn stray_ranges(list: &PacketExprList, diags: &mut Vec<Diagnostic>) {
             }
         }
     }
-    for c in &list.constants {
+    for c in list.constants.iter().filter(|c| !versioned(&c.name)) {
         spans.extend(c.versions.map(|r| r.span));
         if let crate::ast::ConstKind::Group(items) = &c.kind {
             spans.extend(items.iter().filter_map(|i| i.versions).map(|r| r.span));
         }
     }
-    for p in &list.packets {
+    for p in list.packets.iter().filter(|p| !versioned(&p.name)) {
         for it in &p.items {
             if let PacketItem::Override(o) = it {
                 spans.push(o.span);
@@ -197,9 +200,16 @@ fn stray_ranges(list: &PacketExprList, diags: &mut Vec<Diagnostic>) {
     }
 }
 
-pub(super) fn normalize<'l>(list: &'l PacketExprList, diags: &mut Vec<Diagnostic>) -> Cow<'l, PacketExprList> {
+pub(super) fn normalize<'l>(
+    list: &'l PacketExprList,
+    domains: &[Domain],
+    diags: &mut Vec<Diagnostic>,
+) -> Cow<'l, PacketExprList> {
+    if !domains.is_empty() {
+        return normalize_domains(list, domains, diags);
+    }
     let Some(latest) = latest(list) else {
-        stray_ranges(list, diags);
+        stray_ranges(list, &|_| false, diags);
         return Cow::Borrowed(list);
     };
     if latest == 0 {
@@ -209,6 +219,37 @@ pub(super) fn normalize<'l>(list: &'l PacketExprList, diags: &mut Vec<Diagnostic
     let mut out = list.clone();
     for p in &mut out.packets {
         normalize_packet(p, latest, diags);
+    }
+    Cow::Owned(out)
+}
+
+/// `normalize` for a file with families that have versions of their own:
+/// each packet against its family's versions, the others against the file's.
+fn normalize_domains<'l>(
+    list: &'l PacketExprList,
+    domains: &[Domain],
+    diags: &mut Vec<Diagnostic>,
+) -> Cow<'l, PacketExprList> {
+    for d in domains.iter().filter(|d| d.version.0 == 0) {
+        diags.push(Diagnostic::new("`version` must be at least 1", d.version.1));
+    }
+    if list.version.is_some_and(|(n, _)| n == 0) {
+        diags.push(Diagnostic::new("`version` must be at least 1", list.version.expect("versioned").1));
+    }
+    let file = latest(list).filter(|n| *n > 0);
+    let latest_of = |name: &str| match domains.iter().find(|d| d.packets.contains(name)) {
+        Some(d) => Some(d.version.0).filter(|n| *n > 0),
+        None => file,
+    };
+    let in_domain = |name: &str| domains.iter().any(|d| d.packets.contains(name) || d.constants.contains(name));
+    if file.is_none() {
+        stray_ranges(list, &in_domain, diags);
+    }
+    let mut out = list.clone();
+    for p in &mut out.packets {
+        if let Some(latest) = latest_of(&p.name) {
+            normalize_packet(p, latest, diags);
+        }
     }
     Cow::Owned(out)
 }

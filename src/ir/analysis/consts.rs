@@ -1,9 +1,10 @@
 //! Named constants: folds `const` declarations into a table that packets can
 //! refer to, and checks the `: Category` tags on fields.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::context::Ctx;
+use super::family::Domain;
 use super::params::Sigs;
 use super::types::{type_label, value_type};
 use super::versions::{VRange, resolve_ends, version_test};
@@ -86,6 +87,53 @@ fn fold_name(name: &str) -> String {
 }
 
 impl ConstTable {
+    /// The file's table, and one per family with versions of its own
+    /// (`domains`): its constants, valued for its versions, plus the file's
+    /// constants that have no versions (so it can use them too).
+    pub fn build_domains(
+        list: &PacketExprList,
+        domains: &[Domain],
+        diags: &mut Vec<Diagnostic>,
+    ) -> (ConstTable, Vec<ConstTable>) {
+        if domains.is_empty() {
+            return (ConstTable::build(list, diags), Vec::new());
+        }
+        let owned = |c: &ConstDecl| domains.iter().any(|d| d.constants.contains(&c.name));
+        let mut file = list.clone();
+        file.constants.retain(|c| !owned(c));
+        let table = ConstTable::build(&file, diags);
+        let versioned = |c: &ConstDecl| {
+            c.versions.is_some()
+                || matches!(&c.kind, ConstKind::Group(items) if items.iter().any(|i| i.versions.is_some()))
+        };
+        // A name with any versioned declaration follows the file's versions.
+        let by_version: HashSet<&str> =
+            list.constants.iter().filter(|c| versioned(c)).map(|c| c.name.as_str()).collect();
+        let shared: Vec<&ConstDecl> =
+            list.constants.iter().filter(|c| !owned(c) && !by_version.contains(c.name.as_str())).collect();
+        let mut tables = Vec::new();
+        for d in domains {
+            let sub = PacketExprList {
+                constants: list
+                    .constants
+                    .iter()
+                    .filter(|c| d.constants.contains(&c.name) || shared.contains(c))
+                    .cloned()
+                    .collect(),
+                version: Some(d.version),
+                word_size: list.word_size,
+                ..PacketExprList::default()
+            };
+            // The shared constants were checked with the file's table.
+            let mut found = Vec::new();
+            let t = ConstTable::build(&sub, &mut found);
+            let fresh: Vec<Diagnostic> = found.into_iter().filter(|e| !diags.contains(e)).collect();
+            diags.extend(fresh);
+            tables.push(t);
+        }
+        (table, tables)
+    }
+
     pub fn build(list: &PacketExprList, diags: &mut Vec<Diagnostic>) -> ConstTable {
         let mut table = ConstTable { latest: super::versions::latest(list), ..Default::default() };
         // An empty packet to type-check values in: no fields, so only constants resolve.

@@ -237,6 +237,9 @@ pub fn emit_implementation(out: &mut Out, p: &Packet, zero_copy: bool) {
     out.line("uint64_t pb_u = 0;");
     out.line("memset(p, 0, sizeof *p);");
     out.line(format!("PB_TRY(pb_enter(&pb_r->tr, \"{}\"));", name));
+    if let Some(scope) = p.version_scope {
+        out.line(format!("int pb_scope = pb_enter_scope(&pb_r->tr, {});", scope));
+    }
     if p.needs_start(false) {
         out.line("size_t pb_start = pb_reader_position(pb_r);");
     }
@@ -246,6 +249,9 @@ pub fn emit_implementation(out: &mut Out, p: &Packet, zero_copy: bool) {
     out.pop();
     out.buf.push_str(&body.buf);
     out.push();
+    if p.version_scope.is_some() {
+        out.line("pb_leave_scope(&pb_r->tr, pb_scope);");
+    }
     out.line("pb_leave(&pb_r->tr);");
     out.line("return PB_OK;");
     out.pop();
@@ -300,6 +306,12 @@ pub fn emit_implementation(out: &mut Out, p: &Packet, zero_copy: bool) {
 
     out.open(format!("int {}_encode_to(const {} *p, pb_writer *pb_w{}) {{", name, name, decl));
     let encoder = Encoder::new(p);
+    // The locals may already use the version: enter its scope before them.
+    let enter = format!("PB_CHECK(pb_enter(&pb_w->tr, \"{}\"));", name);
+    if let Some(scope) = p.version_scope {
+        out.line(&enter);
+        out.line(format!("int pb_scope = pb_enter_scope(&pb_w->tr, {});", scope));
+    }
     encoder.emit_locals(out);
     out.line("(void)p;");
     out.line("(void)pb_w;");
@@ -307,8 +319,13 @@ pub fn emit_implementation(out: &mut Out, p: &Packet, zero_copy: bool) {
     if p.needs_start(true) {
         out.line("size_t pb_start = pb_writer_position(pb_w);");
     }
-    out.line(format!("PB_CHECK(pb_enter(&pb_w->tr, \"{}\"));", name));
+    if p.version_scope.is_none() {
+        out.line(enter);
+    }
     encoder.emit_steps(out);
+    if p.version_scope.is_some() {
+        out.line("pb_leave_scope(&pb_w->tr, pb_scope);");
+    }
     out.line("pb_leave(&pb_w->tr);");
     out.line("return PB_OK;");
     out.close("}");

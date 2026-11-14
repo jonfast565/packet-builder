@@ -477,6 +477,8 @@ pub struct FamilyDecl {
     /// `const` declarations inside the block (`Name_X` outside it).
     pub constants: Vec<ConstDecl>,
     pub members: Vec<FamilyMember>,
+    /// `version N` inside the block: the family's own versions 1..N.
+    pub version: Option<(u32, Span)>,
 }
 
 /// `[@range] packet Member when tag = v, tag in {a, b} { ... }`.
@@ -499,7 +501,7 @@ pub struct FamilyTag {
     pub span: Span,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct PacketExprList {
     pub packets: Vec<PacketExpr>,
     /// `switch Name { ... }` families, desugared by analysis.

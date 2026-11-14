@@ -86,6 +86,24 @@
       Version : Integer_64 := 0;  --  protocol version; 0 until set
    end record;
 
+   -- @versions{
+   --  A version scope left for another, and its version.
+   type Pb_Scope_Left is record
+      Scope   : Natural := 0;
+      Version : Integer_64 := 0;
+   end record;
+
+   type Pb_Scope_Array is array (1 .. Pb_Max_Depth + 1) of Pb_Scope_Left;
+
+   --  The version scope being coded (plus 1; 0 before any) and the scopes
+   --  left for it, innermost last.
+   type Pb_Scopes is record
+      Scope : Natural := 0;
+      Left  : Pb_Scope_Array;
+      Depth : Natural := 0;
+   end record;
+
+   -- @versions}
    type Pb_Byte_Array_Access is access Pb_Byte_Array;
    type Pb_Flags is array (Natural range <>) of Boolean;
    type Pb_Flags_Access is access Pb_Flags;
@@ -120,6 +138,9 @@
       Size    : Integer_64 := 0;         --  input size in bytes
       Limit   : Integer_64 := 0;
       Windows : Natural := 0;
+      -- @versions{
+      Sc      : Pb_Scopes;
+      -- @versions}
    end record;
 
    type Pb_Jump_State is record
@@ -142,6 +163,9 @@
       Buf    : Pb_Bytes;
       Base   : Integer_64 := 0;
       Placed : Pb_Placed_Vectors.Vector;
+      -- @versions{
+      Sc     : Pb_Scopes;
+      -- @versions}
    end record;
 
    --  Start reading Data.
@@ -884,6 +908,77 @@
          Pb_Set_Version (T, V, Min, Latest);
       end if;
    end Pb_Adopt_Version;
+
+   --  Enter version scope S while at Version: whether a scope was entered
+   --  (for Pb_Leave_Scope). A scope entered from another starts without a
+   --  version, unless it was left for it earlier.
+   procedure Pb_Enter_Scope
+     (Sc : in out Pb_Scopes; S : Natural; Version : in out Integer_64; Entered : out Boolean)
+   is
+      V : Integer_64 := 0;
+   begin
+      Entered := Sc.Scope /= S + 1;
+      if not Entered then
+         return;
+      end if;
+      if Sc.Scope = 0 then
+         V := Version;
+      else
+         for I in reverse 1 .. Sc.Depth loop
+            if Sc.Left (I).Scope = S + 1 then
+               V := Sc.Left (I).Version;
+               exit;
+            end if;
+         end loop;
+      end if;
+      if Sc.Depth < Sc.Left'Last then
+         Sc.Depth := Sc.Depth + 1;
+         Sc.Left (Sc.Depth) := (Scope => Sc.Scope, Version => Version);
+      end if;
+      Sc.Scope := S + 1;
+      Version := V;
+   end Pb_Enter_Scope;
+
+   --  Back to the scope Pb_Enter_Scope left, and its version.
+   procedure Pb_Leave_Scope (Sc : in out Pb_Scopes; Entered : Boolean; Version : in out Integer_64) is
+   begin
+      if not Entered then
+         return;
+      end if;
+      if Sc.Depth = 0 then
+         Sc.Scope := 0;
+         return;
+      end if;
+      Sc.Scope := Sc.Left (Sc.Depth).Scope;
+      Version := Sc.Left (Sc.Depth).Version;
+      Sc.Depth := Sc.Depth - 1;
+   end Pb_Leave_Scope;
+
+   --  Code a packet of version scope S (`version_scope`).
+   function Pb_Enter_Scope (R : not null access Pb_Reader; S : Natural) return Boolean is
+      Entered : Boolean;
+   begin
+      Pb_Enter_Scope (R.Sc, S, R.T.Version, Entered);
+      return Entered;
+   end Pb_Enter_Scope;
+
+   function Pb_Enter_Scope (W : not null access Pb_Writer; S : Natural) return Boolean is
+      Entered : Boolean;
+   begin
+      Pb_Enter_Scope (W.Sc, S, W.T.Version, Entered);
+      return Entered;
+   end Pb_Enter_Scope;
+
+   --  After that packet: back to the outer scope and its version.
+   procedure Pb_Leave_Scope (R : not null access Pb_Reader; Entered : Boolean) is
+   begin
+      Pb_Leave_Scope (R.Sc, Entered, R.T.Version);
+   end Pb_Leave_Scope;
+
+   procedure Pb_Leave_Scope (W : not null access Pb_Writer; Entered : Boolean) is
+   begin
+      Pb_Leave_Scope (W.Sc, Entered, W.T.Version);
+   end Pb_Leave_Scope;
    -- @versions}
 
    -- ---- text ---------------------------------------------------------------
@@ -1018,6 +1113,9 @@
       R.Src := null;
       R.Size := Integer_64 (R.Len);
       R.T := (Frames => <>, Depth => 0, Pos => 0, Version => 0);
+      -- @versions{
+      R.Sc := (Scope => 0, Left => <>, Depth => 0);
+      -- @versions}
       R.Limit := Integer_64 (R.Len) * 8;
       R.Windows := 0;
    end Pb_Init;
@@ -1027,6 +1125,9 @@
       R.Src := Src'Unchecked_Access;
       R.Size := Integer_64 (Src.Size);
       R.T := (Frames => <>, Depth => 0, Pos => 0, Version => 0);
+      -- @versions{
+      R.Sc := (Scope => 0, Left => <>, Depth => 0);
+      -- @versions}
       R.Limit := R.Size * 8;
       R.Windows := 0;
    end Pb_Init;
@@ -1570,6 +1671,9 @@
       S.T.Frames := W.T.Frames;
       S.T.Depth := W.T.Depth;
       S.T.Version := W.T.Version;
+      -- @versions{
+      S.Sc := W.Sc;
+      -- @versions}
    end Pb_Sub;
 
    --  Keep what sub-writer S wrote, to be placed by Pb_Finish.

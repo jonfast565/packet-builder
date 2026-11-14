@@ -174,6 +174,17 @@ impl ValueType {
 }
 
 impl Module {
+    /// Whether any packet has versions: the file's (`version N`) or a
+    /// family's own. Runtimes keep their version code only then.
+    pub fn has_versions(&self) -> bool {
+        self.versions.is_some() || self.packets.iter().any(|p| p.versions.is_some())
+    }
+
+    /// Whether packets keep their versions in scopes (`Packet::version_scope`).
+    pub fn has_version_scopes(&self) -> bool {
+        self.packets.iter().any(|p| p.version_scope.is_some())
+    }
+
     pub fn union(&self, name: &str) -> Option<&Union> {
         self.unions.iter().find(|u| u.name == name)
     }
@@ -253,8 +264,17 @@ pub struct Packet {
     /// adopts its value as the reader's version, encoding takes the
     /// writer's (or, if the caller gave none, the member's).
     pub version_member: Option<usize>,
-    /// The module's versions (`Module::versions`), for generated code.
+    /// The versions this packet is coded in, for generated code: the
+    /// module's (`Module::versions`), or its family's own (`version N` in a
+    /// `switch` block).
     pub versions: Option<Versions>,
+    /// In a module with families that have versions of their own: which
+    /// versions this packet uses (0 the file's, k the k-th such family's).
+    /// Readers and writers keep one version per scope: coding a packet
+    /// enters its scope (`enter_scope`), and a scope entered from another
+    /// one starts without a version (latest, or what the data carries).
+    /// None otherwise, and generated code then does nothing.
+    pub version_scope: Option<u32>,
 }
 
 /// A packet parameter: an integer the containing packet passes in. It is

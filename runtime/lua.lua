@@ -122,6 +122,8 @@ end
 -- @versions{
 Writer.version_or = Reader.version_or
 Writer.set_version = Reader.set_version
+Writer.enter_scope = Reader.enter_scope
+Writer.leave_scope = Reader.leave_scope
 
 -- The version a value carries in-band: used unless one is set already.
 function Writer:adopt_version(v, min, latest)
@@ -193,6 +195,13 @@ function Writer:sub(start, offset, root)
   s.version = self.version
   s.base = start + offset * 8
   for i, f in ipairs(self.frames) do s.frames[i] = { packet = f.packet, field = f.field, index = f.index } end
+  -- @versions{
+  s.scope = self.scope
+  if self.scopes then
+    s.scopes = {}
+    for i, e in ipairs(self.scopes) do s.scopes[i] = { e[1], e[2] } end
+  end
+  -- @versions}
   return s
 end
 

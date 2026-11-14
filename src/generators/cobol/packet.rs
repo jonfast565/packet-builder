@@ -106,10 +106,27 @@ fn prologue(b: &mut Out, locals: &Locals, p: &Packet) {
     }
 }
 
-fn enter(b: &mut Out, p: &Packet) {
+fn enter(b: &mut Out, locals: &Locals, p: &Packet) {
     b.line(format!("MOVE {} TO PB-NAME", cob_literal(&p.name)));
     b.line("CALL \"PB-ENTER\"");
     b.line(RC);
+    if let Some(scope) = p.version_scope {
+        locals.var("PL-SCOPE", INT);
+        b.line(format!("MOVE {} TO PB-A1", scope));
+        b.line("CALL \"PB-ENTERSC\"");
+        b.line(RC);
+        b.line("MOVE PB-A2 TO PL-SCOPE");
+    }
+}
+
+/// Leave the packet's frame of the trace (and its version scope).
+fn leave(b: &mut Out, p: &Packet) {
+    if p.version_scope.is_some() {
+        b.line("MOVE PL-SCOPE TO PB-A1");
+        b.line("CALL \"PB-LEAVESC\"");
+        b.line(RC);
+    }
+    b.line("SUBTRACT 1 FROM PB-DEPTH");
 }
 
 fn decode_program(out: &mut Out, module: &Module, p: &Packet, zero_copy: bool) {
@@ -117,13 +134,13 @@ fn decode_program(out: &mut Out, module: &Module, p: &Packet, zero_copy: bool) {
     let mut b = body();
     prologue(&mut b, &locals, p);
     b.line(format!("CALL {} USING P-REC", call(module, &p.name, "INIT")));
-    enter(&mut b, p);
+    enter(&mut b, &locals, p);
     if p.needs_start(false) {
         locals.var("PL-START", INT);
         b.line("MOVE PB-POS TO PL-START");
     }
     Decoder::new(module, p, &locals, zero_copy).emit_steps(&mut b);
-    b.line("SUBTRACT 1 FROM PB-DEPTH");
+    leave(&mut b, p);
     b.line("GOBACK.");
     let (linkage, using) = packet_linkage(module, p, true);
     program(out, &format!("{}-DEC", prog(module, &p.name)), true, "", &locals, &linkage, &using, b);
@@ -133,7 +150,7 @@ fn encode_program(out: &mut Out, module: &Module, p: &Packet) {
     let locals = Locals::default();
     let mut b = body();
     prologue(&mut b, &locals, p);
-    enter(&mut b, p);
+    enter(&mut b, &locals, p);
     if p.needs_start(true) {
         locals.var("PL-START", INT);
         b.line("MOVE PB-WPOS TO PL-START");
@@ -141,7 +158,7 @@ fn encode_program(out: &mut Out, module: &Module, p: &Packet) {
     let encoder = Encoder::new(module, p, &locals);
     encoder.emit_locals(&mut b);
     encoder.emit_steps(&mut b);
-    b.line("SUBTRACT 1 FROM PB-DEPTH");
+    leave(&mut b, p);
     b.line("GOBACK.");
     let (linkage, using) = packet_linkage(module, p, true);
     program(out, &format!("{}-ENC", prog(module, &p.name)), true, "", &locals, &linkage, &using, b);

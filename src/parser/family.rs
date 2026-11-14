@@ -25,13 +25,20 @@ impl TreeBuilder {
             versions: Vec::new(),
             span,
         };
-        let mut family =
-            FamilyDecl { header: header.clone(), body: None, other: None, constants: Vec::new(), members: Vec::new() };
+        let mut family = FamilyDecl {
+            header: header.clone(),
+            body: None,
+            other: None,
+            constants: Vec::new(),
+            members: Vec::new(),
+            version: None,
+        };
         for part in decl.into_inner() {
             match part.as_rule() {
                 Rule::identifier => header.name = part.as_str().to_string(),
                 Rule::endianness => header.endianness = to_endianness(part.as_str()),
                 Rule::alignment => header.align = Some(parse_alignment(part)),
+                Rule::version_directive => family.version = Some(super::version_directive(part)),
                 Rule::family_header => {
                     for x in part.into_inner().filter(|x| x.as_rule() == Rule::rule_list) {
                         self.rule_list(x, &mut header.items, &mut header.versions);

@@ -259,6 +259,40 @@ PB_FN int pb_set_version(pb_trace *t, int64_t v, unsigned min, unsigned latest) 
 PB_FN int pb_adopt_version(pb_trace *t, int64_t v, unsigned min, unsigned latest) {
     return t->version ? PB_OK : pb_set_version(t, v, min, latest);
 }
+
+/* Code a packet of version scope s (`Packet::version_scope`): whether a
+ * scope was entered (for pb_leave_scope). A scope entered from another
+ * starts without a version, unless it encloses this one already. */
+PB_FN int pb_enter_scope(pb_trace *t, unsigned s) {
+    unsigned v = 0, i;
+    s++;
+    if (t->scope == s || t->nscopes >= PB_MAX_DEPTH) return 0;
+    if (t->scope == 0) v = t->version;
+    else
+        for (i = t->nscopes; i-- > 0;)
+            if (t->scopes[i].scope == s) {
+                v = t->scopes[i].version;
+                break;
+            }
+    t->scopes[t->nscopes].scope = t->scope;
+    t->scopes[t->nscopes].version = t->version;
+    t->nscopes++;
+    t->scope = s;
+    t->version = v;
+    return 1;
+}
+
+/* After that packet: back to the outer scope and its version. */
+PB_FN void pb_leave_scope(pb_trace *t, int entered) {
+    if (!entered) return;
+    if (t->nscopes == 0) {
+        t->scope = 0;
+        return;
+    }
+    t->nscopes--;
+    t->scope = t->scopes[t->nscopes].scope;
+    t->version = t->scopes[t->nscopes].version;
+}
 // @versions}
 
 /* `bits` more bits are needed: incomplete input at the top level, invalid

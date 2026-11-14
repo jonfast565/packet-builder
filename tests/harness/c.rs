@@ -43,7 +43,7 @@ impl Target for CTarget {
             s.push_str("    {\n");
             let _ = writeln!(s, "        size_t n = unhex({}, data);", quote(&c.hex));
             let _ = writeln!(s, "        {} p;", p.name);
-            s.push_str("        int rc; pb_reader r; pb_writer w; char desc[512], path[256];\n");
+            s.push_str("        int rc; static pb_reader r; static pb_writer w; static char desc[512], path[256];\n");
             // Copy into an exact-size heap buffer so ASan catches over-reads.
             s.push_str("        uint8_t *in = malloc(n ? n : 1); memcpy(in, data, n);\n");
             if c.source {

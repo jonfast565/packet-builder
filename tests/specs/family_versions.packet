@@ -1,0 +1,37 @@
+// Families with versions of their own, in a file with versions. Used by
+// tests/codegen.rs.
+version 2
+
+const MAGIC uint8 = 0x10
+@2 const MAGIC uint8 = 0x20
+
+// Versions 1..3, carried in the family's header.
+switch Sub be {
+  version 3
+  header { ver uint8 = version, op uint8 }
+  otherwise other uint8
+  const Opcode uint8 { hello = 1, @3 hello = 7 }
+  packet Hello when op = Opcode.hello { n uint8, @2.. extra uint8 }
+  @2.. packet Motd when op = 2 { text uint8, @3 more uint8, inner Inner }
+}
+
+// No version in the data: the latest, unless the caller gives one.
+switch Quiet be {
+  version 2
+  header { op uint8 }
+  packet A when op = 1 { x uint8, @2 y uint8 }
+}
+
+// The file's versions, also where a family member holds it.
+packet Inner be {
+  a uint8,
+  @2 b uint8,
+}
+
+packet Outer be {
+  ver uint8 = version,
+  magic uint8 == MAGIC,
+  sub Sub,
+  quiet Quiet,
+  tail Inner,
+}

@@ -33,8 +33,15 @@ pub const PbTrace = struct {
     depth: usize = 0,
     diag: PbDiag = .{},
     version: u32 = 0, // protocol version; 0 until set
+    // @versions{
+    scope: u32 = 0, // version scope being coded, plus 1 (0 before any)
+    nscopes: usize = 0, // the scopes left for it, and their versions:
+    scopes: [PB_MAX_DEPTH]PbScope = undefined,
+    // @versions}
 
     // @versions{
+    const PbScope = struct { scope: u32, version: u32 };
+
     fn versionOr(self: *const PbTrace, latest: u32) i64 {
         return if (self.version == 0) latest else self.version;
     }
@@ -42,6 +49,44 @@ pub const PbTrace = struct {
     fn setVersion(self: *PbTrace, v: i64, min: u32, latest: u32, pos: usize) PbError!void {
         if (v < min or v > latest) return self.fail(PbError.Constraint, pos, 0);
         self.version = @intCast(v);
+    }
+
+    /// Enter version scope `s`: whether a scope was entered (for
+    /// `leaveScope`). A scope entered from another starts without a
+    /// version, unless it encloses this one already.
+    fn enterScope(self: *PbTrace, s0: u32) bool {
+        const s = s0 + 1;
+        if (self.scope == s or self.nscopes >= PB_MAX_DEPTH) return false;
+        var v: u32 = 0;
+        if (self.scope == 0) {
+            v = self.version;
+        } else {
+            var i = self.nscopes;
+            while (i > 0) {
+                i -= 1;
+                if (self.scopes[i].scope == s) {
+                    v = self.scopes[i].version;
+                    break;
+                }
+            }
+        }
+        self.scopes[self.nscopes] = .{ .scope = self.scope, .version = self.version };
+        self.nscopes += 1;
+        self.scope = s;
+        self.version = v;
+        return true;
+    }
+
+    /// Back to the scope `enterScope` left, and its version.
+    fn leaveScope(self: *PbTrace, entered: bool) void {
+        if (!entered) return;
+        if (self.nscopes == 0) {
+            self.scope = 0;
+            return;
+        }
+        self.nscopes -= 1;
+        self.scope = self.scopes[self.nscopes].scope;
+        self.version = self.scopes[self.nscopes].version;
     }
     // @versions}
 
@@ -255,6 +300,16 @@ pub const PbReader = struct {
     /// Decode as protocol version `v`, which must be in `min..latest`.
     pub fn setVersion(self: *PbReader, v: i64, min: u32, latest: u32) PbError!void {
         return self.trace.setVersion(v, min, latest, self.pos);
+    }
+
+    /// Code a packet of version scope `s` (`Packet::version_scope`).
+    pub fn enterScope(self: *PbReader, s: u32) bool {
+        return self.trace.enterScope(s);
+    }
+
+    /// After that packet: back to the outer scope and its version.
+    pub fn leaveScope(self: *PbReader, entered: bool) void {
+        self.trace.leaveScope(entered);
     }
     // @versions}
 
@@ -643,6 +698,16 @@ pub const PbWriter = struct {
     /// Encode as protocol version `v`, which must be in `min..latest`.
     pub fn setVersion(self: *PbWriter, v: i64, min: u32, latest: u32) PbError!void {
         return self.trace.setVersion(v, min, latest, self.pos);
+    }
+
+    /// Code a packet of version scope `s` (`Packet::version_scope`).
+    pub fn enterScope(self: *PbWriter, s: u32) bool {
+        return self.trace.enterScope(s);
+    }
+
+    /// After that packet: back to the outer scope and its version.
+    pub fn leaveScope(self: *PbWriter, entered: bool) void {
+        self.trace.leaveScope(entered);
     }
 
     /// The version a value carries in-band: used unless one is set already.

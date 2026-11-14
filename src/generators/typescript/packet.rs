@@ -89,12 +89,18 @@ pub fn emit_packet(out: &mut Out, module: &Module, p: &Packet, zero_copy: bool) 
     out.line("");
     out.open(format!("static decodeFrom(pb_r: PbReader{}): {} {{", sig, name));
     out.line(format!("pb_r.enter(\"{}\");", p.name));
+    if let Some(scope) = p.version_scope {
+        out.line(format!("const pb_scope = pb_r.enterScope({});", scope));
+    }
     out.line(format!("const p = new {}();", name));
     if p.needs_start(false) {
         out.line("const pb_start = pb_r.positionBits();");
     }
     let decoder = Decoder::new(p, zero_copy);
     emit_body(out, 2, &decoder.locals, |body| decoder.emit_steps(body));
+    if p.version_scope.is_some() {
+        out.line("pb_r.leaveScope(pb_scope);");
+    }
     out.line("pb_r.leave();");
     out.line("return p;");
     out.close("}");
@@ -111,6 +117,9 @@ pub fn emit_packet(out: &mut Out, module: &Module, p: &Packet, zero_copy: bool) 
     out.line("");
     out.open(format!("encodeTo(pb_w: PbWriter{}): void {{", sig));
     out.line(format!("pb_w.enter(\"{}\");", p.name));
+    if let Some(scope) = p.version_scope {
+        out.line(format!("const pb_scope = pb_w.enterScope({});", scope));
+    }
     out.line("const p = this;");
     if p.needs_start(true) {
         out.line("const pb_start = pb_w.positionBits();");
@@ -120,6 +129,9 @@ pub fn emit_packet(out: &mut Out, module: &Module, p: &Packet, zero_copy: bool) 
         encoder.emit_locals(body);
         encoder.emit_steps(body);
     });
+    if p.version_scope.is_some() {
+        out.line("pb_w.leaveScope(pb_scope);");
+    }
     out.line("pb_w.leave();");
     out.close("}");
     out.line("");

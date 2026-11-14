@@ -34,12 +34,14 @@ class _PbTrace:
     """The packets being decoded or encoded, innermost last, each with the
     field it is working on: the path reported in errors."""
 
-    __slots__ = ("frames", "pos", "version")
+    __slots__ = ("frames", "pos", "version", "scope", "scopes")
 
     def __init__(self):
         self.frames = []  # [packet, field, index]
         self.pos = 0  # in bits
         self.version = 0  # protocol version; 0 until set
+        self.scope = 0  # version scope being coded, plus 1 (0 before any)
+        self.scopes = []  # (scope left, its version) for each scope entered
 
     # @versions{
     def version_or(self, latest):
@@ -56,6 +58,27 @@ class _PbTrace:
         """The version a value carries in-band: used unless one is set already."""
         if not self.version:
             self.set_version(v, lo, latest)
+
+    def enter_scope(self, s):
+        """Code a packet of version scope `s`: whether a scope was entered (for
+        `leave_scope`). A scope entered from another starts without a version,
+        unless it encloses this one already."""
+        s += 1
+        if self.scope == s:
+            return False
+        if self.scope == 0:
+            v = self.version
+        else:
+            v = next((e[1] for e in reversed(self.scopes) if e[0] == s), 0)
+        self.scopes.append((self.scope, self.version))
+        self.scope = s
+        self.version = v
+        return True
+
+    def leave_scope(self, entered):
+        """After that packet: back to the outer scope and its version."""
+        if entered:
+            self.scope, self.version = self.scopes.pop() if self.scopes else (0, self.version)
     # @versions}
 
     def enter(self, packet):
@@ -423,6 +446,8 @@ class PbWriter(_PbTrace):
             raise self.error(PbError.RANGE, "bad offset %d (from bit %d)" % (offset, start))
         s = PbWriter()
         s.version = self.version
+        s.scope = self.scope
+        s.scopes = list(self.scopes)
         s.base = start + offset * 8
         s.frames = [list(f) for f in self.frames]
         return s

@@ -123,10 +123,16 @@ pub fn emit_packet(out: &mut Out, module: &Module, p: &Packet, zero_copy: bool) 
 
     out.open(format!("func pbDecode{}(pbR *PbReader{}) (p {}) {{", name, decl, name));
     out.line(format!("pbR.Enter(\"{}\")", name));
+    if let Some(scope) = p.version_scope {
+        out.line(format!("pbScope := pbR.EnterScope({})", scope));
+    }
     if p.needs_start(false) {
         out.line("pb_start := pbR.PositionBits()");
     }
     Decoder::new(p, zero_copy).emit_steps(out);
+    if p.version_scope.is_some() {
+        out.line("pbR.LeaveScope(pbScope)");
+    }
     out.line("pbR.Leave()");
     out.line("return p");
     out.close("}");
@@ -155,12 +161,18 @@ pub fn emit_packet(out: &mut Out, module: &Module, p: &Packet, zero_copy: bool) 
 
     out.open(format!("func (p *{}) EncodeTo(pbW *PbWriter{}) error {{", name, decl));
     out.line(format!("pbW.Enter(\"{}\")", name));
+    if let Some(scope) = p.version_scope {
+        out.line(format!("pbScope := pbW.EnterScope({})", scope));
+    }
     if p.needs_start(true) {
         out.line("pb_start := pbW.PositionBits()");
     }
     let encoder = Encoder::new(p);
     encoder.emit_locals(out);
     encoder.emit_steps(out);
+    if p.version_scope.is_some() {
+        out.line("pbW.LeaveScope(pbScope)");
+    }
     out.line("pbW.Leave()");
     out.line("return pbW.Err()");
     out.close("}");

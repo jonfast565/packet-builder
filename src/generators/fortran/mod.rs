@@ -129,7 +129,7 @@ fn wrap(text: &str) -> String {
 
 impl Backend for FortranGenerator {
     fn generate(&self, module: &Module, opts: &GenOptions) -> String {
-        let runtime = runtime_source(RUNTIME, module.versions.is_some());
+        let runtime = runtime_source(RUNTIME, module.has_versions());
         let split = runtime.find("  ! @contains").expect("runtime has a @contains marker");
         let (declarations, rest) = runtime.split_at(split);
         let procedures = &rest[rest.find('\n').map(|i| i + 1).unwrap_or(rest.len())..];

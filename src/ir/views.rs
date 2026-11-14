@@ -420,6 +420,7 @@ pub(super) fn view(module: &Module, p: &Packet, m: usize, keep_parts: bool) -> O
         wire_dependent: Vec::new(),
         version_member: p.version_member.map(|v| map[v]),
         versions: p.versions,
+        version_scope: p.version_scope,
     })
 }
 

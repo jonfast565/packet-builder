@@ -48,6 +48,35 @@ struct PbFrame {
 /// in errors.
 struct PbTrace {
     var frames: [PbFrame] = []
+    var scope = 0 // version scope being coded, plus 1 (0 before any)
+    var scopes: [(Int, Int)] = [] // the scopes left for it, and their versions
+
+    // @versions{
+    /// Enter version scope `s` while at `version`: whether a scope was
+    /// entered (for `leaveScope`), and the version to code at in it. A
+    /// scope entered from another starts without a version, unless it
+    /// encloses this one already.
+    mutating func enterScope(_ s: Int, _ version: Int) -> (Bool, Int) {
+        let s = s + 1
+        if scope == s {
+            return (false, version)
+        }
+        let v = scope == 0 ? version : (scopes.last(where: { $0.0 == s })?.1 ?? 0)
+        scopes.append((scope, version))
+        scope = s
+        return (true, v)
+    }
+
+    /// Back to the scope `enterScope` left: its version.
+    mutating func leaveScope(_ entered: Bool, _ version: Int) -> Int {
+        if !entered {
+            return version
+        }
+        let (s, v) = scopes.popLast() ?? (0, version)
+        scope = s
+        return v
+    }
+    // @versions}
 
     mutating func enter(_ packet: String) -> Bool {
         frames.append(PbFrame(packet: packet, field: "", index: nil))
@@ -314,6 +343,18 @@ public final class PbReader {
     /// The protocol version (`version`), or `latest` while none is set.
     public func versionOr(_ latest: Int) -> Int64 {
         return Int64(version == 0 ? latest : version)
+    }
+
+    /// Code a packet of version scope `s` (`leaveScope` after it).
+    public func enterScope(_ s: Int) -> Bool {
+        let (entered, v) = trace.enterScope(s, version)
+        version = v
+        return entered
+    }
+
+    /// After that packet: back to the outer scope and its version.
+    public func leaveScope(_ entered: Bool) {
+        version = trace.leaveScope(entered, version)
     }
 
     /// Decode as protocol version `v`, which must be in `min...latest`.
@@ -700,6 +741,18 @@ public final class PbWriter {
     /// The protocol version (`version`), or `latest` while none is set.
     public func versionOr(_ latest: Int) -> Int64 {
         return Int64(version == 0 ? latest : version)
+    }
+
+    /// Code a packet of version scope `s` (`leaveScope` after it).
+    public func enterScope(_ s: Int) -> Bool {
+        let (entered, v) = trace.enterScope(s, version)
+        version = v
+        return entered
+    }
+
+    /// After that packet: back to the outer scope and its version.
+    public func leaveScope(_ entered: Bool) {
+        version = trace.leaveScope(entered, version)
     }
 
     /// Encode as protocol version `v`, which must be in `min...latest`.

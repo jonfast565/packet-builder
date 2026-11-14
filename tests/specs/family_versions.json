@@ -1,0 +1,144 @@
+{
+  "spec": "family_versions.packet",
+  "cases": [
+    {
+      "name": "a family at its own version inside a v1 frame",
+      "packet": "Outer",
+      "hex": "01 10 03 07 05 06 01 09 08 0a",
+      "expect": {
+        "ver": 1,
+        "sub": {
+          "ver": 3,
+          "op": 7,
+          "body": {
+            "kind": "hello",
+            "value": {
+              "n": 5,
+              "extra": 6
+            }
+          }
+        },
+        "quiet": {
+          "op": 1,
+          "body": {
+            "kind": "a",
+            "value": {
+              "x": 9,
+              "y": 8
+            }
+          }
+        },
+        "tail": {
+          "a": 10,
+          "b": 0
+        }
+      }
+    },
+    {
+      "name": "a v1 family inside a v2 frame",
+      "packet": "Outer",
+      "hex": "02 20 01 01 05 01 09 08 0a 0b",
+      "expect": {
+        "sub": {
+          "ver": 1,
+          "body": {
+            "kind": "hello",
+            "value": {
+              "n": 5,
+              "extra": 0
+            }
+          }
+        },
+        "tail": {
+          "a": 10,
+          "b": 11
+        }
+      }
+    },
+    {
+      "name": "a file packet in a family member follows the file's version",
+      "packet": "Outer",
+      "hex": "01 10 03 02 05 06 0a 01 09 08 0a",
+      "expect": {
+        "sub": {
+          "body": {
+            "kind": "motd",
+            "value": {
+              "text": 5,
+              "more": 6,
+              "inner": {
+                "a": 10,
+                "b": 0
+              }
+            }
+          }
+        },
+        "tail": {
+          "a": 10
+        }
+      }
+    },
+    {
+      "name": "a member the family's v1 lacks",
+      "packet": "Outer",
+      "hex": "02 20 01 02 05 01 09 08 0a 0b",
+      "expect": {
+        "sub": {
+          "body": {
+            "kind": "other",
+            "value": 5
+          }
+        }
+      }
+    },
+    {
+      "name": "the caller's version is the file's only",
+      "packet": "Outer",
+      "hex": "01 10 03 07 05 06 01 09 08 0a",
+      "version": 2,
+      "set": {
+        "magic": 32
+      },
+      "encoded": "02 20 03 07 05 06 01 09 08 0a 00"
+    },
+    {
+      "name": "a family decoded alone adopts its version",
+      "packet": "Sub",
+      "hex": "02 01 05 06",
+      "expect": {
+        "ver": 2,
+        "body": {
+          "kind": "hello",
+          "value": {
+            "n": 5,
+            "extra": 6
+          }
+        }
+      }
+    },
+    {
+      "name": "a family encoded at a version of its own derives its tag",
+      "packet": "Sub",
+      "hex": "01 01 05",
+      "version": 3,
+      "encoded": "03 07 05 00"
+    },
+    {
+      "name": "a family without an in-band version at the caller's",
+      "packet": "Quiet",
+      "hex": "01 09",
+      "version": 1,
+      "expect": {
+        "op": 1,
+        "body": {
+          "kind": "a",
+          "value": {
+            "x": 9,
+            "y": 0
+          }
+        }
+      },
+      "encoded": "01 09"
+    }
+  ]
+}

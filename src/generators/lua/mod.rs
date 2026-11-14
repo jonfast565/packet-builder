@@ -30,7 +30,7 @@ impl Backend for LuaGenerator {
         out.line("-- local p, err = packets.Name.decode_safe(data)");
         out.line("-- local bytes = packets.Name.encode(p)");
         out.line("");
-        out.buf.push_str(&crate::generators::common::lua::runtime(RUNTIME, module.versions.is_some()));
+        out.buf.push_str(&crate::generators::common::lua::runtime(RUNTIME, module.has_versions()));
         out.line("");
         out.line("local M = { PbError = PbErr, PbSource = PbSource, PbReader = Reader }");
         self.emit_constants(&mut out, module);

@@ -34,7 +34,7 @@ impl Backend for GoGenerator {
         out.line("\t\"unicode/utf8\"");
         out.line(")");
         out.line("");
-        out.buf.push_str(&crate::generators::common::runtime_source(RUNTIME, module.versions.is_some()));
+        out.buf.push_str(&crate::generators::common::runtime_source(RUNTIME, module.has_versions()));
         self.emit_constants(&mut out, module);
         for u in &module.unions {
             out.line("");

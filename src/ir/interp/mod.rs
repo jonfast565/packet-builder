@@ -41,9 +41,10 @@ fn intern(name: &str) -> &'static str {
     s
 }
 
-/// The versions a module accepts: (min, latest); (1, 1) without versions.
-fn versions(module: &crate::ir::Module) -> (u32, u32) {
-    module.versions.map(|v| (v.min, v.latest)).unwrap_or((1, 1))
+/// The versions packet `name` is coded in: (min, latest); (1, 1) without
+/// versions (or for an unknown packet, which coding then reports).
+fn versions(module: &crate::ir::Module, name: &str) -> (u32, u32) {
+    module.packets.iter().find(|p| p.name == name).map_or((1, 1), |p| p.version_bounds())
 }
 
 /// The index of the `CloseGate` that ends the gate opened at step `open`.

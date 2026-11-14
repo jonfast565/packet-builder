@@ -77,9 +77,13 @@
         {
             frames.AddRange(other.frames);
             version = other.version;
+            scope = other.scope;
+            scopes.AddRange(other.scopes);
         }
 
         private int version; // protocol version; 0 until set
+        private int scope; // version scope being coded, plus 1 (0 before any)
+        private readonly List<(int Scope, int Version)> scopes = new List<(int, int)>(); // the scopes left for it, and their versions
 
         // @versions{
         /// <summary>The protocol version (<c>version</c>), or <paramref name="latest"/> while none is set.</summary>
@@ -96,6 +100,39 @@
         public void AdoptVersion(long v, int min, int latest)
         {
             if (version == 0) SetVersion(v, min, latest);
+        }
+
+        /// <summary>Code a packet of version scope <paramref name="s"/> (<c>Packet::version_scope</c>):
+        /// whether a scope was entered (for <see cref="LeaveScope"/>). A scope entered from another
+        /// starts without a version, unless it encloses this one already.</summary>
+        public bool EnterScope(int s)
+        {
+            s += 1;
+            if (scope == s) return false;
+            int v = version;
+            if (scope != 0)
+            {
+                v = 0;
+                for (int i = scopes.Count - 1; i >= 0; i--)
+                {
+                    if (scopes[i].Scope == s) { v = scopes[i].Version; break; }
+                }
+            }
+            scopes.Add((scope, version));
+            scope = s;
+            version = v;
+            return true;
+        }
+
+        /// <summary>After that packet: back to the outer scope and its version.</summary>
+        public void LeaveScope(bool entered)
+        {
+            if (!entered) return;
+            if (scopes.Count == 0) { scope = 0; return; }
+            var e = scopes[scopes.Count - 1];
+            scopes.RemoveAt(scopes.Count - 1);
+            scope = e.Scope;
+            version = e.Version;
         }
         // @versions}
 

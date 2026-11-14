@@ -89,11 +89,18 @@ pub fn implement_packet(out: &mut Out, module: &Module, p: &Packet, boxes: &Boxe
     locals.var("P", &name);
     let mut b = body();
     b.line(format!("Pb_Enter (R, \"{}\");", p.name));
+    if let Some(scope) = p.version_scope {
+        locals.var("pb_scope", "Boolean");
+        b.line(format!("pb_scope := Pb_Enter_Scope (R, {});", scope));
+    }
     if p.needs_start(false) {
         locals.var("pb_start", "Integer_64");
         b.line("pb_start := Pb_Pos (R);");
     }
     Decoder::new(p, &locals, boxes).emit_steps(&mut b);
+    if p.version_scope.is_some() {
+        b.line("Pb_Leave_Scope (R, pb_scope);");
+    }
     b.line("Pb_Leave (R);");
     b.line("return P;");
     locals.routine(out, &decode_from_header(p), "Decode_From", b);
@@ -118,6 +125,10 @@ pub fn implement_packet(out: &mut Out, module: &Module, p: &Packet, boxes: &Boxe
     let locals = Locals::default();
     let mut b = body();
     b.line(format!("Pb_Enter (W, \"{}\");", p.name));
+    if let Some(scope) = p.version_scope {
+        locals.var("pb_scope", "Boolean");
+        b.line(format!("pb_scope := Pb_Enter_Scope (W, {});", scope));
+    }
     if p.needs_start(true) {
         locals.var("pb_start", "Integer_64");
         b.line("pb_start := Pb_Pos (W);");
@@ -125,6 +136,9 @@ pub fn implement_packet(out: &mut Out, module: &Module, p: &Packet, boxes: &Boxe
     let encoder = Encoder::new(p, &locals, boxes);
     encoder.emit_locals(&mut b);
     encoder.emit_steps(&mut b);
+    if p.version_scope.is_some() {
+        b.line("Pb_Leave_Scope (W, pb_scope);");
+    }
     b.line("Pb_Leave (W);");
     locals.routine(out, &encode_to_header(p), "Encode_To", b);
 

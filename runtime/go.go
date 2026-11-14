@@ -102,7 +102,9 @@ type pbFrame struct {
 // with the field it is working on: the path reported in errors.
 type pbTrace struct {
 	frames  []pbFrame
-	version int // protocol version; 0 until set
+	version int      // protocol version; 0 until set
+	scope   int      // version scope being coded, plus 1 (0 before any)
+	scopes  [][2]int // the scopes left for it, and their versions
 }
 
 // @versions{
@@ -145,6 +147,55 @@ func (w *PbWriter) AdoptVersion(v int64, min, latest int) {
 		w.SetVersion(v, min, latest)
 	}
 }
+
+// enterScope codes a packet of version scope s: whether a scope was entered
+// (for leaveScope). A scope entered from another starts without a version,
+// unless it encloses this one already.
+func (t *pbTrace) enterScope(s int) bool {
+	s++
+	if t.scope == s {
+		return false
+	}
+	v := t.version
+	if t.scope != 0 {
+		v = 0
+		for i := len(t.scopes) - 1; i >= 0; i-- {
+			if t.scopes[i][0] == s {
+				v = t.scopes[i][1]
+				break
+			}
+		}
+	}
+	t.scopes = append(t.scopes, [2]int{t.scope, t.version})
+	t.scope = s
+	t.version = v
+	return true
+}
+
+// leaveScope goes back to the scope enterScope left, and its version.
+func (t *pbTrace) leaveScope(entered bool) {
+	if !entered {
+		return
+	}
+	if n := len(t.scopes); n > 0 {
+		t.scope, t.version = t.scopes[n-1][0], t.scopes[n-1][1]
+		t.scopes = t.scopes[:n-1]
+	} else {
+		t.scope = 0
+	}
+}
+
+// EnterScope codes a packet of version scope s; pass the result to LeaveScope.
+func (r *PbReader) EnterScope(s int) bool { return r.tr.enterScope(s) }
+
+// LeaveScope goes back to the outer scope and its version.
+func (r *PbReader) LeaveScope(entered bool) { r.tr.leaveScope(entered) }
+
+// EnterScope codes a packet of version scope s; pass the result to LeaveScope.
+func (w *PbWriter) EnterScope(s int) bool { return w.tr.enterScope(s) }
+
+// LeaveScope goes back to the outer scope and its version.
+func (w *PbWriter) LeaveScope(entered bool) { w.tr.leaveScope(entered) }
 // @versions}
 
 func (t *pbTrace) enter(packet string) bool {
@@ -743,7 +794,8 @@ func (w *PbWriter) Sub(from int, offset int64, root bool) *PbWriter {
 	if root {
 		start = 0
 	}
-	s := &PbWriter{tr: pbTrace{frames: append([]pbFrame{}, w.tr.frames...), version: w.tr.version}}
+	s := &PbWriter{tr: pbTrace{frames: append([]pbFrame{}, w.tr.frames...), version: w.tr.version,
+		scope: w.tr.scope, scopes: append([][2]int{}, w.tr.scopes...)}}
 	if offset < 0 || start%8 != 0 {
 		w.Fail(PbRange, "bad offset %d (from bit %d)", offset, start)
 		return s

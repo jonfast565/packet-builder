@@ -59,6 +59,10 @@ export class PbTrace {
   pos = 0;
   /** Protocol version; 0 until set. */
   version = 0;
+  /** Version scope being coded, plus 1 (0 before any). */
+  scope = 0;
+  /** The scopes left for it, and their versions. */
+  scopes: [number, number][] = [];
 
   // @versions{
   /** The protocol version (`version`), or `latest` while none is set. */
@@ -78,6 +82,36 @@ export class PbTrace {
   /** The version a value carries in-band: used unless one is set already. */
   adoptVersion(v: number | bigint, lo: number, latest: number): void {
     if (!this.version) this.setVersion(v, lo, latest);
+  }
+
+  /** Code a packet of version scope `s`: whether a scope was entered (for
+   * `leaveScope`). A scope entered from another starts without a version,
+   * unless it encloses this one already. */
+  enterScope(s: number): boolean {
+    s += 1;
+    if (this.scope === s) return false;
+    let v = this.version;
+    if (this.scope !== 0) {
+      v = 0;
+      for (let i = this.scopes.length - 1; i >= 0; i--) {
+        if (this.scopes[i][0] === s) {
+          v = this.scopes[i][1];
+          break;
+        }
+      }
+    }
+    this.scopes.push([this.scope, this.version]);
+    this.scope = s;
+    this.version = v;
+    return true;
+  }
+
+  /** After that packet: back to the outer scope and its version. */
+  leaveScope(entered: boolean): void {
+    if (!entered) return;
+    const e = this.scopes.pop() ?? [0, this.version];
+    this.scope = e[0];
+    this.version = e[1];
   }
   // @versions}
 
@@ -564,6 +598,8 @@ export class PbWriter extends PbTrace {
     if (offset < 0n || from % 8 !== 0) throw this.error(PbError.RANGE, `bad offset ${offset} (from bit ${from})`);
     const s = new PbWriter();
     s.version = this.version;
+    s.scope = this.scope;
+    s.scopes = this.scopes.map((e) => [e[0], e[1]]);
     s.base = from + Number(offset) * 8;
     s.frames = this.frames.map((f) => ({ ...f }));
     return s;

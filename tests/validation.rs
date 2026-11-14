@@ -739,3 +739,28 @@ fn packed_family_tags_are_unsigned() {
     );
     assert!(compile("switch F { header { a int8 } packet X when a = -1 {} }").is_ok());
 }
+
+#[test]
+fn family_versions_start_at_one() {
+    assert_error("switch F { version 0 header { a uint8 } packet X when a = 1 {} }", "version");
+}
+
+#[test]
+fn ranges_outside_a_versioned_family_need_file_versions() {
+    assert!(compile("switch F { version 2 header { a uint8 } packet X when a = 1 { @2 b uint8 } }").is_ok());
+    assert_error(
+        "switch F { version 2 header { a uint8 } packet X when a = 1 {} }\npacket P { @2 b uint8 }",
+        "version",
+    );
+}
+
+#[test]
+fn versioned_constants_stay_in_their_domain() {
+    let file = "version 2\nconst A uint8 = 1\n@2 const A uint8 = 2\n";
+    assert_error(&format!("{}switch F {{ version 3 header {{ a uint8 }} packet X when a = A {{}} }}", file), "A");
+    // Unversioned file constants are shared.
+    let shared = "version 2\nconst A uint8 = 1\n";
+    assert!(
+        compile(&format!("{}switch F {{ version 3 header {{ a uint8 }} packet X when a = A {{}} }}", shared)).is_ok()
+    );
+}

@@ -77,8 +77,10 @@ const BUILTIN: &[&str] = &[
 
 pub fn analyze(list: &PacketExprList) -> Result<Module, Vec<Diagnostic>> {
     let mut diags = Vec::new();
-    let list = &*family::desugar(list, &mut diags);
-    let list = &*versions::normalize(list, &mut diags);
+    let (list, domains) = family::desugar(list, &mut diags);
+    let list = &*versions::normalize(&list, &domains, &mut diags);
+    // The family with versions of its own a packet belongs to, if any.
+    let domain_of = |name: &str| domains.iter().position(|d| d.packets.contains(name));
 
     // Packet names
     let mut by_name = HashMap::<String, usize>::new();
@@ -104,10 +106,11 @@ pub fn analyze(list: &PacketExprList) -> Result<Module, Vec<Diagnostic>> {
     };
 
     let sigs = params::signatures(list, &mut diags);
-    let consts = consts::ConstTable::build(list, &mut diags);
+    let (consts, domain_consts) = consts::ConstTable::build_domains(list, &domains, &mut diags);
     let mut done = HashMap::<String, Packet>::new();
     for idx in order {
-        match packet::PacketBuilder::new(&list.packets[idx], &done, &sigs, &consts).build() {
+        let table = domain_of(&list.packets[idx].name).map_or(&consts, |d| &domain_consts[d]);
+        match packet::PacketBuilder::new(&list.packets[idx], &done, &sigs, table).build() {
             Ok(packet) => {
                 done.insert(packet.name.clone(), packet);
             }
@@ -120,8 +123,27 @@ pub fn analyze(list: &PacketExprList) -> Result<Module, Vec<Diagnostic>> {
     }
 
     let versions = consts.latest.map(|latest| Versions { min: 1, latest });
-    let packets: Vec<Packet> =
-        list.packets.iter().map(|p| Packet { versions, ..done.remove(&p.name).expect("analyzed") }).collect();
+    let packets: Vec<Packet> = list
+        .packets
+        .iter()
+        .map(|p| {
+            let domain = domain_of(&p.name);
+            Packet {
+                versions: match domain {
+                    Some(d) => Some(Versions { min: 1, latest: domains[d].version.0 }),
+                    None => versions,
+                },
+                version_scope: (!domains.is_empty()).then(|| domain.map_or(0, |d| d as u32 + 1)),
+                ..done.remove(&p.name).expect("analyzed")
+            }
+        })
+        .collect();
+    // Each family's own constants join the file's.
+    let (mut constants, mut categories) = (consts.constants, consts.categories);
+    for (d, t) in domains.iter().zip(domain_consts) {
+        constants.extend(t.constants.into_iter().filter(|c| d.constants.contains(&c.name)));
+        categories.extend(t.categories.into_iter().filter(|c| d.constants.contains(&c.name)));
+    }
     let mut unions = Vec::new();
     for p in &packets {
         for s in &p.steps {
@@ -135,7 +157,7 @@ pub fn analyze(list: &PacketExprList) -> Result<Module, Vec<Diagnostic>> {
         }
     }
     let taken: Vec<&str> =
-        packets.iter().map(|p| p.name.as_str()).chain(consts.categories.iter().map(|c| c.name.as_str())).collect();
+        packets.iter().map(|p| p.name.as_str()).chain(categories.iter().map(|c| c.name.as_str())).collect();
     for (i, p) in list.packets.iter().enumerate() {
         for u in unions.iter().filter(|u| u.name.starts_with(&p.name)) {
             if taken.contains(&u.name.as_str()) {
@@ -153,5 +175,5 @@ pub fn analyze(list: &PacketExprList) -> Result<Module, Vec<Diagnostic>> {
     if !diags.is_empty() {
         return Err(diags);
     }
-    Ok(Module { packets, constants: consts.constants, categories: consts.categories, unions, dissectors, versions })
+    Ok(Module { packets, constants, categories, unions, dissectors, versions })
 }

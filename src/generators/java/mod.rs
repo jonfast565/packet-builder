@@ -33,7 +33,7 @@ impl Backend for JavaGenerator {
         out.line(format!("public final class {} {{", outer));
         out.line(format!("    private {}() {{}}", outer));
         out.line("");
-        out.buf.push_str(&crate::generators::common::runtime_source(RUNTIME, module.versions.is_some()));
+        out.buf.push_str(&crate::generators::common::runtime_source(RUNTIME, module.has_versions()));
         out.push();
         self.emit_constants(&mut out, module);
         for u in &module.unions {

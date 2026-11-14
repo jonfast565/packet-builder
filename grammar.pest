@@ -358,8 +358,9 @@ packets = { SOI ~ wordsize_directive? ~ version_directive? ~ import_decl* ~ (con
 //   }
 // `Snac` is a packet that reads the header and then the member its tags
 // pick; members are `Snac.Ready` outside the block. `header`, `body` and
-// the tags are not reserved words.
-family_decl   = { switch_kw ~ identifier ~ endianness? ~ alignment? ~ lbracket ~ family_item* ~ rbracket }
+// the tags are not reserved words. `version N` first gives the family
+// versions of its own (1..N), independent of the file's.
+family_decl   = { switch_kw ~ identifier ~ endianness? ~ alignment? ~ lbracket ~ version_directive? ~ family_item* ~ rbracket }
 family_item   = _{ family_header | family_body | family_other | const_decl | family_member }
 header_kw     = @{ "header" ~ !(alnum | underscore) }
 body_kw       = @{ "body" ~ !(alnum | underscore) }

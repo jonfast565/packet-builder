@@ -35,6 +35,13 @@ type
     Index: Int64;
   end;
 
+  // @versions{
+  /// A version scope left for another, and its version.
+  TPbScope = record
+    Scope, Version: Integer;
+  end;
+
+  // @versions}
   /// The packets being decoded or encoded, innermost last, each with the
   /// field it is working on: the path reported in errors.
   TPbTrace = class
@@ -60,6 +67,16 @@ type
     procedure SetVersion(V: Int64; AMin, ALatest: Integer);
     /// The version a value carries in-band: used unless one is set already.
     procedure AdoptVersion(V: Int64; AMin, ALatest: Integer);
+    /// Code a packet of version scope S (`version_scope`): whether a scope
+    /// was entered (for LeaveScope). A scope entered from another starts
+    /// without a version, unless it was left for it earlier.
+    function EnterScope(S: Integer): Boolean;
+    /// After that packet: back to the outer scope and its version.
+    procedure LeaveScope(Entered: Boolean);
+  protected
+    FScope: Integer; // version scope being coded, plus 1 (0 before any)
+    FScopes: array of TPbScope; // the scopes left for it, and their versions
+    FScopeDepth: Integer;
     // @versions}
   end;
 
@@ -340,6 +357,11 @@ begin
     FFrames[I] := Other.FFrames[I];
   end;
   FVersion := Other.FVersion;
+  // @versions{
+  FScope := Other.FScope;
+  FScopes := Copy(Other.FScopes, 0, Other.FScopeDepth);
+  FScopeDepth := Other.FScopeDepth;
+  // @versions}
 end;
 
 // @versions{
@@ -363,6 +385,49 @@ procedure TPbTrace.AdoptVersion(V: Int64; AMin, ALatest: Integer);
 begin
   if FVersion = 0 then
     SetVersion(V, AMin, ALatest);
+end;
+
+function TPbTrace.EnterScope(S: Integer): Boolean;
+var
+  I, V: Integer;
+begin
+  Inc(S);
+  Result := FScope <> S;
+  if not Result then
+    Exit;
+  if FScope = 0 then
+    V := FVersion
+  else
+  begin
+    V := 0;
+    for I := FScopeDepth - 1 downto 0 do
+      if FScopes[I].Scope = S then
+      begin
+        V := FScopes[I].Version;
+        Break;
+      end;
+  end;
+  if FScopeDepth >= Length(FScopes) then
+    SetLength(FScopes, FScopeDepth * 2 + 4);
+  FScopes[FScopeDepth].Scope := FScope;
+  FScopes[FScopeDepth].Version := FVersion;
+  Inc(FScopeDepth);
+  FScope := S;
+  FVersion := V;
+end;
+
+procedure TPbTrace.LeaveScope(Entered: Boolean);
+begin
+  if not Entered then
+    Exit;
+  if FScopeDepth = 0 then
+  begin
+    FScope := 0;
+    Exit;
+  end;
+  Dec(FScopeDepth);
+  FScope := FScopes[FScopeDepth].Scope;
+  FVersion := FScopes[FScopeDepth].Version;
 end;
 // @versions}
 

@@ -19,6 +19,15 @@ use crate::ast::{
 };
 use crate::errors::Diagnostic;
 
+/// A family with versions of its own (`version N` in its block): its
+/// packets and constants are analyzed against those versions, and coded
+/// in a version scope of their own (`Packet::version_scope`).
+pub struct Domain {
+    pub version: (u32, Span),
+    pub packets: HashSet<String>,
+    pub constants: HashSet<String>,
+}
+
 /// The union member of a family packet.
 pub const BODY: &str = "body";
 
@@ -292,10 +301,11 @@ impl Renamer<'_> {
 
 /// The list with every family turned into packets and constants (the list
 /// itself when it has none).
-pub fn desugar<'a>(list: &'a PacketExprList, diags: &mut Vec<Diagnostic>) -> Cow<'a, PacketExprList> {
+pub fn desugar<'a>(list: &'a PacketExprList, diags: &mut Vec<Diagnostic>) -> (Cow<'a, PacketExprList>, Vec<Domain>) {
     if list.families.is_empty() {
-        return Cow::Borrowed(list);
+        return (Cow::Borrowed(list), Vec::new());
     }
+    let mut domains = Vec::new();
     let mut families = HashMap::new();
     for f in &list.families {
         let name = &f.header.name;
@@ -328,6 +338,8 @@ pub fn desugar<'a>(list: &'a PacketExprList, diags: &mut Vec<Diagnostic>) -> Cow
     for f in &list.families {
         let fam = f.header.name.as_str();
         r.inside = Some(fam);
+        let first_constant = out.constants.len();
+        let first_packet = out.packets.len();
         for c in &f.constants {
             let mut c = c.clone();
             r.constant(&mut c);
@@ -364,8 +376,15 @@ pub fn desugar<'a>(list: &'a PacketExprList, diags: &mut Vec<Diagnostic>) -> Cow
         r.inside = None;
         out.packets.push(family_packet(&f, header, r.diags));
         out.packets.extend(members);
+        if let Some(version) = f.version {
+            domains.push(Domain {
+                version,
+                packets: out.packets[first_packet..].iter().map(|p| p.name.clone()).collect(),
+                constants: out.constants[first_constant..].iter().map(|c| c.name.clone()).collect(),
+            });
+        }
     }
-    Cow::Owned(out)
+    (Cow::Owned(out), domains)
 }
 
 /// A family's `Name_X` names must not be taken by other declarations.

@@ -177,11 +177,18 @@ pub fn packet_procedures(out: &mut Out, module: &Module, p: &Packet) {
     let mut b = body();
     b.line(format!("call pb_enter(pb_r, {})", raw_string(&p.name)));
     b.line(R_FAILED);
+    if let Some(scope) = p.version_scope {
+        locals.var("pb_scope", "logical");
+        b.line(format!("call pb_enter_scope(pb_r, {}, pb_scope)", scope));
+    }
     if p.needs_start(false) {
         locals.var("pb_start", "integer(int64)");
         b.line("pb_start = pb_r%pos");
     }
     Decoder::new(p, &locals).emit_steps(&mut b);
+    if p.version_scope.is_some() {
+        b.line("call pb_leave_scope(pb_r, pb_scope)");
+    }
     b.line("call pb_leave(pb_r)");
     locals.routine(out, b);
     out.line(format!("end subroutine {}_decode_from", t));
@@ -219,6 +226,10 @@ pub fn packet_procedures(out: &mut Out, module: &Module, p: &Packet) {
     let mut b = body();
     b.line(format!("call pb_enter(pb_w, {})", raw_string(&p.name)));
     b.line(W_FAILED);
+    if let Some(scope) = p.version_scope {
+        locals.var("pb_scope", "logical");
+        b.line(format!("call pb_enter_scope(pb_w, {}, pb_scope)", scope));
+    }
     if p.needs_start(true) {
         locals.var("pb_start", "integer(int64)");
         b.line("pb_start = pb_w%pos");
@@ -226,6 +237,9 @@ pub fn packet_procedures(out: &mut Out, module: &Module, p: &Packet) {
     let encoder = Encoder::new(p, &locals);
     encoder.emit_locals(&mut b);
     encoder.emit_steps(&mut b);
+    if p.version_scope.is_some() {
+        b.line("call pb_leave_scope(pb_w, pb_scope)");
+    }
     b.line("call pb_leave(pb_w)");
     locals.routine(out, b);
     out.line(format!("end subroutine {}_encode_to", t));

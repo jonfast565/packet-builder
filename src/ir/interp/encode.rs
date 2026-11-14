@@ -32,7 +32,7 @@ pub fn encode_args(
 ) -> Result<Vec<u8>, PbError> {
     let mut w = PbWriter::new();
     if let Some(v) = version {
-        let (min, latest) = versions(module);
+        let (min, latest) = versions(module, name);
         w.set_version(v as i64, min, latest)?;
     }
     let p = find(module, name, &w)?;
@@ -44,7 +44,8 @@ pub fn encode_args(
         let msg = format!("packet `{}` takes {} argument(s), not {}", name, p.params.len(), args.len());
         return Err(w.error(PbErrorKind::Invalid, msg));
     }
-    Encoder { module, params: RefCell::new(args.to_vec()), version: RefCell::new(0) }.packet(p, &s, &mut w)?;
+    Encoder { module, params: RefCell::new(args.to_vec()), version: RefCell::new(0), latest: std::cell::Cell::new(1) }
+        .packet(p, &s, &mut w)?;
     w.finish()
 }
 
@@ -66,6 +67,8 @@ struct Encoder<'m> {
     params: RefCell<Vec<i64>>,
     /// The writer's protocol version, for expressions.
     version: RefCell<i64>,
+    /// The latest version of the packet being encoded.
+    latest: std::cell::Cell<u32>,
 }
 
 impl Encoder<'_> {
@@ -82,7 +85,9 @@ impl Encoder<'_> {
 
     fn packet(&self, p: &Packet, s: &Struct, w: &mut PbWriter) -> Result<(), PbError> {
         w.enter(intern(&p.name))?;
-        let (min, latest) = versions(self.module);
+        let scope = p.version_scope.map(|s| w.enter_scope(s));
+        let (min, latest) = p.version_bounds();
+        let outer_latest = self.latest.replace(latest);
         self.version.replace(w.version_or(latest));
         let mut values: Vec<Value> = p
             .members
@@ -182,7 +187,14 @@ impl Encoder<'_> {
                 _ => w.patch_bits(at, raw, codec.bits()),
             }
         }
+        if let Some(entered) = scope {
+            w.leave_scope(entered);
+        }
         w.leave();
+        // The packet containing this one goes on at the writer's version
+        // (its own again, after a packet of another version scope).
+        self.latest.set(outer_latest);
+        self.version.replace(w.version_or(outer_latest));
         Ok(())
     }
 

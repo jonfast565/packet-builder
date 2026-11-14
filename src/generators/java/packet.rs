@@ -98,11 +98,17 @@ pub fn emit_packet(out: &mut Out, module: &Module, p: &Packet, zero_copy: bool, 
     out.line("");
     out.open(format!("public static {} decodeFrom(PbReader pbR{}) {{", name, decl));
     out.line(format!("pbR.enter(\"{}\");", p.name));
+    if let Some(scope) = p.version_scope {
+        out.line(format!("boolean pb_scope = pbR.enterScope({});", scope));
+    }
     out.line(format!("{} p = new {}();", name, name));
     if p.needs_start(false) {
         out.line("long pb_start = pbR.positionBits();");
     }
     Decoder::new(p, zero_copy, outer).emit_steps(out);
+    if p.version_scope.is_some() {
+        out.line("pbR.leaveScope(pb_scope);");
+    }
     out.line("pbR.leave();");
     out.line("return p;");
     out.close("}");
@@ -125,6 +131,9 @@ pub fn emit_packet(out: &mut Out, module: &Module, p: &Packet, zero_copy: bool, 
     out.line("");
     out.open(format!("public void encodeTo(PbWriter pbW{}) {{", decl));
     out.line(format!("pbW.enter(\"{}\");", p.name));
+    if let Some(scope) = p.version_scope {
+        out.line(format!("boolean pb_scope = pbW.enterScope({});", scope));
+    }
     out.line(format!("{} p = this;", name));
     if p.needs_start(true) {
         out.line("long pb_start = pbW.positionBits();");
@@ -132,6 +141,9 @@ pub fn emit_packet(out: &mut Out, module: &Module, p: &Packet, zero_copy: bool, 
     let encoder = Encoder::new(p, outer);
     encoder.emit_locals(out);
     encoder.emit_steps(out);
+    if p.version_scope.is_some() {
+        out.line("pbW.leaveScope(pb_scope);");
+    }
     out.line("pbW.leave();");
     out.close("}");
     super::json::emit_packet_json(out, p);

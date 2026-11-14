@@ -640,6 +640,7 @@ impl<'a> PacketBuilder<'a> {
             wire_dependent: plan.wire_dependent,
             version_member: self.version_member,
             versions: None,
+            version_scope: None,
         };
         Ok(packet)
     }

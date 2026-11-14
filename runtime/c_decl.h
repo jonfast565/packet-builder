@@ -37,6 +37,13 @@ typedef struct pb_trace {
     pb_frame frames[PB_MAX_DEPTH];
     unsigned depth;
     unsigned version; /* protocol version; 0 until set */
+    // @versions{
+    unsigned scope;   /* version scope being coded, plus 1 (0 before any) */
+    unsigned nscopes; /* the scopes left for it, and their versions: */
+    struct {
+        unsigned scope, version;
+    } scopes[PB_MAX_DEPTH];
+    // @versions}
 } pb_trace;
 
 /* The first error: its code, where it happened (frames[0..depth) of the

@@ -29,7 +29,7 @@ const RUNTIME: &str = include_str!("../../../runtime/ada.ada");
 
 impl Backend for AdaGenerator {
     fn generate(&self, module: &Module, opts: &GenOptions) -> String {
-        let runtime = runtime_source(RUNTIME, module.versions.is_some());
+        let runtime = runtime_source(RUNTIME, module.has_versions());
         let split = runtime.find("-- @implementation").expect("runtime has an @implementation marker");
         let (spec, rest) = runtime.split_at(split);
         let implementation = &rest[rest.find('\n').map(|i| i + 1).unwrap_or(rest.len())..];

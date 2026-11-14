@@ -357,7 +357,7 @@ fn check(inputs: &[PathBuf]) -> Result<(), String> {
 
 fn layout(input: &Path, only: &[String], version: Option<u32>) -> Result<(), String> {
     let module = load(input)?;
-    check_version(&module, version)?;
+    check_version(module.versions, version)?;
     for name in only {
         if !module.packets.iter().any(|p| &p.name == name) {
             return Err(format!("no packet named `{}` in {}", name, input.display()));
@@ -434,8 +434,8 @@ fn parse_hex(text: &str) -> Result<Vec<u8>, String> {
 }
 
 /// `--version`, which needs a file with versions and one of them.
-fn check_version(module: &Module, version: Option<u32>) -> Result<(), String> {
-    match (version, module.versions) {
+fn check_version(versions: Option<packet_builder::ir::Versions>, version: Option<u32>) -> Result<(), String> {
+    match (version, versions) {
         (None, _) => Ok(()),
         (Some(_), None) => Err("--version needs a file with versions (`version N`)".into()),
         (Some(v), Some(vs)) if v < vs.min || v > vs.latest => {
@@ -455,7 +455,8 @@ fn decode(args: DecodeArgs) -> Result<(), String> {
     if !module.packets.iter().any(|p| p.name == args.packet) {
         return Err(format!("no packet named `{}` in {}", args.packet, args.input.display()));
     }
-    check_version(&module, args.version)?;
+    let versions = module.packets.iter().find(|p| p.name == args.packet).and_then(|p| p.versions);
+    check_version(versions, args.version)?;
     if let Some(path) = &args.seek {
         use std::io::{Read, Seek, SeekFrom};
         let mut file = fs::File::open(path).map_err(|e| format!("cannot read {}: {}", path.display(), e))?;
@@ -501,7 +502,8 @@ fn decode_input(
 ) -> bool {
     use packet_builder::ir::interp;
 
-    if let (Some(v), Some(vs)) = (args.version, module.versions)
+    let versions = module.packets.iter().find(|p| p.name == args.packet).and_then(|p| p.versions);
+    if let (Some(v), Some(vs)) = (args.version, versions)
         && let Err(e) = r.set_version(v as i64, vs.min, vs.latest)
     {
         eprintln!("error: {}", e);
