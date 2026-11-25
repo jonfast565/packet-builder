@@ -155,6 +155,11 @@ pub struct Category {
     pub name: String,
     pub ty: ValueType,
     pub members: Vec<Constant>,
+    /// `flags`: each member is a bit (or a mask) of one word.
+    pub flags: bool,
+    /// For a named range (`const Name = Parent in lo..hi`), the category its
+    /// members come from.
+    pub parent: Option<String>,
 }
 
 impl ValueType {

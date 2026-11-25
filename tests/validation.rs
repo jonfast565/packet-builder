@@ -305,6 +305,41 @@ fn constant_names_are_checked() {
 }
 
 #[test]
+fn named_ranges_take_their_parents_members() {
+    let m = compile(
+        "const E uint16 { ok = 0, bad_name = 1001, bad_key = 1002, busy = 2000 }\n\
+         const LoginError = E in 1000..1999\nconst Done = E { ok, busy }\n\
+         packet P { rc uint16 : LoginError strict }",
+    )
+    .unwrap();
+    let names = |cat: &str| -> Vec<String> {
+        m.categories.iter().find(|c| c.name == cat).unwrap().members.iter().map(|c| c.name.clone()).collect()
+    };
+    assert_eq!(names("LoginError"), ["bad_name", "bad_key"]);
+    assert_eq!(names("Done"), ["ok", "busy"]);
+    let range = m.categories.iter().find(|c| c.name == "LoginError").unwrap();
+    assert_eq!(range.parent.as_deref(), Some("E"));
+    assert_eq!(m.packets[0].members[0].category.as_deref(), Some("LoginError"));
+}
+
+#[test]
+fn named_ranges_are_checked() {
+    assert_error("const R = E in 1..2\npacket P { x uint8 }", "unknown category `E`");
+    assert_error("const E uint8 { a = 1 }\nconst R = E in 5..9\npacket P { x uint8 }", "takes none of `E`'s members");
+    assert_error("const E uint8 { a = 1 }\nconst R = E { b }\npacket P { x uint8 }", "has no constant `b`");
+    assert_error("const E uint8 { a = 1 }\nconst R = E { a, a }\npacket P { x uint8 }", "named more than once");
+    assert_error("const E uint8 { a = 1 }\nconst r = E { a }\npacket P { x uint8 }", "must start with an uppercase");
+    assert_error("const E uint8 { a = 1 }\nconst E = E { a }\npacket P { x uint8 }", "clashes with category `E`");
+}
+
+#[test]
+fn flags_categories_claim_their_set_type() {
+    let m = compile("const Mode uint8 flags { read = 1, write = 2 }\npacket P { m uint8 : Mode }").unwrap();
+    assert!(m.categories[0].flags);
+    assert_error("const Mode uint8 flags { read = 1 }\npacket ModeSet { x uint8 }", "clashes with packet `ModeSet`");
+}
+
+#[test]
 fn constant_references_are_checked() {
     assert_error("const K uint8 { a = 1 }\npacket P { x uint8, calc c uint8 = K.b }", "has no constant `b` (it has a)");
     assert_error("packet P { x uint8, calc c uint8 = K.b }", "unknown category `K`");

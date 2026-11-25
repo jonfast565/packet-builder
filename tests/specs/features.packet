@@ -134,6 +134,9 @@ const Kind u3 {
 }
 
 const Color uint8 { red = 1, green = 2, blue = 3 }
+const Warm = Color in 1..2                 // a named range: red and green
+const Cool = Color { blue }                // and one by name
+const Access uint8 flags { read = 0x1, write = 0x2, run = 0x4 }
 
 // Fields tagged with the categories their values come from.
 packet Tagged be {

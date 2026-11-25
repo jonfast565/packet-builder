@@ -337,7 +337,16 @@ guard_expression = { when_kw ~ expr ~ then_kw ~ expr ~ otherwise_kw ~ expr }
 // A standalone constant or a category of them, each with an optional note:
 //   const FLAP_START uint8 = 0x2a "first byte of every frame"
 //   const Channel uint8 { signon = 1, snac = 2 "SNAC data" }
-const_decl   = { version_range? ~ const_kw ~ identifier ~ (type_name | bit_type) ~ (const_value | const_group) }
+// `flags` marks a category whose members are bits of one word; a named range
+// is a category of another's members, by value or by name:
+//   const Mode uint8 flags { read = 0x1, write = 0x2 }
+//   const LoginRefusal = FcpError in 1001..1099
+//   const Greeting = Channel { signon, snac }
+const_decl   = { version_range? ~ const_kw ~ identifier ~ (((type_name | bit_type) ~ (const_value | (flags_kw? ~ const_group))) | const_subset) }
+flags_kw     = @{ "flags" ~ !(alnum | underscore) }
+const_subset = { assign ~ category_name ~ (subset_range | subset_names) }
+subset_range = { in_kw ~ expr ~ dotdot ~ expr }
+subset_names = { lbracket ~ identifier ~ (comma ~ identifier)* ~ comma? ~ rbracket }
 const_value  = { assign ~ expr ~ string? }
 const_group  = { lbracket ~ const_member ~ (comma ~ const_member)* ~ comma? ~ rbracket }
 const_member = { version_range? ~ identifier ~ assign ~ expr ~ string? }

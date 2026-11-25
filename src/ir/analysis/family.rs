@@ -15,7 +15,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ast::{
     ArmExpr, ArrayLength, ConstDecl, ConstKind, Constraint, ExprNode, FamilyDecl, PacketExpr, PacketExprList,
-    PacketItem, Span, SwitchExpr, TypeNode,
+    PacketItem, Span, SubsetPick, SwitchExpr, TypeNode,
 };
 use crate::errors::Diagnostic;
 
@@ -295,6 +295,13 @@ impl Renamer<'_> {
         match &mut c.kind {
             ConstKind::Single(item) => self.expr(&mut item.value, item.span),
             ConstKind::Group(items) => items.iter_mut().for_each(|i| self.expr(&mut i.value, i.span)),
+            ConstKind::Subset { parent, pick } => {
+                self.category(parent, c.span);
+                if let SubsetPick::Range(lo, hi) = pick {
+                    self.expr(lo, c.span);
+                    self.expr(hi, c.span);
+                }
+            }
         }
     }
 }
@@ -321,7 +328,7 @@ pub fn desugar<'a>(list: &'a PacketExprList, diags: &mut Vec<Diagnostic>) -> (Co
         for c in &f.constants {
             match c.kind {
                 ConstKind::Single(_) => scope.singles.insert(c.name.clone()),
-                ConstKind::Group(_) => scope.categories.insert(c.name.clone()),
+                ConstKind::Group(_) | ConstKind::Subset { .. } => scope.categories.insert(c.name.clone()),
             };
         }
         if families.insert(name.clone(), scope).is_some() {

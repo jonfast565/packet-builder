@@ -117,7 +117,10 @@ fn generated_code_exports_constants() {
     assert!(out.status.success());
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(text.contains("pub const FLAP_START: u8 = 0x2a;"), "{}", text);
-    assert!(text.contains("pub const SNAC: u8 = 2;"), "{}", text);
+    // A category is an enum of its type, with checked conversions.
+    assert!(text.contains("#[repr(u8)]\npub enum Channel {"), "{}", text);
+    assert!(text.contains("    Snac = 2,"), "{}", text);
+    assert!(text.contains("impl TryFrom<u8> for Channel {"), "{}", text);
     assert!(text.contains("/// Values from [`Channel`]."), "{}", text);
     let out = bin().args(["gen", "examples/oscar.packet", "-l", "c", "--stdout"]).output().unwrap();
     assert!(String::from_utf8_lossy(&out.stdout).contains("#define CHANNEL_SNAC ((uint8_t)2u)"));

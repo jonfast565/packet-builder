@@ -8,7 +8,7 @@ use super::family::Domain;
 use super::params::Sigs;
 use super::types::{type_label, value_type};
 use super::versions::{VRange, resolve_ends, version_test};
-use crate::ast::{ConstDecl, ConstItem, ConstKind, PacketExpr, PacketExprList, Span, TypeNode};
+use crate::ast::{ConstDecl, ConstItem, ConstKind, ExprNode, PacketExpr, PacketExprList, Span, SubsetPick, TypeNode};
 use crate::errors::Diagnostic;
 use crate::ir::expr::{TExpr, Ty};
 use crate::ir::model::{Category, ConstVersion, Constant, ValueType};
@@ -176,6 +176,13 @@ impl ConstTable {
             }
         }
         for decl in &list.constants {
+            if let ConstKind::Subset { parent, pick } = &decl.kind {
+                claim(&decl.name, format!("category `{}`", decl.name), decl.span, diags);
+                if let Some(cat) = table.subset(decl, parent, pick, &scope, diags) {
+                    table.categories.push(cat);
+                }
+                continue;
+            }
             let Some(ty) = table.const_type(decl, diags) else { continue };
             match &decl.kind {
                 ConstKind::Single(item) => {
@@ -203,6 +210,10 @@ impl ConstTable {
                 }
                 ConstKind::Group(items) => {
                     claim(&decl.name, format!("category `{}`", decl.name), decl.span, diags);
+                    if decl.flags {
+                        let set = format!("{}Set", decl.name);
+                        claim(&set, format!("the set type `{}` of flags `{}`", set, decl.name), decl.span, diags);
+                    }
                     if !decl.name.starts_with(|c: char| c.is_ascii_uppercase()) {
                         diags.push(
                             Diagnostic::new(
@@ -264,11 +275,90 @@ impl ConstTable {
                             members.push(c);
                         }
                     }
-                    table.categories.push(Category { name: decl.name.clone(), ty, members });
+                    table.categories.push(Category {
+                        name: decl.name.clone(),
+                        ty,
+                        members,
+                        flags: decl.flags,
+                        parent: None,
+                    });
                 }
+                ConstKind::Subset { .. } => {}
             }
         }
         table
+    }
+
+    /// A named range: the parent's members it picks, as a category of the
+    /// parent's type. The parent must be declared before it.
+    fn subset(
+        &self,
+        decl: &ConstDecl,
+        parent: &str,
+        pick: &SubsetPick,
+        scope: &PacketExpr,
+        diags: &mut Vec<Diagnostic>,
+    ) -> Option<Category> {
+        if !decl.name.starts_with(|c: char| c.is_ascii_uppercase()) {
+            diags.push(Diagnostic::new(
+                format!("category `{}` must start with an uppercase letter", decl.name),
+                decl.span,
+            ));
+        }
+        let Some(from) = self.category(parent) else {
+            diags.push(
+                Diagnostic::new(format!("unknown category `{}`", parent), decl.span)
+                    .with_note("a named range takes the members of a category declared before it"),
+            );
+            return None;
+        };
+        let members: Vec<Constant> = match pick {
+            SubsetPick::Range(lo, hi) => {
+                let end = |value: &ExprNode, which: &str, diags: &mut Vec<Diagnostic>| {
+                    let item = ConstItem {
+                        versions: None,
+                        name: format!("{} ({} end)", decl.name, which),
+                        value: value.clone(),
+                        note: None,
+                        radix: crate::ast::Radix::Dec,
+                        span: decl.span,
+                    };
+                    self.fold(&item, &ValueType::Int { width: 64, signed: true }, scope, diags).map(|c| c.value)
+                };
+                let (lo, hi) = (end(lo, "low", diags)?, end(hi, "high", diags)?);
+                from.members.iter().filter(|m| (lo..=hi).contains(&m.value)).cloned().collect()
+            }
+            SubsetPick::Names(names) => {
+                let mut picked = Vec::new();
+                for (name, span) in names {
+                    match from.members.iter().find(|m| &m.name == name) {
+                        Some(m) if picked.iter().any(|p: &Constant| p.name == m.name) => diags.push(
+                            Diagnostic::new(format!("`{}` is named more than once in `{}`", name, decl.name), *span),
+                        ),
+                        Some(m) => picked.push(m.clone()),
+                        None => diags.push(Diagnostic::new(
+                            format!("category `{}` has no constant `{}`", parent, name),
+                            *span,
+                        )),
+                    }
+                }
+                picked
+            }
+        };
+        if members.is_empty() {
+            diags.push(Diagnostic::new(
+                format!("`{}` takes none of `{}`'s members", decl.name, parent),
+                decl.span,
+            ));
+            return None;
+        }
+        Some(Category {
+            name: decl.name.clone(),
+            ty: from.ty.clone(),
+            members,
+            flags: from.flags,
+            parent: Some(from.name.clone()),
+        })
     }
 
     /// The declared type, which must be an integer type.

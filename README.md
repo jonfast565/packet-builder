@@ -844,6 +844,31 @@ packet Flap be {
   rejected, as are names the generated code already uses (`Math`, `EOF`,
   `INT8_MAX`, anything starting with `pb`, ...).
 
+**Named ranges.** A bounded part of a category can be a category of its own,
+by value range or by member names:
+
+```
+const FcpError uint16 { no_error = 0, bad_name = 1028, bad_password = 1029, busy = 2001 }
+const LoginRefusal = FcpError in 1000..1999      // bad_name, bad_password
+const Retryable = FcpError { busy }
+```
+
+It takes the parent's type and members (which must be declared before it), so
+fields can be tagged with it (`rc uint16 : LoginRefusal strict`) and every
+backend lists it like any category.
+
+**Flags.** `const Mode uint8 flags { read = 0x1, write = 0x2 }` marks members
+as bits of one word.
+
+**In Rust**, a category is a `#[repr(<type>)]` enum with one variant per value
+(`keep_alive` → `KeepAlive`): `ALL`, `NAMES` (every name with its number),
+`number()`, `from_number()`, `name()`, `Default` (the first member),
+`TryFrom<int>` (the error is the number) and `From<enum> for int`. A second name
+for a value already listed becomes an associated constant (`Channel::Alias`).
+A named range also converts to its parent (`From`) and back (`TryFrom`), and a
+`flags` category gets `<Name>Set`, a word of its bits that keeps the bits it
+does not name (`contains`, `with`, `without`, `set`, `flags()`).
+
 ### Validation
 
 Fields can say which values are valid. Decoding fails with a `constraint`

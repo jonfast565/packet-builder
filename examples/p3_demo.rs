@@ -38,7 +38,7 @@ fn main() -> Result<(), PbError> {
                 let names: Vec<String> = stream
                     .atoms
                     .iter()
-                    .filter(|a| a.uncompressed == 1 && a.protocol == FdoProtocol::DE && a.atom == 1)
+                    .filter(|a| a.uncompressed == 1 && a.protocol == FdoProtocol::De.number() && a.atom == 1)
                     .map(|a| String::from_utf8_lossy(&a.arg).trim_end().to_string())
                     .collect();
                 println!("  DATA {}: {} atoms, screen name {}", message.token, stream.atoms.len(), names[0]);

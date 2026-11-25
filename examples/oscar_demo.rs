@@ -18,7 +18,7 @@ const STREAM: &str = concat!(
 );
 
 fn message_text(tlvs: &[Tlv]) -> Result<Option<String>, PbError> {
-    for tlv in tlvs.iter().filter(|t| t.r#type == IcbmTlv::MESSAGE_DATA) {
+    for tlv in tlvs.iter().filter(|t| t.r#type == IcbmTlv::MessageData.number()) {
         for fragment in IcbmMessage::decode(&tlv.value)?.fragments {
             if let IcbmFragmentData::Text(text) = fragment.data {
                 return Ok(Some(String::from_utf8_lossy(&text.text).into_owned()));

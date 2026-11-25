@@ -450,6 +450,18 @@ pub enum ConstKind {
     Single(ConstItem),
     /// `const Category type { a = 1, b = 2 }`
     Group(Vec<ConstItem>),
+    /// `const Name = Parent in lo..hi` or `const Name = Parent { a, b }`: some of
+    /// another category's members, as a category of their own.
+    Subset { parent: String, pick: SubsetPick },
+}
+
+/// Which members of its parent a named range keeps.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SubsetPick {
+    /// The members whose value is in `lo..=hi`.
+    Range(ExprNode, ExprNode),
+    /// These members, by name.
+    Names(Vec<(String, Span)>),
 }
 
 /// A file-level `const` declaration.
@@ -460,6 +472,8 @@ pub struct ConstDecl {
     pub name: String,
     pub ty: TypeNode,
     pub kind: ConstKind,
+    /// `flags`: the category's members are bits of one word.
+    pub flags: bool,
     pub span: Span,
 }
 

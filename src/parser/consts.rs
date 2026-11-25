@@ -5,7 +5,7 @@ use pest::iterators::Pair;
 use super::expr::{parse_expr, parse_string_constant};
 use super::items::TreeBuilder;
 use super::{Rule, span_of, version_range};
-use crate::ast::{ConstDecl, ConstItem, ConstKind, ExprNode, Radix, TypeNode};
+use crate::ast::{ConstDecl, ConstItem, ConstKind, ExprNode, Radix, SubsetPick, TypeNode};
 
 impl TreeBuilder {
     pub fn constants(&self, packets: Pair<Rule>) -> Vec<ConstDecl> {
@@ -18,11 +18,14 @@ impl TreeBuilder {
         let mut ty = TypeNode::UnsignedInteger8;
         let mut kind = ConstKind::Group(Vec::new());
         let mut versions = None;
+        let mut flags = false;
         for part in decl.into_inner() {
             match part.as_rule() {
                 Rule::version_range => versions = Some(version_range(part)),
                 Rule::identifier => name = part.as_str().to_string(),
                 Rule::type_name | Rule::bit_type => ty = self.type_from_name(part.as_str()),
+                Rule::flags_kw => flags = true,
+                Rule::const_subset => kind = const_subset(part),
                 Rule::const_value => kind = ConstKind::Single(const_item(name.clone(), part, span)),
                 Rule::const_group => {
                     let members = part
@@ -39,8 +42,35 @@ impl TreeBuilder {
                 _ => {}
             }
         }
-        ConstDecl { versions, name, ty, kind, span }
+        ConstDecl { versions, name, ty, kind, flags, span }
     }
+}
+
+/// `= Parent in lo..hi` or `= Parent { a, b }`.
+fn const_subset(pair: Pair<Rule>) -> ConstKind {
+    let mut parent = String::new();
+    let mut pick = SubsetPick::Names(Vec::new());
+    for part in pair.into_inner() {
+        match part.as_rule() {
+            Rule::category_name => parent = part.as_str().to_string(),
+            Rule::subset_range => {
+                let mut ends = part.into_inner().filter(|p| p.as_rule() == Rule::expr).map(parse_expr);
+                let lo = ends.next().unwrap_or(ExprNode::NoExpr);
+                let hi = ends.next().unwrap_or(ExprNode::NoExpr);
+                pick = SubsetPick::Range(lo, hi);
+            }
+            Rule::subset_names => {
+                let names = part
+                    .into_inner()
+                    .filter(|p| p.as_rule() == Rule::identifier)
+                    .map(|p| (p.as_str().to_string(), span_of(&p)))
+                    .collect();
+                pick = SubsetPick::Names(names);
+            }
+            _ => {}
+        }
+    }
+    ConstKind::Subset { parent, pick }
 }
 
 /// The value and note of `const_value` / `const_member`.
